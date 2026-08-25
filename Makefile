@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh demo-ui
+.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute
 
 test:
 	python -m pytest
@@ -26,3 +26,6 @@ demo-mesh:
 
 demo-ui:
 	bash scripts/demo_ui.sh
+
+demo-india-absolute:
+	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_india_absolute.py
