@@ -29,12 +29,17 @@ git -C "$DA3_DIR" checkout --detach "$DA3_COMMIT"
 # DepthWizard's monocular prior path and are problematic on Apple Silicon (notably xformers).
 # Keep the official source pinned, and install only the import/runtime dependencies needed by
 # the official Python API on macOS. xformers is optional in DA3's DINO layers and falls back.
+#
+# IMPORTANT: DepthWizard and DA3 both require NumPy < 2. Pinning NumPy and OpenCV here prevents
+# pip from selecting OpenCV 5.x and silently upgrading the environment to NumPy 2.x.
 "$PYTHON" -m pip install \
+  "numpy==1.26.4" \
+  "opencv-python>=4.10,<4.12" \
+  "addict>=2.4,<3" \
   "einops>=0.8" \
   "huggingface_hub>=0.34" \
   "imageio>=2.37" \
   "moviepy==1.0.3" \
-  "opencv-python>=4.10" \
   "omegaconf>=2.3" \
   "requests>=2.32" \
   "safetensors>=0.5" \
@@ -44,6 +49,10 @@ git -C "$DA3_DIR" checkout --detach "$DA3_COMMIT"
   "plyfile>=1.1" \
   "pillow-heif>=1.0" \
   "pycolmap>=3.12"
+
+# Re-assert DepthWizard's declared environment after the vendor dependencies are resolved.
+# This makes setup idempotent and repairs a previously contaminated venv automatically.
+"$PYTHON" -m pip install -e ".[ml,dev]"
 
 SITE_PACKAGES="$($PYTHON - <<'PY'
 import site
@@ -63,19 +72,26 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 "$PYTHON" - <<'PY'
 import platform
 
+import numpy as np
 import torch
 from depth_anything_3.api import DepthAnything3
 
 print("Depth Anything 3 import: OK")
 print("Architecture:", platform.machine())
+print("NumPy:", np.__version__)
 print("PyTorch:", torch.__version__)
 print("MPS built:", torch.backends.mps.is_built())
 print("MPS available:", torch.backends.mps.is_available())
 print("DA3 API:", DepthAnything3.__name__)
 
+major = int(np.__version__.split(".", 1)[0])
+if major >= 2:
+    raise SystemExit(f"ERROR: NumPy {np.__version__} is incompatible with DepthWizard/DA3")
 if platform.machine() == "arm64" and not torch.backends.mps.is_available():
     raise SystemExit("ERROR: Apple Silicon detected but MPS is unavailable")
 PY
+
+"$PYTHON" -m pip check
 
 echo "DA3 source pinned at: $DA3_COMMIT"
 echo "DA3 vendor directory: $DA3_DIR"
