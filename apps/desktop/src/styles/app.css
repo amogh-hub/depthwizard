@@ -150,8 +150,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
+  overflow: hidden;
   padding: 0 12px;
   border-bottom: 1px solid var(--dw-border);
   background: var(--dw-surface);
@@ -159,7 +160,7 @@
 
 .dw-segmented {
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   gap: 2px;
   padding: 3px;
   border: 1px solid var(--dw-border);
@@ -169,12 +170,14 @@
 
 .dw-segmented button {
   height: 26px;
-  padding: 0 9px;
+  padding: 0 8px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--dw-text-muted);
   cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .dw-segmented button[data-active="true"] {
@@ -401,7 +404,7 @@
 
 .dw-property dd {
   margin: 0;
-  max-width: 176px;
+  max-width: 184px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -454,12 +457,15 @@
 
 .dw-toolbar-group {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .dw-toolbar-divider {
+  flex: 0 0 auto;
   width: 1px;
   height: 18px;
   margin: 0 2px;
@@ -467,13 +473,17 @@
 }
 
 .dw-chip {
+  flex: 0 0 auto;
   height: 26px;
-  padding: 0 8px;
+  padding: 0 7px;
   border: 1px solid var(--dw-border);
   border-radius: 6px;
   background: var(--dw-surface);
   color: var(--dw-text-muted);
   cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .dw-chip[data-active="true"] {
