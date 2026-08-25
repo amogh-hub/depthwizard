@@ -49,3 +49,10 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# These files intentionally preserve small pieces of upstream RDAH-Net structure/typing
+# so published checkpoints remain reproducible without installing the legacy environment.
+"src/depthwizard/baselines/rdah_model.py" = ["PLR0402"]
+"src/depthwizard/baselines/rdah.py" = ["TRY004"]
+"scripts/setup_rdah_baseline.py" = ["TRY004"]
