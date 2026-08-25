@@ -56,12 +56,16 @@ export function TerrainViewport({ meshUrl, cameraMode }: { meshUrl?: string; cam
       const bounds = new THREE.Box3().setFromObject(gltf.scene);
       sceneCenter = bounds.getCenter(new THREE.Vector3());
       sceneSize = bounds.getSize(new THREE.Vector3());
-      orbit.target.copy(sceneCenter);
-      const distance = Math.max(sceneSize.x, sceneSize.z, sceneSize.y * 2) * 0.95;
+
+      const footprint = Math.max(sceneSize.x, sceneSize.z);
+      const distance = Math.max(footprint, sceneSize.y * 2) * 0.82;
+      const viewTarget = sceneCenter.clone();
+      viewTarget.y -= Math.max(sceneSize.y, footprint * 0.08) * 0.20;
+      orbit.target.copy(viewTarget);
       camera.position.set(
-        sceneCenter.x + distance * 0.55,
-        sceneCenter.y + distance * 0.50,
-        sceneCenter.z + distance * 0.80,
+        sceneCenter.x + distance * 0.52,
+        sceneCenter.y + distance * 0.48,
+        sceneCenter.z + distance * 0.78,
       );
       camera.near = Math.max(distance / 10000, 0.01);
       camera.far = Math.max(distance * 20, 1000);
