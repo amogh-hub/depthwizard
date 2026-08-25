@@ -7,6 +7,24 @@ from torch import nn
 from torch.nn import functional as F
 
 
+def _group_count(channels: int, *, max_groups: int = 8) -> int:
+    """Choose the largest valid GroupNorm divisor up to ``max_groups``.
+
+    Height-model channel widths are configurable for experiments and tests. GroupNorm requires
+    ``num_channels % num_groups == 0``; selecting a fixed group count makes otherwise valid channel
+    configurations fail at construction time. This helper preserves eight groups when possible and
+    deterministically falls back to the next largest divisor.
+    """
+    if channels <= 0:
+        raise ValueError("channels must be positive")
+    if max_groups <= 0:
+        raise ValueError("max_groups must be positive")
+    for groups in range(min(max_groups, channels), 0, -1):
+        if channels % groups == 0:
+            return groups
+    raise RuntimeError("unable to determine a valid GroupNorm divisor")
+
+
 @dataclass(frozen=True)
 class HeightModelConfig:
     """Configuration for the DepthWizard remote-sensing refinement network."""
@@ -16,6 +34,18 @@ class HeightModelConfig:
     semantic_classes: int = 5
     height_bins: int = 16
     dropout: float = 0.05
+
+    def __post_init__(self) -> None:
+        if len(self.rgb_channels) != 4 or len(self.geometry_channels) != 4:
+            raise ValueError("rgb_channels and geometry_channels must each contain four stages")
+        if any(channel <= 0 for channel in self.rgb_channels + self.geometry_channels):
+            raise ValueError("all encoder channel widths must be positive")
+        if self.semantic_classes <= 0:
+            raise ValueError("semantic_classes must be positive")
+        if self.height_bins < 2:
+            raise ValueError("height_bins must be at least 2")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be in [0, 1)")
 
 
 @dataclass(frozen=True)
@@ -34,7 +64,6 @@ class HeightModelOutput:
 class ConvNormAct(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, *, stride: int = 1) -> None:
         super().__init__()
-        groups = 8 if out_channels >= 8 else 1
         self.block = nn.Sequential(
             nn.Conv2d(
                 in_channels,
@@ -44,7 +73,7 @@ class ConvNormAct(nn.Module):
                 padding=1,
                 bias=False,
             ),
-            nn.GroupNorm(groups, out_channels),
+            nn.GroupNorm(_group_count(out_channels), out_channels),
             nn.GELU(),
         )
 
@@ -55,7 +84,7 @@ class ConvNormAct(nn.Module):
 class ResidualBlock(nn.Module):
     def __init__(self, channels: int, *, dropout: float = 0.0) -> None:
         super().__init__()
-        groups = 8 if channels >= 8 else 1
+        groups = _group_count(channels)
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.norm1 = nn.GroupNorm(groups, channels)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
