@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc
+.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -38,3 +38,9 @@ rdah-setup:
 
 benchmark-rdah-ortholoc:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/benchmark_rdah_ortholoc.py
+
+rdah-sweep-setup:
+	python scripts/setup_rdah_checkpoint_sweep.py
+
+benchmark-rdah-sweep:
+	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/benchmark_rdah_checkpoint_sweep.py
