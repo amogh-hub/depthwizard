@@ -77,7 +77,7 @@ def main() -> None:
     metadata = request_json(FIGSHARE_API)
     files = metadata.get("files")
     if not isinstance(files, list):
-        raise RuntimeError("Figshare record has no files list")
+        raise TypeError("Figshare record has no files list")
 
     old_id, old_path = legacy_checkpoint()
     prepared: list[dict[str, object]] = []
