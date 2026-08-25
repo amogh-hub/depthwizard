@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm
+.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh
 
 test:
 	python -m pytest
@@ -20,3 +20,6 @@ da3-smoke:
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py
+
+demo-mesh:
+	depthwizard mesh-rdsm artifacts/demo/geotiff-rdsm/rdsm.tif data/demo/RGB.byte.tif artifacts/demo/geotiff-mesh --vertical-scale 5000
