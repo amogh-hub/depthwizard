@@ -6,7 +6,6 @@ import math
 import os
 import time
 import urllib.request
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -52,7 +51,13 @@ def lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
     return x, y
 
 
-def tile_bounds(x: int, y: int, zoom: int, width_tiles: int = 1, height_tiles: int = 1) -> tuple[float, float, float, float]:
+def tile_bounds(
+    x: int,
+    y: int,
+    zoom: int,
+    width_tiles: int = 1,
+    height_tiles: int = 1,
+) -> tuple[float, float, float, float]:
     n = 2**zoom
     span = 2.0 * WORLD_HALF / n
     min_x = -WORLD_HALF + x * span
@@ -120,7 +125,8 @@ def build_rgb_scene() -> Path:
             DEPTHWIZARD_DEMO_SCENE="Joshimath_Uttarakhand_India",
             IMAGERY_SOURCE="EOX Sentinel-2 cloudless 2024",
             IMAGERY_ATTRIBUTION=(
-                "EOxCloudless by EOX IT Services GmbH; contains modified Copernicus Sentinel data 2024"
+                "EOxCloudless by EOX IT Services GmbH; contains modified "
+                "Copernicus Sentinel data 2024"
             ),
         )
     return output
@@ -197,16 +203,22 @@ def run_demo() -> None:
         },
     )
 
-    print("Calibrating relative surface height to metric elevation using lower-resolution DEM evidence...")
+    print(
+        "Calibrating relative surface height to metric elevation using "
+        "lower-resolution DEM evidence..."
+    )
     aligned_dem, valid_dem = reproject_to_match(dem_path, rdsm_path)
     rel = scene.relative_height.astype(np.float32, copy=False)
     valid = np.isfinite(rel) & valid_dem & np.isfinite(aligned_dem)
     if int(valid.sum()) < 32:
         raise RuntimeError("insufficient DEM overlap for absolute calibration")
-    dem_dynamic_range = float(np.percentile(aligned_dem[valid], 99) - np.percentile(aligned_dem[valid], 1))
+    dem_dynamic_range = float(
+        np.percentile(aligned_dem[valid], 99) - np.percentile(aligned_dem[valid], 1)
+    )
     if dem_dynamic_range < 50.0:
         raise RuntimeError(
-            f"DEM terrain range is only {dem_dynamic_range:.1f} m; scene is underdetermined for this demo"
+            f"DEM terrain range is only {dem_dynamic_range:.1f} m; "
+            "scene is underdetermined for this demo"
         )
 
     calibration_started = time.perf_counter()
@@ -247,7 +259,7 @@ def run_demo() -> None:
         rgb,
         gsd_x=gsd_x,
         gsd_y=gsd_y,
-        strides=(1, 2, 4, 8),
+        strides=(2, 4, 8, 16),
         valid_mask=valid_dsm,
     )
     mesh_seconds = time.perf_counter() - mesh_started
@@ -266,10 +278,16 @@ def run_demo() -> None:
     report = {
         "status": "PASS",
         "scene": "Joshimath, Uttarakhand, India",
-        "purpose": "engineering demonstration of the SIH absolute-DSM path; not an accuracy benchmark",
+        "purpose": (
+            "engineering demonstration of the SIH absolute-DSM path; "
+            "not an accuracy benchmark"
+        ),
         "imagery": {
             "source": "EOX Sentinel-2 cloudless 2024",
-            "attribution": "EOxCloudless by EOX IT Services GmbH; contains modified Copernicus Sentinel data 2024",
+            "attribution": (
+                "EOxCloudless by EOX IT Services GmbH; contains modified "
+                "Copernicus Sentinel data 2024"
+            ),
             "path": str(rgb_path.resolve()),
             "zoom": RGB_ZOOM,
         },
@@ -311,7 +329,10 @@ def run_demo() -> None:
     print(f"Model/device: {scene.model_id} / {prior._resolved_device or 'unknown'}")
     print(f"Tiles: {scene.tile_count} ({scene.harmonized_tiles} overlap-harmonized)")
     print(f"DEM range (p01-p99): {dem_dynamic_range:.1f} m")
-    print(f"Calibration scale/offset: {calibrated.calibration.scale:.3f} / {calibrated.calibration.offset:.3f} m")
+    print(
+        "Calibration scale/offset: "
+        f"{calibrated.calibration.scale:.3f} / {calibrated.calibration.offset:.3f} m"
+    )
     print(f"Anchor RMSE: {calibrated.calibration.rmse_anchor:.2f} m")
     print(f"Metric DSM: {dsm_path}")
     print(f"3D LODs: {MESH_DIR}")
