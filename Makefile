@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke
+.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm
 
 test:
 	python -m pytest
@@ -17,3 +17,6 @@ da3-setup:
 
 da3-smoke:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/smoke_da3.py
+
+demo-rdsm:
+	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py
