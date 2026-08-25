@@ -23,9 +23,19 @@ export function App() {
   const [metadata, setMetadata] = useState<RasterMetadata | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const meshUrl: string | undefined = undefined;
 
-  const projectName = useMemo(() => metadata?.path.split(/[\\/]/).pop() ?? "Untitled reconstruction", [metadata]);
+  // `?demo=1` is a development/evidence harness only. It displays a real mesh produced by the
+  // production reconstruction + mesh pipeline; there is no separate mock visualization path.
+  const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
+  const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : undefined;
+
+  const projectName = useMemo(
+    () =>
+      demoMode
+        ? "GeoTIFF rDSM reconstruction"
+        : metadata?.path.split(/[\\/]/).pop() ?? "Untitled reconstruction",
+    [demoMode, metadata],
+  );
 
   const importImagery = async () => {
     setImportError(null);
@@ -58,7 +68,7 @@ export function App() {
         </div>
         <div className="dw-top-actions">
           <button className="dw-btn" onClick={importImagery} disabled={importing}><UploadIcon /> {importing ? "Inspecting…" : "Import imagery"}</button>
-          <button className="dw-btn dw-btn--primary" disabled={!metadata}>Export</button>
+          <button className="dw-btn dw-btn--primary" disabled={!metadata && !demoMode}>Export</button>
         </div>
       </header>
 
@@ -83,6 +93,12 @@ export function App() {
 
         <div className="dw-canvas">
           {activeView === "3D Terrain" && <TerrainViewport meshUrl={meshUrl} cameraMode={cameraMode} />}
+          {demoMode && activeView === "3D Terrain" && (
+            <div className="dw-evidence-badge">
+              <strong>Relative rDSM</strong>
+              <span>DA3MONO-LARGE · textured terrain · 5000× vertical visualization scale</span>
+            </div>
+          )}
           {!meshUrl && (
             <div className="dw-empty-canvas">
               <div className="dw-empty-card">
@@ -100,8 +116,12 @@ export function App() {
         </div>
 
         <footer className="dw-workspace-status">
-          <span>{metadata ? "Input ready · local processing" : "Ready · local processing"}</span>
-          <span>{metadata?.crs ?? "Projection —"} · GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} · {metadata ? (metadata.crs ? "Absolute DSM" : "Relative DSM") : "Elevation —"}</span>
+          <span>{demoMode ? "Reconstruction loaded · local processing" : metadata ? "Input ready · local processing" : "Ready · local processing"}</span>
+          <span>
+            {demoMode
+              ? "EPSG:32618 · DA3MONO-LARGE · relative elevation"
+              : `${metadata?.crs ?? "Projection —"} · GSD ${metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} · ${metadata ? (metadata.crs ? "Absolute DSM" : "Relative DSM") : "Elevation —"}`}
+          </span>
         </footer>
       </section>
 
