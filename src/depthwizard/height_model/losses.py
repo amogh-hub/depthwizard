@@ -50,11 +50,13 @@ def surface_normals_from_height(height: torch.Tensor) -> torch.Tensor:
 
 
 def boundary_target_from_height(height: torch.Tensor) -> torch.Tensor:
-    """Derive a soft boundary target from relative-height gradients."""
+    """Derive a soft, accelerator-safe boundary target from relative-height gradients."""
     dx = F.pad(torch.abs(height[..., :, 1:] - height[..., :, :-1]), (0, 1, 0, 0))
     dy = F.pad(torch.abs(height[..., 1:, :] - height[..., :-1, :]), (0, 0, 0, 1))
     magnitude = torch.sqrt(dx.square() + dy.square() + 1e-12)
-    scale = magnitude.flatten(1).quantile(0.90, dim=1).clamp_min(1e-4).view(-1, 1, 1, 1)
+    # Use an amax-based per-image normalization rather than quantile so the permanent training
+    # objective remains reproducible on CUDA, CPU and Apple MPS without backend-specific fallbacks.
+    scale = magnitude.flatten(1).amax(dim=1).clamp_min(1e-4).view(-1, 1, 1, 1)
     return torch.clamp(magnitude / scale, 0.0, 1.0)
 
 
