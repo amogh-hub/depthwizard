@@ -34,11 +34,13 @@ def terrain_mesh_from_dsm(
     gsd_x: float = 1.0,
     gsd_y: float = 1.0,
     stride: int = 1,
+    valid_mask: np.ndarray | None = None,
 ) -> trimesh.Trimesh:
     """Create a metric, y-up textured terrain mesh from a DSM/rDSM.
 
     x maps to image columns, z maps to negative image rows so north/up raster orientation remains
-    intuitive in Three.js, and vertex y stores elevation.
+    intuitive in Three.js, and vertex y stores elevation. When ``valid_mask`` is supplied, faces
+    touching invalid/nodata pixels are omitted rather than rendered as black artificial terrain.
     """
     z = np.asarray(elevation, dtype=np.float32)
     image = np.asarray(rgb)
@@ -53,9 +55,18 @@ def terrain_mesh_from_dsm(
     if not np.all(np.isfinite(z)):
         raise ValueError("mesh export currently requires finite elevation values")
 
+    validity = np.ones(z.shape, dtype=bool)
+    if valid_mask is not None:
+        validity = np.asarray(valid_mask, dtype=bool)
+        if validity.shape != z.shape:
+            raise ValueError("valid_mask must match elevation shape")
+        if not np.any(validity):
+            raise ValueError("valid_mask contains no valid terrain pixels")
+
     rows = _sample_indices(z.shape[0], stride)
     cols = _sample_indices(z.shape[1], stride)
     sampled = z[np.ix_(rows, cols)]
+    sampled_valid = validity[np.ix_(rows, cols)]
     rr, cc = np.meshgrid(rows, cols, indexing="ij")
     vertices = np.column_stack(
         [
@@ -73,8 +84,13 @@ def terrain_mesh_from_dsm(
             b = a + 1
             c = (row + 1) * w + col
             d = c + 1
-            faces.append((a, c, b))
-            faces.append((b, c, d))
+            if sampled_valid[row, col] and sampled_valid[row + 1, col] and sampled_valid[row, col + 1]:
+                faces.append((a, c, b))
+            if sampled_valid[row, col + 1] and sampled_valid[row + 1, col] and sampled_valid[row + 1, col + 1]:
+                faces.append((b, c, d))
+
+    if not faces:
+        raise ValueError("valid_mask removed every terrain face")
 
     u = cc.reshape(-1).astype(np.float32) / max(z.shape[1] - 1, 1)
     v = 1.0 - rr.reshape(-1).astype(np.float32) / max(z.shape[0] - 1, 1)
@@ -116,6 +132,7 @@ def export_terrain_glb(
     gsd_x: float = 1.0,
     gsd_y: float = 1.0,
     stride: int = 1,
+    valid_mask: np.ndarray | None = None,
 ) -> MeshExportResult:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -125,6 +142,7 @@ def export_terrain_glb(
         gsd_x=gsd_x,
         gsd_y=gsd_y,
         stride=stride,
+        valid_mask=valid_mask,
     )
     scene = trimesh.Scene(mesh)
     payload = scene.export(file_type="glb")
@@ -151,6 +169,7 @@ def export_lod_pyramid(
     gsd_x: float = 1.0,
     gsd_y: float = 1.0,
     strides: tuple[int, ...] = (1, 2, 4, 8),
+    valid_mask: np.ndarray | None = None,
 ) -> list[MeshExportResult]:
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -164,6 +183,7 @@ def export_lod_pyramid(
                 gsd_x=gsd_x,
                 gsd_y=gsd_y,
                 stride=stride,
+                valid_mask=valid_mask,
             )
         )
     return results
