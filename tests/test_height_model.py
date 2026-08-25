@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from torch import nn
 
 from depthwizard.height_model.losses import compute_height_losses
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
@@ -38,6 +39,22 @@ def test_height_model_emits_all_dense_heads() -> None:
     assert torch.all(output.uncertainty > 0)
     normal_lengths = torch.linalg.vector_norm(output.normals, dim=1)
     assert torch.allclose(normal_lengths, torch.ones_like(normal_lengths), atol=1e-4)
+
+
+def test_group_norm_is_valid_for_non_multiple_of_eight_channel_widths() -> None:
+    model = DepthWizardHeightModel(
+        HeightModelConfig(
+            rgb_channels=(10, 14, 22, 30),
+            geometry_channels=(7, 11, 13, 17),
+            semantic_classes=5,
+            height_bins=8,
+            dropout=0.0,
+        )
+    )
+
+    group_norms = [module for module in model.modules() if isinstance(module, nn.GroupNorm)]
+    assert group_norms
+    assert all(module.num_channels % module.num_groups == 0 for module in group_norms)
 
 
 def test_height_losses_are_finite_and_differentiable() -> None:
