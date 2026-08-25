@@ -24,14 +24,32 @@ fi
 
 git -C "$DA3_DIR" fetch --depth 1 origin "$DA3_COMMIT"
 git -C "$DA3_DIR" checkout --detach "$DA3_COMMIT"
+git -C "$DA3_DIR" reset --hard "$DA3_COMMIT"
 
-# DA3's published package metadata includes CUDA/desktop extras that are not required for
-# DepthWizard's monocular prior path and are problematic on Apple Silicon (notably xformers).
-# Keep the official source pinned, and install only the import/runtime dependencies needed by
-# the official Python API on macOS. xformers is optional in DA3's DINO layers and falls back.
-#
-# IMPORTANT: DepthWizard and DA3 both require NumPy < 2. Pinning NumPy and OpenCV here prevents
-# pip from selecting OpenCV 5.x and silently upgrading the environment to NumPy 2.x.
+# The official DA3 API eagerly imports all exporters. On macOS this pulls in optional native
+# stacks (notably pycolmap / GS export code) even though DepthWizard only needs monocular depth.
+# Those native stacks can load a second OpenMP runtime beside PyTorch and abort the process.
+# Preserve the pinned official source while making export loading lazy: inference behavior is
+# unchanged, and exporters are imported only if an export is actually requested.
+DA3_API="$DA3_DIR/src/depth_anything_3/api.py"
+"$PYTHON" - "$DA3_API" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+eager = "from depth_anything_3.utils.export import export\n"
+lazy = '''def export(*args, **kwargs):\n    from depth_anything_3.utils.export import export as _export\n\n    return _export(*args, **kwargs)\n\n'''
+if eager in text:
+    text = text.replace(eager, lazy, 1)
+elif lazy not in text:
+    raise SystemExit("ERROR: pinned DA3 api.py no longer matches the expected compatibility patch")
+path.write_text(text, encoding="utf-8")
+print("Applied DA3 macOS lazy-export compatibility patch.")
+PY
+
+# Keep only the dependencies required by the monocular inference path. DA3 and DepthWizard both
+# require NumPy < 2; OpenCV is constrained below the release line that would force NumPy 2.x.
 "$PYTHON" -m pip install \
   "numpy==1.26.4" \
   "opencv-python>=4.10,<4.12" \
@@ -39,19 +57,18 @@ git -C "$DA3_DIR" checkout --detach "$DA3_COMMIT"
   "einops>=0.8" \
   "huggingface_hub>=0.34" \
   "imageio>=2.37" \
-  "moviepy==1.0.3" \
   "omegaconf>=2.3" \
   "requests>=2.32" \
   "safetensors>=0.5" \
   "tqdm>=4.67" \
   "evo>=1.31" \
-  "e3nn>=0.5" \
-  "plyfile>=1.1" \
-  "pillow-heif>=1.0" \
-  "pycolmap>=3.12"
+  "e3nn>=0.5"
 
-# Re-assert DepthWizard's declared environment after the vendor dependencies are resolved.
-# This makes setup idempotent and repairs a previously contaminated venv automatically.
+# Export-only native packages from earlier setup attempts are not needed for DepthWizard's DA3
+# prior and are deliberately removed to prevent accidental OpenMP/native-library collisions.
+"$PYTHON" -m pip uninstall -y pycolmap moviepy pillow-heif plyfile >/dev/null 2>&1 || true
+
+# Re-assert DepthWizard's own declared environment after vendor resolution.
 "$PYTHON" -m pip install -e ".[ml,dev]"
 
 SITE_PACKAGES="$($PYTHON - <<'PY'
@@ -63,7 +80,6 @@ print(paths[0])
 PY
 )"
 
-# Make the pinned official checkout importable without installing DA3's full dependency metadata.
 PTH_FILE="$SITE_PACKAGES/depthwizard_da3_vendor.pth"
 printf '%s\n' "$DA3_DIR/src" > "$PTH_FILE"
 
@@ -72,6 +88,9 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 "$PYTHON" - <<'PY'
 import platform
 
+# Import OpenCV before PyTorch on macOS. DA3's input processor uses OpenCV; establishing its
+# native runtime first avoids a known class of duplicate-OpenMP initialization failures.
+import cv2  # noqa: F401
 import numpy as np
 import torch
 from depth_anything_3.api import DepthAnything3
