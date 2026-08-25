@@ -144,19 +144,27 @@ def mesh_rdsm(
         valid = np.isfinite(elevation)
         if src.nodata is not None:
             valid &= elevation != src.nodata
-        if not np.all(valid):
-            raise typer.BadParameter("mesh-rdsm currently requires a fully valid rDSM raster")
+        if not np.any(valid):
+            raise typer.BadParameter("rDSM contains no valid terrain pixels")
         gsd_x = abs(float(src.transform.a)) if not src.transform.is_identity else 1.0
         gsd_y = abs(float(src.transform.e)) if not src.transform.is_identity else 1.0
         crs = src.crs.to_string() if src.crs is not None else None
 
     rgb = read_rgb(texture)
+    with rasterio.open(texture) as texture_src:
+        source_valid = texture_src.dataset_mask() > 0
     if rgb.shape[:2] != elevation.shape:
         raise typer.BadParameter(
             f"texture shape {rgb.shape[:2]} does not match rDSM shape {elevation.shape}"
         )
+    if source_valid.shape != elevation.shape:
+        raise typer.BadParameter("texture validity mask does not match rDSM shape")
 
-    visual_elevation = elevation * np.float32(vertical_scale)
+    mesh_valid = valid & source_valid
+    if int(mesh_valid.sum()) < 4:
+        raise typer.BadParameter("fewer than four valid source pixels remain for terrain meshing")
+
+    visual_elevation = np.where(valid, elevation, 0.0).astype(np.float32) * np.float32(vertical_scale)
     started = time.perf_counter()
     results = export_lod_pyramid(
         output_dir,
@@ -165,6 +173,7 @@ def mesh_rdsm(
         gsd_x=gsd_x,
         gsd_y=gsd_y,
         strides=(1, 2, 4, 8),
+        valid_mask=mesh_valid,
     )
     elapsed = time.perf_counter() - started
 
@@ -176,6 +185,7 @@ def mesh_rdsm(
         "crs": crs,
         "gsd_x": gsd_x,
         "gsd_y": gsd_y,
+        "valid_fraction": float(np.mean(mesh_valid)),
         "vertical_scale": vertical_scale,
         "vertical_scale_semantics": "visualization_only_for_dimensionless_rdsm",
         "wall_time_seconds": elapsed,
@@ -198,6 +208,7 @@ def mesh_rdsm(
     print("[bold green]DepthWizard terrain mesh export: PASS[/bold green]")
     print(f"CRS: {crs or 'none'}")
     print(f"Ground spacing: {gsd_x:.3f} x {gsd_y:.3f}")
+    print(f"Valid terrain: {100.0 * np.mean(mesh_valid):.1f}%")
     print(f"Visualization vertical scale: {vertical_scale:g}x")
     for index, result in enumerate(results):
         print(
