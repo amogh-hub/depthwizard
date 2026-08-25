@@ -127,7 +127,7 @@ def main() -> None:
         gsd_x = abs(float(src.transform.a)) if not src.transform.is_identity else 1.0
         gsd_y = abs(float(src.transform.e)) if not src.transform.is_identity else 1.0
 
-    rdah_results: list[dict[str, object]] = []
+    rdah_results: list[dict[str, Any]] = []
     for anchors in ANCHOR_BUDGETS:
         benchmark = sparse_anchor_holdout_benchmark(
             rdah_height,
@@ -155,18 +155,18 @@ def main() -> None:
             }
         )
 
-    da3_report = json.loads(da3_report_path.read_text(encoding="utf-8"))
-    da3_by_anchor = {
+    da3_report: dict[str, Any] = json.loads(da3_report_path.read_text(encoding="utf-8"))
+    da3_by_anchor: dict[int, dict[str, Any]] = {
         int(item["anchor_count"]): item
         for item in da3_report.get("results", [])
         if isinstance(item, dict) and "anchor_count" in item
     }
 
-    comparison: list[dict[str, object]] = []
+    comparison: list[dict[str, Any]] = []
     for rdah_item in rdah_results:
         anchors = int(rdah_item["anchor_count"])
         da3_item = da3_by_anchor.get(anchors)
-        if not isinstance(da3_item, dict):
+        if da3_item is None:
             continue
         rdah_metrics = rdah_item["metrics"]
         da3_metrics = da3_item.get("metrics")
