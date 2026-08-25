@@ -46,8 +46,8 @@ def lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
     n = 2**zoom
     lat = max(min(lat, 85.05112878), -85.05112878)
     lat_rad = math.radians(lat)
-    x = int(math.floor((lon + 180.0) / 360.0 * n))
-    y = int(math.floor((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n))
+    x = math.floor((lon + 180.0) / 360.0 * n)
+    y = math.floor((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
     return x, y
 
 
@@ -169,6 +169,32 @@ def build_low_resolution_dem() -> Path:
     return output
 
 
+def dem_consistency_diagnostics(
+    dsm: np.ndarray,
+    dem: np.ndarray,
+    valid: np.ndarray,
+) -> dict[str, float | int | None]:
+    mask = np.asarray(valid, dtype=bool) & np.isfinite(dsm) & np.isfinite(dem)
+    count = int(mask.sum())
+    if count == 0:
+        return {"valid_pixels": 0, "rmse_m": None, "mae_m": None, "pearson_r": None}
+    predicted = np.asarray(dsm[mask], dtype=np.float64)
+    reference = np.asarray(dem[mask], dtype=np.float64)
+    error = predicted - reference
+    rmse = float(np.sqrt(np.mean(error**2)))
+    mae = float(np.mean(np.abs(error)))
+    if np.ptp(predicted) <= 1e-9 or np.ptp(reference) <= 1e-9:
+        correlation: float | None = None
+    else:
+        correlation = float(np.corrcoef(predicted, reference)[0, 1])
+    return {
+        "valid_pixels": count,
+        "rmse_m": rmse,
+        "mae_m": mae,
+        "pearson_r": correlation,
+    }
+
+
 def run_demo() -> None:
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -229,20 +255,23 @@ def run_demo() -> None:
         low_frequency_sigma_px=48.0,
     )
     calibration_seconds = time.perf_counter() - calibration_started
+    evidence_consistency = dem_consistency_diagnostics(calibrated.dsm, aligned_dem, valid)
+
     dsm_path = ABS_DIR / "dsm.tif"
     write_float_geotiff(
         dsm_path,
         calibrated.dsm,
         template_path=rdsm_path,
-        description="DepthWizard absolute Digital Surface Model (metres)",
+        description="DepthWizard DEM-calibrated Digital Surface Model (metres)",
         tags={
-            "DEPTHWIZARD_PRODUCT": "ABSOLUTE_DSM_METRES",
+            "DEPTHWIZARD_PRODUCT": "DEM_CALIBRATED_DSM_METRES",
             "CALIBRATION_METHOD": calibrated.calibration.method,
             "CALIBRATION_EVIDENCE": "lower_resolution_terrarium_dem",
+            "VALIDATION_STATUS": "engineering_demo_not_independent_accuracy_benchmark",
         },
     )
 
-    print("Exporting true-metric textured 3D terrain LODs...")
+    print("Exporting metric-coordinate textured 3D terrain LODs...")
     rgb = read_rgb(rgb_path)
     with rasterio.open(dsm_path) as src:
         dsm = src.read(1).astype(np.float32)
@@ -270,16 +299,23 @@ def run_demo() -> None:
             "dem_source": str(dem_path.resolve()),
             "dem_dynamic_range_p01_p99_m": dem_dynamic_range,
             "low_frequency_sigma_px": 48.0,
+            "orientation_flipped": calibrated.orientation_flipped,
+            "anchor_correlation_before": calibrated.anchor_correlation_before,
+            "anchor_correlation_after": calibrated.anchor_correlation_after,
+            "dem_consistency_after_low_frequency_correction": evidence_consistency,
+            "diagnostic_semantics": (
+                "same DEM used for calibration; consistency diagnostics are not independent accuracy metrics"
+            ),
         }
     )
     calibration_path = ABS_DIR / "calibration.json"
     calibration_path.write_text(json.dumps(calibration_payload, indent=2), encoding="utf-8")
 
     report = {
-        "status": "PASS",
+        "status": "PASS_ENGINEERING_PATH",
         "scene": "Joshimath, Uttarakhand, India",
         "purpose": (
-            "engineering demonstration of the SIH absolute-DSM path; "
+            "engineering demonstration of the SIH georeferenced absolute-elevation path; "
             "not an accuracy benchmark"
         ),
         "imagery": {
@@ -324,19 +360,29 @@ def run_demo() -> None:
     report_path = ABS_DIR / "demo_report.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    print("DepthWizard India absolute-DSM demo: PASS")
+    print("DepthWizard India absolute-elevation engineering path: PASS")
     print("Scene: Joshimath, Uttarakhand, India")
     print(f"Model/device: {scene.model_id} / {prior._resolved_device or 'unknown'}")
     print(f"Tiles: {scene.tile_count} ({scene.harmonized_tiles} overlap-harmonized)")
     print(f"DEM range (p01-p99): {dem_dynamic_range:.1f} m")
     print(
+        "Anchor polarity/correlation: "
+        f"flipped={calibrated.orientation_flipped}, "
+        f"r={calibrated.anchor_correlation_before:.3f} -> "
+        f"{calibrated.anchor_correlation_after:.3f}"
+    )
+    print(
         "Calibration scale/offset: "
         f"{calibrated.calibration.scale:.3f} / {calibrated.calibration.offset:.3f} m"
     )
-    print(f"Anchor RMSE: {calibrated.calibration.rmse_anchor:.2f} m")
+    print(f"Affine anchor RMSE (diagnostic, not accuracy): {calibrated.calibration.rmse_anchor:.2f} m")
+    consistency_rmse = evidence_consistency["rmse_m"]
+    if isinstance(consistency_rmse, float):
+        print(f"Post-correction DEM consistency RMSE (not independent): {consistency_rmse:.2f} m")
     print(f"Metric DSM: {dsm_path}")
     print(f"3D LODs: {MESH_DIR}")
     print(f"Report: {report_path}")
+    print("Accuracy claim: NONE — independent LiDAR/reference validation is still required.")
 
 
 if __name__ == "__main__":
