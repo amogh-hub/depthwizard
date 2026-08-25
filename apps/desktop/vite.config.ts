@@ -10,7 +10,11 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
-    target: ["es2022", "chrome105", "safari13"],
+    // DepthWizard ships as a Tauri desktop application on modern system WebViews.
+    // Targeting legacy Safari 13 forces esbuild 0.28+ to attempt destructuring
+    // downlevel transforms it intentionally no longer performs. ES2022 matches
+    // our desktop runtime while preserving a deterministic production build.
+    target: "es2022",
     minify: process.env.TAURI_DEBUG ? false : "esbuild",
     sourcemap: !!process.env.TAURI_DEBUG,
   },
