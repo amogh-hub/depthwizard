@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 import trimesh
+from PIL import Image
+from trimesh.visual.material import PBRMaterial
+from trimesh.visual.texture import TextureVisuals
 
 
 @dataclass(frozen=True)
@@ -90,13 +92,13 @@ def terrain_mesh_from_dsm(
             image = np.clip((image - low) / np.maximum(high - low, 1e-6) * 255.0, 0, 255)
         image = image.astype(np.uint8)
 
-    material = trimesh.visual.material.PBRMaterial(
+    material = PBRMaterial(
         baseColorTexture=Image.fromarray(image, mode="RGB"),
         metallicFactor=0.0,
         roughnessFactor=1.0,
         doubleSided=True,
     )
-    visuals = trimesh.visual.TextureVisuals(uv=uv, material=material)
+    visuals = TextureVisuals(uv=uv, material=material)
     return trimesh.Trimesh(
         vertices=vertices,
         faces=np.asarray(faces, dtype=np.int64),
@@ -125,7 +127,10 @@ def export_terrain_glb(
         stride=stride,
     )
     scene = trimesh.Scene(mesh)
-    output.write_bytes(scene.export(file_type="glb"))
+    payload = scene.export(file_type="glb")
+    if not isinstance(payload, (bytes, bytearray)):
+        raise TypeError("trimesh GLB export returned a non-binary payload")
+    output.write_bytes(bytes(payload))
     rows = _sample_indices(elevation.shape[0], stride)
     cols = _sample_indices(elevation.shape[1], stride)
     return MeshExportResult(

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from PIL import Image
 
 from depthwizard.geometry_prior.base import GeometryPrior, GeometryPriorOutput
-
 
 DeviceName = Literal["auto", "cuda", "mps", "cpu"]
 
@@ -41,14 +41,15 @@ class DA3MonocularPrior(GeometryPrior):
 
     model_source: str | Path = "depth-anything/DA3MONO-LARGE"
     device: DeviceName = "auto"
-    _model: object | None = None
+    _model: Any | None = None
     _resolved_device: str | None = None
 
-    def _load(self) -> tuple[object, object, str]:
+    def _load(self) -> tuple[Any, Any, str]:
         try:
-            import torch
-            from depth_anything_3.api import DepthAnything3
-        except ImportError as exc:
+            torch: Any = importlib.import_module("torch")
+            da3_api: Any = importlib.import_module("depth_anything_3.api")
+            depth_anything_3: Any = da3_api.DepthAnything3
+        except (ImportError, AttributeError) as exc:
             raise RuntimeError(
                 "DA3 is not installed in this environment. Install the pinned Depth Anything 3 "
                 "runtime in the model environment before using DA3MonocularPrior."
@@ -64,7 +65,7 @@ class DA3MonocularPrior(GeometryPrior):
                     resolved = "cpu"
             else:
                 resolved = self.device
-            model = DepthAnything3.from_pretrained(str(self.model_source))
+            model = depth_anything_3.from_pretrained(str(self.model_source))
             model = model.to(device=torch.device(resolved))
             model.eval()
             self._model = model

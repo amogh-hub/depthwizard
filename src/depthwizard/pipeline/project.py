@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,7 @@ class ProjectManifest:
         self.project_dir.mkdir(parents=True, exist_ok=True)
         self.stages[stage.value] = {
             "status": status,
-            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "updated_at_utc": datetime.now(UTC).isoformat(),
             "artifacts": artifacts or {},
             "details": details or {},
         }
@@ -45,7 +45,7 @@ class ProjectManifest:
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @classmethod
-    def load(cls, project_dir: str | Path) -> "ProjectManifest":
+    def load(cls, project_dir: str | Path) -> ProjectManifest:
         directory = Path(project_dir)
         payload = json.loads((directory / "project-manifest.json").read_text(encoding="utf-8"))
         return cls(

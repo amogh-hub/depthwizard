@@ -73,7 +73,7 @@ class ProcessingRequest(BaseModel):
     requested_output: Literal["rdsm", "dsm"] | None = None
 
     @model_validator(mode="after")
-    def validate_requested_output(self) -> "ProcessingRequest":
+    def validate_requested_output(self) -> ProcessingRequest:
         suffix = self.source.suffix.lower()
         if suffix not in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}:
             raise ValueError("DepthWizard accepts PNG, JPG/JPEG, TIFF, and GeoTIFF inputs")

@@ -4,7 +4,7 @@ import hashlib
 import json
 import platform
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,7 @@ def build_provenance(
     source = Path(source_path)
     return {
         "schema_version": 1,
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "created_at_utc": datetime.now(UTC).isoformat(),
         "source": {"path": str(source), "sha256": sha256_file(source)},
         "config_sha256": canonical_json_hash(config),
         "model": model_manifest,

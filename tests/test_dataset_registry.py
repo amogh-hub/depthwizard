@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from depthwizard.data.registry import DatasetRegistry, DatasetScene
+from depthwizard.data.registry import DatasetRegistry, DatasetScene, Split
 
 
-def scene(scene_id: str, split: str, group: str, sensor: str) -> DatasetScene:
+def scene(scene_id: str, split: Split, group: str, sensor: str) -> DatasetScene:
     return DatasetScene(
         scene_id=scene_id,
         dataset="d",

@@ -78,7 +78,10 @@ def infer_geometry_scene(
         harmonized_tiles = 0
 
         for tile in tiles:
-            window = Window(tile.x, tile.y, tile.width, tile.height)
+            window = Window.from_slices(
+                (tile.y, tile.y + tile.height),
+                (tile.x, tile.x + tile.width),
+            )
             rgb = src.read(list(band_indices), window=window).astype(np.float32)
             rgb = np.moveaxis(rgb, 0, -1)
             normalized = normalize_with_stats(rgb, stats)

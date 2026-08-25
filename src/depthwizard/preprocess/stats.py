@@ -29,8 +29,8 @@ def estimate_rgb_normalization_stats(
         if any(index < 1 or index > src.count for index in band_indices):
             raise ValueError("RGB band selection exceeds source band count")
         scale = min(1.0, max_sample_side / max(src.width, src.height))
-        out_h = max(1, int(round(src.height * scale)))
-        out_w = max(1, int(round(src.width * scale)))
+        out_h = max(1, round(src.height * scale))
+        out_w = max(1, round(src.width * scale))
         sample = src.read(
             list(band_indices),
             out_shape=(3, out_h, out_w),
@@ -49,8 +49,8 @@ def estimate_rgb_normalization_stats(
         low.append(float(lo))
         high.append(float(hi))
     return RGBNormalizationStats(
-        low=tuple(low),
-        high=tuple(high),
+        low=(low[0], low[1], low[2]),
+        high=(high[0], high[1], high[2]),
         low_percentile=low_percentile,
         high_percentile=high_percentile,
     )

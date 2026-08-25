@@ -38,7 +38,7 @@ def estimate_structure_height(
     if ring_pixels <= 0:
         raise ValueError("ring_pixels must be positive")
 
-    expanded = binary_dilation(mask, iterations=ring_pixels)
+    expanded = np.asarray(binary_dilation(mask, iterations=ring_pixels), dtype=bool)
     ring = expanded & ~mask & np.isfinite(elevation)
     if int(ring.sum()) < min_ground_pixels:
         raise ValueError("not enough surrounding valid ground candidates")

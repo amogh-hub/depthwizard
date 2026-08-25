@@ -14,4 +14,6 @@ def run(*command: str) -> None:
 
 if __name__ == "__main__":
     run(sys.executable, "-m", "pytest")
-    print("Python verification passed.")
+    run(sys.executable, "-m", "ruff", "check", "src", "tests", "scripts")
+    run(sys.executable, "-m", "pyright", "src", "tests")
+    print("Python verification passed: tests, lint, and static typing are green.")

@@ -21,7 +21,7 @@ class WeightedTileAccumulator:
 
     @property
     def shape(self) -> tuple[int, int]:
-        return self._sum.shape
+        return int(self._sum.shape[0]), int(self._sum.shape[1])
 
     def add(self, tile: np.ndarray, y: int, x: int, weight: np.ndarray | None = None) -> None:
         t = np.asarray(tile, dtype=np.float64)
