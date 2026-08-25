@@ -1,0 +1,401 @@
+.dw-app {
+  display: grid;
+  grid-template-columns: var(--dw-toolrail-width) minmax(0, 1fr) var(--dw-inspector-width);
+  grid-template-rows: var(--dw-topbar-height) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  background: var(--dw-bg);
+  overflow: hidden;
+}
+
+.dw-topbar {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  padding: 0 var(--dw-space-4);
+  border-bottom: 1px solid var(--dw-border);
+  background: rgba(255, 255, 255, 0.97);
+  z-index: 20;
+}
+
+.dw-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.dw-mark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--dw-primary);
+  color: white;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.dw-project-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dw-project-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.dw-project-title span {
+  color: var(--dw-text-muted);
+  font-size: var(--dw-font-sm);
+}
+
+.dw-top-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-2);
+}
+
+.dw-btn {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: var(--dw-radius-sm);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  cursor: pointer;
+  transition: 120ms ease;
+}
+
+.dw-btn:hover {
+  border-color: #b9c3cf;
+  background: var(--dw-surface-subtle);
+}
+
+.dw-btn--primary {
+  border-color: var(--dw-primary);
+  background: var(--dw-primary);
+  color: #fff;
+}
+
+.dw-btn--primary:hover {
+  border-color: var(--dw-primary-hover);
+  background: var(--dw-primary-hover);
+}
+
+.dw-toolrail {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 7px;
+  border-right: 1px solid var(--dw-border);
+  background: var(--dw-surface);
+}
+
+.dw-tool {
+  width: 40px;
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: var(--dw-radius-sm);
+  background: transparent;
+  color: var(--dw-text-muted);
+  cursor: pointer;
+}
+
+.dw-tool:hover {
+  background: var(--dw-surface-subtle);
+  color: var(--dw-text);
+}
+
+.dw-tool[data-active="true"] {
+  background: var(--dw-primary-soft);
+  color: var(--dw-primary);
+  border-color: #d4e1f7;
+}
+
+.dw-workspace {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr) 34px;
+  background: #eef1f4;
+}
+
+.dw-workspace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--dw-border);
+  background: var(--dw-surface);
+}
+
+.dw-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-sm);
+  background: var(--dw-surface-subtle);
+}
+
+.dw-segmented button {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dw-text-muted);
+  cursor: pointer;
+}
+
+.dw-segmented button[data-active="true"] {
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+
+.dw-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #e7ebef;
+}
+
+.dw-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.dw-empty-canvas {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.dw-empty-card {
+  width: min(440px, calc(100% - 48px));
+  padding: 28px;
+  border: 1px solid rgba(207, 214, 223, 0.9);
+  border-radius: var(--dw-radius-lg);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--dw-shadow-panel);
+  text-align: left;
+}
+
+.dw-empty-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  letter-spacing: -0.015em;
+}
+
+.dw-empty-card p {
+  margin: 0;
+  color: var(--dw-text-muted);
+  line-height: 1.55;
+}
+
+.dw-workspace-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-top: 1px solid var(--dw-border);
+  background: var(--dw-surface);
+  color: var(--dw-text-muted);
+  font-size: var(--dw-font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-inspector {
+  grid-column: 3;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--dw-border);
+  background: var(--dw-surface);
+}
+
+.dw-inspector-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--dw-border);
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.dw-inspector-header h2 {
+  margin: 0;
+  font-size: var(--dw-font-lg);
+  font-weight: 650;
+}
+
+.dw-inspector-header p {
+  margin: 4px 0 0;
+  color: var(--dw-text-muted);
+  font-size: var(--dw-font-xs);
+}
+
+.dw-section {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--dw-border);
+}
+
+.dw-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--dw-text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dw-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.dw-metric {
+  padding: 10px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-sm);
+  background: var(--dw-surface-subtle);
+}
+
+.dw-metric span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--dw-text-muted);
+  font-size: var(--dw-font-xs);
+}
+
+.dw-metric strong {
+  font-size: 16px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-property-list {
+  display: grid;
+  gap: 9px;
+}
+
+.dw-property {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.dw-property dt {
+  color: var(--dw-text-muted);
+}
+
+.dw-property dd {
+  margin: 0;
+  max-width: 176px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 510;
+}
+
+.dw-pipeline {
+  display: grid;
+  gap: 5px;
+}
+
+.dw-stage {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--dw-text-muted);
+}
+
+.dw-stage-dot {
+  width: 8px;
+  height: 8px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: #c9d0d9;
+}
+
+.dw-stage[data-state="complete"] .dw-stage-dot {
+  background: var(--dw-success);
+}
+
+.dw-stage[data-state="active"] {
+  color: var(--dw-text);
+  font-weight: 580;
+}
+
+.dw-stage[data-state="active"] .dw-stage-dot {
+  background: var(--dw-primary);
+  box-shadow: 0 0 0 4px var(--dw-primary-soft);
+}
+
+.dw-stage small {
+  color: var(--dw-text-subtle);
+  font-size: 10px;
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-toolbar-group {
+  display: flex;
+  gap: 6px;
+}
+
+.dw-chip {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dw-border);
+  border-radius: 6px;
+  background: var(--dw-surface);
+  color: var(--dw-text-muted);
+  cursor: pointer;
+}
+
+.dw-chip[data-active="true"] {
+  color: var(--dw-primary);
+  background: var(--dw-primary-soft);
+  border-color: #d4e1f7;
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --dw-inspector-width: 288px;
+  }
+}

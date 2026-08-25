@@ -1,0 +1,17 @@
+model_id: DA3MONO-LARGE
+role: pretrained_monocular_geometry_prior
+upstream_repository: https://github.com/ByteDance-Seed/Depth-Anything-3
+upstream_model_source: depth-anything/DA3MONO-LARGE
+license: Apache-2.0
+output_interpretation: relative_camera_depth_converted_to_dimensionless_relative_surface_height
+metric_elevation_claim: false
+runtime_status: adapter_implemented_runtime_checkpoint_not_yet_materialized
+checkpoint_sha256: null
+upstream_commit: null
+verification_required:
+  - capture exact upstream commit used
+  - materialize checkpoint locally
+  - capture checkpoint sha256
+  - run CUDA/MPS/CPU compatibility matrix
+  - record peak memory and tile latency
+  - compare against Depth Anything V2 baseline on identical scenes

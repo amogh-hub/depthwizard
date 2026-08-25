@@ -1,0 +1,16 @@
+project:
+  ps_id: SIH26175
+  title: "DepthWizard - Single-View Height Estimation and 3D Flythrough"
+  organization: "Indian Space Research Organisation (ISRO)"
+  department: "Department of Space / Indian Space Research Organisation"
+  category: "Software"
+  theme: "Disaster Management"
+
+inputs:
+  supported_extensions: [".png", ".jpg", ".jpeg", ".tif", ".tiff"]
+  non_georeferenced_output: "rDSM"
+  georeferenced_output: "absolute DSM"
+
+metrics:
+  official: ["RMSE", "MAE", "Pearson correlation"]
+  terrain_classes: ["urban", "sparse", "hilly", "forested"]

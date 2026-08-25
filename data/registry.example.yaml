@@ -1,0 +1,14 @@
+schema_version: 1
+scenes:
+  # Replace with licensed local paths as datasets are materialized. The important constraint is
+  # geographic_group: a group may exist in exactly one split, preventing adjacent-patch leakage.
+  - scene_id: example-urban-train
+    dataset: placeholder-registry-example
+    split: train
+    terrain: urban
+    geographic_group: city-a
+    sensor: sensor-a
+    rgb_path: /data/example/city-a-rgb.tif
+    reference_path: /data/example/city-a-dsm.tif
+    nominal_gsd_m: 0.5
+    license_id: replace-before-use

@@ -1,0 +1,71 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --dw-bg: #f6f7f9;
+  --dw-surface: #ffffff;
+  --dw-surface-subtle: #f9fafb;
+  --dw-surface-selected: #eef4ff;
+  --dw-text: #152033;
+  --dw-text-muted: #667085;
+  --dw-text-subtle: #98a2b3;
+  --dw-border: #e3e7ed;
+  --dw-border-strong: #cfd6df;
+  --dw-primary: #315ea8;
+  --dw-primary-hover: #274f91;
+  --dw-primary-soft: #eaf1fd;
+  --dw-success: #3f7d5b;
+  --dw-warning: #a66a22;
+  --dw-danger: #b54d4d;
+
+  --dw-radius-xs: 4px;
+  --dw-radius-sm: 7px;
+  --dw-radius-md: 10px;
+  --dw-radius-lg: 14px;
+
+  --dw-shadow-panel: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.035);
+
+  --dw-space-1: 4px;
+  --dw-space-2: 8px;
+  --dw-space-3: 12px;
+  --dw-space-4: 16px;
+  --dw-space-6: 24px;
+  --dw-space-8: 32px;
+  --dw-space-12: 48px;
+
+  --dw-topbar-height: 56px;
+  --dw-toolrail-width: 56px;
+  --dw-inspector-width: 320px;
+
+  --dw-font-xs: 11px;
+  --dw-font-sm: 12px;
+  --dw-font-md: 13px;
+  --dw-font-lg: 15px;
+  --dw-font-xl: 20px;
+  --dw-font-2xl: 28px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--dw-bg);
+  color: var(--dw-text);
+  font-size: var(--dw-font-md);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}

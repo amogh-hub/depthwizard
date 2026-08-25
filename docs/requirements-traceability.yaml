@@ -1,0 +1,176 @@
+requirements:
+  - id: PS-INPUT-001
+    clause: "Transform single-view optical RGB remote-sensing imagery"
+    implementation:
+      - depthwizard.io.raster.read_rgb
+      - depthwizard.preprocess.stats
+      - depthwizard.pipeline.geometry
+    verification: "RGB ingest + tiled geometry integration tests"
+    evidence: "input_compatibility_report.json"
+
+  - id: PS-RDSM-001
+    clause: "Non-georeferenced PNG/JPG imagery produces a Relative Digital Surface Model (rDSM)"
+    implementation:
+      - depthwizard.contracts.InputKind
+      - depthwizard.io.raster.write_relative_tiff
+    verification: "absence of CRS/transform preserves relative-only output and relative-unit tags"
+    evidence: "rdsm_export_test.json"
+
+  - id: PS-DSM-001
+    clause: "Georeferenced imagery produces an absolute DSM with metric height values"
+    implementation:
+      - depthwizard.calibration.evidence
+      - depthwizard.calibration.gcp
+      - depthwizard.io.raster.write_float_geotiff
+    verification: "metric calibration + CRS/transform preserving GeoTIFF tests"
+    evidence: "dsm_export_test.json"
+
+  - id: PS-BACKBONE-001
+    clause: "Use a robust pre-trained monocular depth-estimation backbone"
+    implementation:
+      - depthwizard.geometry_prior.base
+      - depthwizard.geometry_prior.da3.DA3MonocularPrior
+    verification: "checkpoint/model manifest + accelerator-specific inference integration suite"
+    evidence: "backbone_manifest.json"
+
+  - id: PS-DOMAINGAP-001
+    clause: "Address remote-sensing domain gaps and structural variation"
+    implementation:
+      - final remote-sensing refinement network (training lane)
+      - sensor/GSD-aware dataset registry and cross-sensor holdout policy
+    verification: "same-split baseline comparison + cross-sensor/terrain generalization benchmark"
+    evidence: "domain_generalization_report.json"
+
+  - id: PS-CAL-DEM-001
+    clause: "Use lower-resolution DEM evidence such as SRTM to map scale-agnostic depth to metric elevation"
+    implementation:
+      - depthwizard.io.raster.reproject_to_match
+      - depthwizard.calibration.evidence.calibrate_relative_height_with_dem
+    verification: "coarse-DEM integration test + calibration residual benchmark"
+    evidence: "calibration_dem_report.json"
+
+  - id: PS-CAL-GCP-001
+    clause: "Support a limited set of Ground Control Points for absolute metric calibration"
+    implementation:
+      - depthwizard.calibration.gcp.calibrate_relative_height_with_gcps
+    verification: "world-coordinate GCP sampling and scale/offset recovery tests"
+    evidence: "calibration_gcp_report.json"
+
+  - id: PS-CAL-SEM-001
+    clause: "Scale calibration may use semantic priors and scene-level statistics"
+    implementation:
+      - depthwizard.calibration.evidence.build_anchor_weights
+      - final semantic/uncertainty heads (training lane)
+    verification: "anchor-quality and semantic-prior ablation"
+    evidence: "semantic_calibration_ablation.json"
+
+  - id: PS-TILING-001
+    clause: "High-precision elevation output must remain usable on operational remote-sensing scenes"
+    implementation:
+      - depthwizard.tiling.grid
+      - depthwizard.tiling.blend
+      - depthwizard.pipeline.geometry overlap harmonization
+    verification: "large-scene overlap/scale-drift tests and seam metric"
+    evidence: "tiling_consistency_report.json"
+
+  - id: PS-3D-001
+    clause: "Project the original optical image onto a generated 3D terrain mesh"
+    implementation:
+      - depthwizard.mesh.terrain
+      - apps/desktop TerrainViewport GLB rendering path
+    verification: "metric coordinate/UV export tests + projection-registration QA"
+    evidence: "projection_accuracy_report.json"
+
+  - id: PS-NAV-001
+    clause: "Support seamless first-person navigation and arbitrary aerial perspectives"
+    implementation:
+      - apps/desktop TerrainViewport Orbit/Fly/FirstPerson/TopDown controls
+    verification: "interaction automation + FPS/latency benchmark on finale hardware"
+    evidence: "3d_navigation_benchmark.json"
+
+  - id: PS-HEIGHT-001
+    clause: "Analysis of structural heights"
+    implementation:
+      - depthwizard.analysis.structures.estimate_structure_height
+      - contextual desktop measurement inspector
+    verification: "local-ground structural-height tests + reference-height task benchmark"
+    evidence: "structural_height_validation.json"
+
+  - id: PS-SLOPE-001
+    clause: "Analysis of slopes"
+    implementation:
+      - depthwizard.evaluation.metrics.slope_degrees
+      - depthwizard.analysis.profile
+      - desktop slope/profile tools
+    verification: "analytic planar-slope tests + reference slope comparison"
+    evidence: "slope_validation.json"
+
+  - id: PS-METRICS-001
+    clause: "Evaluate DSM using RMSE, MAE and correlation against LiDAR/reference data"
+    implementation:
+      - depthwizard.evaluation.metrics
+      - depthwizard.evaluation.report
+    verification: "deterministic unit tests + exact-grid aligned geospatial validation"
+    evidence: "metrics.json"
+
+  - id: PS-TERRAIN-001
+    clause: "Demonstrate performance stability across urban, sparse, hilly and forested landscapes"
+    implementation:
+      - depthwizard.data.registry terrain labels and geographic split controls
+    verification: "geographically disjoint four-terrain benchmark"
+    evidence: "terrain_breakdown.csv"
+
+  - id: PS-VIS-001
+    clause: "Rendering quality, projection accuracy and visual fidelity"
+    implementation:
+      - textured metric GLB/LOD exporter
+      - Three.js renderer with neutral scientific workstation design system
+    verification: "projection tests, render QA, LOD/FPS benchmark"
+    evidence: "rendering_quality_report.json"
+
+  - id: PS-UX-001
+    clause: "Interface intuitiveness and navigability"
+    implementation:
+      - permanent VeilGraph-derived DepthWizard UI system
+      - contextual inspector, restrained controls, visible deterministic workflow state
+    verification: "task-based analyst usability protocol"
+    evidence: "ux_acceptance_report.md"
+
+  - id: PS-REF-001
+    clause: "Allow users to validate estimated height values against reference datasets"
+    implementation:
+      - depthwizard.evaluation.report.validate_geospatial_dsm
+      - residual.tif and official metrics artifacts
+      - desktop comparison workspace (rendering lane)
+    verification: "reference reprojection + residual/metrics integration tests"
+    evidence: "reference_validation_report.json"
+
+  - id: PS-EXPORT-001
+    clause: "Output a high-fidelity DSM in a standard geospatial format"
+    implementation:
+      - GeoTIFF/float32 export with CRS, transform, NoData and product tags
+    verification: "round-trip GeoTIFF metadata test"
+    evidence: "geospatial_export_report.json"
+
+  - id: PS-STANDALONE-001
+    clause: "Successful standalone deployment as a unified software suite"
+    implementation:
+      - Tauri desktop application
+      - loopback Python scientific sidecar with constrained API boundary
+    verification: "clean-machine install/start/process/validate/export test"
+    evidence: "standalone_acceptance_report.md"
+
+  - id: PS-STABILITY-001
+    clause: "Software stability"
+    implementation:
+      - typed contracts, bounded tiling, explicit errors, provenance and project manifests
+      - CI/unit/integration test suite
+    verification: "2-hour scripted soak test + malformed raster/error-recovery suite"
+    evidence: "software_stability_report.json"
+
+  - id: PS-DOCS-001
+    clause: "Complete source code and technical documentation"
+    implementation:
+      - monorepo + MASTER_SPEC + ADRs + traceability + API/user/deployment docs
+    verification: "reproducibility dry run from clean environment"
+    evidence: "reproducibility_report.md"

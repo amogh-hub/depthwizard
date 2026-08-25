@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "depthwizard"
+version = "0.2.0"
+description = "ISRO SIH26175 DepthWizard final-system engineering repository"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=1.26,<2",
+  "scipy>=1.14",
+  "rasterio>=1.4",
+  "pyproj>=3.7",
+  "pydantic>=2.10",
+  "typer>=0.15",
+  "rich>=13.9",
+  "PyYAML>=6.0",
+  "fastapi>=0.128",
+  "uvicorn>=0.48",
+  "Pillow>=12.0",
+  "trimesh>=4.11",
+]
+
+[project.optional-dependencies]
+ml = [
+  "torch>=2.6",
+  "torchvision>=0.21",
+]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.9",
+  "pyright>=1.1.390",
+]
+
+[project.scripts]
+depthwizard = "depthwizard.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/depthwizard"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"
+filterwarnings = [
+  "ignore:Dataset has no geotransform.*:rasterio.errors.NotGeoreferencedWarning",
+]
+
+[tool.ruff]
+line-length = 100
