@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { inspectRaster, type RasterMetadata } from "./api";
-import { Inspector } from "./components/Inspector";
+import { Inspector, type ValidationEvidence } from "./components/Inspector";
 import { ToolRail } from "./components/ToolRail";
 import { UploadIcon } from "./components/icons";
 import { TerrainViewport, type CameraMode } from "./workspace/TerrainViewport";
@@ -15,19 +15,45 @@ const cameraModes: { id: CameraMode; label: string }[] = [
   { id: "topDown", label: "Top down" },
 ];
 
-type ReconstructionReport = {
-  source: string;
-  model_id: string;
+type AbsoluteDemoReport = {
+  status: string;
+  scene: string;
+  purpose: string;
+  model: string;
+  device: string;
   shape: [number, number];
-  georeferenced: boolean;
+  tile_count: number;
+  harmonized_tiles: number;
+  crs: string | null;
+  gsd_x_m: number;
+  gsd_y_m: number;
+  dsm: string;
+  imagery: {
+    source: string;
+    path: string;
+  };
+  calibration: {
+    method?: string;
+    scale?: number;
+    offset?: number;
+    orientation_flipped?: boolean;
+    anchor_correlation_before?: number;
+    anchor_correlation_after?: number;
+  };
 };
 
-type MeshReport = {
-  crs: string | null;
-  gsd_x: number;
-  gsd_y: number;
-  vertical_scale: number;
-  valid_fraction?: number;
+type BenchmarkReport = {
+  dataset: string;
+  protocol: string;
+  results: Array<{
+    anchor_count: number;
+    heldout_pixels: number;
+    metrics: {
+      rmse_m: number;
+      mae_m: number;
+      pearson_r: number | null;
+    };
+  }>;
 };
 
 export function App() {
@@ -39,7 +65,8 @@ export function App() {
   const [metadata, setMetadata] = useState<RasterMetadata | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const [demoScale, setDemoScale] = useState<number | null>(null);
+  const [demoReport, setDemoReport] = useState<AbsoluteDemoReport | null>(null);
+  const [validationEvidence, setValidationEvidence] = useState<ValidationEvidence | null>(null);
   const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : undefined;
   const geometryReady = Boolean(meshUrl);
 
@@ -47,30 +74,43 @@ export function App() {
     if (!demoMode) return;
     let cancelled = false;
     Promise.all([
-      fetch("/demo/reconstruction_report.json").then((response) => {
-        if (!response.ok) throw new Error("Unable to load reconstruction report");
-        return response.json() as Promise<ReconstructionReport>;
+      fetch("/demo/absolute_demo_report.json").then((response) => {
+        if (!response.ok) throw new Error("Unable to load absolute-DSM engineering report");
+        return response.json() as Promise<AbsoluteDemoReport>;
       }),
-      fetch("/demo/mesh_report.json").then((response) => {
-        if (!response.ok) throw new Error("Unable to load mesh report");
-        return response.json() as Promise<MeshReport>;
+      fetch("/demo/benchmark_report.json").then((response) => {
+        if (!response.ok) throw new Error("Unable to load held-out benchmark report");
+        return response.json() as Promise<BenchmarkReport>;
       }),
     ])
-      .then(([reconstruction, mesh]) => {
+      .then(([absoluteReport, benchmark]) => {
         if (cancelled) return;
+        setDemoReport(absoluteReport);
         setMetadata({
-          path: reconstruction.source,
-          width: reconstruction.shape[1],
-          height: reconstruction.shape[0],
+          path: absoluteReport.imagery.path,
+          width: absoluteReport.shape[1],
+          height: absoluteReport.shape[0],
           count: 3,
           dtype: "source RGB",
-          crs: mesh.crs,
+          crs: absoluteReport.crs,
           transform: null,
           nodata: null,
-          ground_sample_distance_x: mesh.gsd_x,
-          ground_sample_distance_y: mesh.gsd_y,
+          ground_sample_distance_x: absoluteReport.gsd_x_m,
+          ground_sample_distance_y: absoluteReport.gsd_y_m,
         });
-        setDemoScale(mesh.vertical_scale);
+        const preferred = benchmark.results.find((item) => item.anchor_count === 64)
+          ?? benchmark.results.at(-1);
+        if (preferred) {
+          setValidationEvidence({
+            dataset: benchmark.dataset,
+            protocol: benchmark.protocol,
+            anchorCount: preferred.anchor_count,
+            heldoutPixels: preferred.heldout_pixels,
+            rmseM: preferred.metrics.rmse_m,
+            maeM: preferred.metrics.mae_m,
+            pearsonR: preferred.metrics.pearson_r,
+          });
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -83,7 +123,7 @@ export function App() {
   }, [demoMode]);
 
   const projectName = useMemo(
-    () => (demoMode ? "GeoTIFF rDSM reconstruction" : metadata?.path.split(/[\\/]/).pop() ?? "Untitled reconstruction"),
+    () => (demoMode ? "Joshimath absolute DSM" : metadata?.path.split(/[\\/]/).pop() ?? "Untitled reconstruction"),
     [demoMode, metadata],
   );
 
@@ -170,13 +210,21 @@ export function App() {
           {meshUrl && (
             <>
               <div className="dw-canvas-context">
-                <strong>Relative DSM</strong>
-                <span>DA3MONO-LARGE · textured terrain</span>
+                <strong>{demoMode ? "Absolute DSM" : "Relative DSM"}</strong>
+                <span>
+                  {demoMode
+                    ? `${demoReport?.scene ?? "India scene"} · ${demoReport?.model ?? "DA3MONO-LARGE"}`
+                    : "DA3MONO-LARGE · textured terrain"}
+                </span>
               </div>
               <div className="dw-north-indicator" aria-label="North indicator"><strong>N</strong><span>↑</span></div>
               <div className="dw-scene-badge">
-                <strong>Relative elevation</strong>
-                <span>{demoScale ? `${demoScale.toLocaleString()}× visualization scale` : "visualization scale"} · not metric height</span>
+                <strong>{demoMode ? "Metric elevation" : "Relative elevation"}</strong>
+                <span>
+                  {demoMode
+                    ? "DEM-calibrated · metres · engineering path"
+                    : "dimensionless relative surface height · not metric height"}
+                </span>
               </div>
             </>
           )}
@@ -198,7 +246,9 @@ export function App() {
 
         <footer className="dw-workspace-status">
           <span>{geometryReady ? "Reconstruction loaded · local processing" : metadata ? "Input ready · local processing" : "Ready · local processing"}</span>
-          <span>{metadata?.crs ?? "Projection —"} · GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} m · {geometryReady ? "rDSM" : "Elevation —"}</span>
+          <span>
+            {metadata?.crs ?? "Projection —"} · GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} m · {demoMode && geometryReady ? "DSM metres" : geometryReady ? "rDSM" : "Elevation —"}
+          </span>
         </footer>
       </section>
 
@@ -206,7 +256,12 @@ export function App() {
         metadata={metadata}
         geometryReady={geometryReady}
         meshReady={geometryReady}
-        elevationMode={geometryReady ? "Relative DSM" : undefined}
+        calibrationReady={demoMode && geometryReady}
+        elevationMode={demoMode && geometryReady ? "Absolute DSM (m)" : geometryReady ? "Relative DSM" : undefined}
+        modelId={demoReport?.model}
+        tileCount={demoReport?.tile_count}
+        harmonizedTiles={demoReport?.harmonized_tiles}
+        validationEvidence={validationEvidence}
       />
     </main>
   );
