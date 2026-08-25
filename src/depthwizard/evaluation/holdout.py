@@ -102,10 +102,13 @@ def sparse_anchor_holdout_benchmark(
 
     if exclusion_radius_px > 0:
         size = 2 * exclusion_radius_px + 1
-        excluded = binary_dilation(anchor_mask, structure=np.ones((size, size), dtype=bool))
+        excluded = np.asarray(
+            binary_dilation(anchor_mask, structure=np.ones((size, size), dtype=bool)),
+            dtype=bool,
+        )
     else:
-        excluded = anchor_mask
-    evaluation_mask = valid & ~excluded
+        excluded = anchor_mask.copy()
+    evaluation_mask = np.asarray(valid & np.logical_not(excluded), dtype=bool)
     if int(evaluation_mask.sum()) == 0:
         raise ValueError("anchor exclusion removed every evaluation pixel")
 
