@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import time
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +14,14 @@ from rich import print
 from depthwizard.calibration.evidence import calibrate_relative_height_with_dem
 from depthwizard.evaluation.metrics import compute_elevation_metrics
 from depthwizard.evaluation.report import validate_geospatial_dsm
-from depthwizard.io.raster import inspect_raster, reproject_to_match, write_float_geotiff
+from depthwizard.geometry_prior.da3 import DA3MonocularPrior
+from depthwizard.io.raster import (
+    inspect_raster,
+    reproject_to_match,
+    write_float_geotiff,
+    write_relative_tiff,
+)
+from depthwizard.pipeline.geometry import infer_geometry_scene
 
 app = typer.Typer(no_args_is_help=True, help="DepthWizard engineering CLI")
 
@@ -21,6 +31,93 @@ def inspect(path: Path) -> None:
     """Inspect an input raster and classify its geospatial metadata state."""
     meta = inspect_raster(path)
     print(meta.model_dump_json(indent=2))
+
+
+@app.command("reconstruct-da3")
+def reconstruct_da3(
+    source: Path,
+    output_dir: Path,
+    tile_size: int = typer.Option(1024, min=256, help="Inference tile edge in source pixels"),
+    overlap: int = typer.Option(128, min=0, help="Tile overlap in source pixels"),
+    harmonize_overlaps: bool = typer.Option(
+        True,
+        help="Robustly scale/offset harmonize overlapping monocular tiles",
+    ),
+) -> None:
+    """Generate a production rDSM from RGB imagery with the pinned DA3MONO-LARGE prior."""
+    if not source.exists():
+        raise typer.BadParameter(f"source does not exist: {source}")
+    if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}:
+        raise typer.BadParameter("source must be PNG, JPG/JPEG, TIFF, or GeoTIFF")
+    if overlap >= tile_size:
+        raise typer.BadParameter("overlap must be smaller than tile_size")
+
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    meta = inspect_raster(source)
+    prior = DA3MonocularPrior(device="auto")
+
+    started = time.perf_counter()
+    scene = infer_geometry_scene(
+        source,
+        prior,
+        tile_size=tile_size,
+        overlap=overlap,
+        harmonize_overlaps=harmonize_overlaps,
+    )
+    elapsed = time.perf_counter() - started
+
+    rdsm_path = output_dir / "rdsm.tif"
+    georeferenced = meta.crs is not None and meta.transform is not None
+    if georeferenced:
+        write_float_geotiff(
+            rdsm_path,
+            scene.relative_height,
+            template_path=source,
+            description="DepthWizard relative DSM (dimensionless)",
+            tags={
+                "DEPTHWIZARD_PRODUCT": "RELATIVE_DSM_DIMENSIONLESS",
+                "ELEVATION_UNITS": "relative",
+                "MODEL_ID": scene.model_id,
+            },
+        )
+    else:
+        write_relative_tiff(rdsm_path, scene.relative_height)
+
+    confidence_path: Path | None = None
+    if scene.confidence is not None:
+        confidence_path = output_dir / "confidence.npy"
+        np.save(confidence_path, scene.confidence.astype(np.float32, copy=False))
+
+    report = {
+        "status": "PASS",
+        "source": str(source.resolve()),
+        "product": "rDSM",
+        "units": "dimensionless_relative_elevation",
+        "georeferenced": georeferenced,
+        "model_id": scene.model_id,
+        "device": prior._resolved_device or "unknown",
+        "shape": list(scene.relative_height.shape),
+        "tile_size": tile_size,
+        "overlap": overlap,
+        "tile_count": scene.tile_count,
+        "harmonized_tiles": scene.harmonized_tiles,
+        "normalization": asdict(scene.normalization),
+        "wall_time_seconds": elapsed,
+        "rdsm": str(rdsm_path.resolve()),
+        "confidence": str(confidence_path.resolve()) if confidence_path is not None else None,
+    }
+    report_path = output_dir / "reconstruction_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    print("[bold green]DepthWizard DA3 reconstruction: PASS[/bold green]")
+    print(f"Model: {scene.model_id}")
+    print(f"Device: {report['device']}")
+    print(f"Product: {rdsm_path}")
+    print(f"Tiles: {scene.tile_count} ({scene.harmonized_tiles} harmonized)")
+    print(f"Wall time: {elapsed:.2f} s")
+    print(f"Report: {report_path}")
 
 
 @app.command()
