@@ -4,16 +4,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DESKTOP="$ROOT/apps/desktop"
 SOURCE_MESH="$ROOT/artifacts/demo/geotiff-mesh/terrain-lod2.glb"
+MESH_REPORT="$ROOT/artifacts/demo/geotiff-mesh/mesh_report.json"
+RECON_REPORT="$ROOT/artifacts/demo/geotiff-rdsm/reconstruction_report.json"
 PUBLIC_DIR="$DESKTOP/public/demo"
 PUBLIC_MESH="$PUBLIC_DIR/terrain.glb"
 
-if [[ ! -f "$SOURCE_MESH" ]]; then
-  echo "ERROR: $SOURCE_MESH is missing. Run 'make demo-mesh' first." >&2
-  exit 1
-fi
+for required in "$SOURCE_MESH" "$MESH_REPORT" "$RECON_REPORT"; do
+  if [[ ! -f "$required" ]]; then
+    echo "ERROR: $required is missing. Run 'make demo-rdsm' and 'make demo-mesh' first." >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$PUBLIC_DIR"
 cp "$SOURCE_MESH" "$PUBLIC_MESH"
+cp "$MESH_REPORT" "$PUBLIC_DIR/mesh_report.json"
+cp "$RECON_REPORT" "$PUBLIC_DIR/reconstruction_report.json"
 
 cd "$DESKTOP"
 if [[ ! -d node_modules ]]; then
@@ -21,7 +27,6 @@ if [[ ! -d node_modules ]]; then
   npm install
 fi
 
-# Open the real generated mesh in the DepthWizard scientific workspace after Vite is ready.
 (
   sleep 2
   open "http://127.0.0.1:5173/?demo=1"
