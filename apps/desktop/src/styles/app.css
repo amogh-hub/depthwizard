@@ -189,6 +189,35 @@
   height: 100%;
 }
 
+.dw-evidence-badge {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 5;
+  display: grid;
+  gap: 3px;
+  max-width: min(460px, calc(100% - 28px));
+  padding: 9px 11px;
+  border: 1px solid rgba(203, 211, 221, 0.92);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 3px 12px rgba(16, 24, 40, 0.08);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.dw-evidence-badge strong {
+  color: var(--dw-text);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.dw-evidence-badge span {
+  color: var(--dw-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
 .dw-empty-canvas {
   position: absolute;
   inset: 0;
