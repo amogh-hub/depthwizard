@@ -84,9 +84,19 @@ def terrain_mesh_from_dsm(
             b = a + 1
             c = (row + 1) * w + col
             d = c + 1
-            if sampled_valid[row, col] and sampled_valid[row + 1, col] and sampled_valid[row, col + 1]:
+            triangle_1_valid = (
+                sampled_valid[row, col]
+                and sampled_valid[row + 1, col]
+                and sampled_valid[row, col + 1]
+            )
+            triangle_2_valid = (
+                sampled_valid[row, col + 1]
+                and sampled_valid[row + 1, col]
+                and sampled_valid[row + 1, col + 1]
+            )
+            if triangle_1_valid:
                 faces.append((a, c, b))
-            if sampled_valid[row, col + 1] and sampled_valid[row + 1, col] and sampled_valid[row + 1, col + 1]:
+            if triangle_2_valid:
                 faces.append((b, c, d))
 
     if not faces:
@@ -105,7 +115,11 @@ def terrain_mesh_from_dsm(
         else:
             low = np.percentile(image, 1, axis=(0, 1), keepdims=True)
             high = np.percentile(image, 99, axis=(0, 1), keepdims=True)
-            image = np.clip((image - low) / np.maximum(high - low, 1e-6) * 255.0, 0, 255)
+            image = np.clip(
+                (image - low) / np.maximum(high - low, 1e-6) * 255.0,
+                0,
+                255,
+            )
         image = image.astype(np.uint8)
 
     material = PBRMaterial(
