@@ -6,18 +6,38 @@ function gsdLabel(meta: RasterMetadata | null): string {
   return `${meta.ground_sample_distance_x.toFixed(3)} × ${meta.ground_sample_distance_y.toFixed(3)} m`;
 }
 
+export type ValidationEvidence = {
+  dataset: string;
+  protocol: string;
+  anchorCount: number;
+  heldoutPixels: number;
+  rmseM: number;
+  maeM: number;
+  pearsonR: number | null;
+};
+
 type InspectorProps = {
   metadata: RasterMetadata | null;
   geometryReady?: boolean;
   meshReady?: boolean;
+  calibrationReady?: boolean;
   elevationMode?: string;
+  modelId?: string;
+  tileCount?: number;
+  harmonizedTiles?: number;
+  validationEvidence?: ValidationEvidence | null;
 };
 
 export function Inspector({
   metadata,
   geometryReady = false,
   meshReady = false,
+  calibrationReady = false,
   elevationMode,
+  modelId,
+  tileCount,
+  harmonizedTiles,
+  validationEvidence,
 }: InspectorProps) {
   const hasInput = metadata !== null;
   const georeferenced = Boolean(metadata?.crs);
@@ -34,10 +54,10 @@ export function Inspector({
         <div className="dw-section-title">Project state</div>
         <StatusPipeline stages={[
           { label: "Input", state: hasInput ? "complete" : "pending", detail: hasInput ? "ready" : "" },
-          { label: "Geometry", state: geometryReady ? "complete" : hasInput ? "active" : "pending", detail: geometryReady ? "DA3" : "" },
-          { label: "Calibration", state: "pending", detail: georeferenced ? "DEM/GCP" : "relative" },
-          { label: "DSM", state: geometryReady ? "complete" : "pending", detail: geometryReady ? "rDSM" : "" },
-          { label: "Validation", state: "pending", detail: "reference" },
+          { label: "Geometry", state: geometryReady ? "complete" : hasInput ? "active" : "pending", detail: geometryReady ? (modelId ?? "DA3") : "" },
+          { label: "Calibration", state: calibrationReady ? "complete" : "pending", detail: calibrationReady ? "DEM evidence" : georeferenced ? "DEM/GCP" : "relative" },
+          { label: "DSM", state: geometryReady ? "complete" : "pending", detail: geometryReady ? (calibrationReady ? "absolute" : "relative") : "" },
+          { label: "Validation", state: "pending", detail: "scene reference" },
           { label: "3D export", state: meshReady ? "complete" : "pending", detail: meshReady ? "GLB LOD" : "" },
         ]} />
       </section>
@@ -50,15 +70,34 @@ export function Inspector({
           <div className="dw-property"><dt>GSD</dt><dd>{gsdLabel(metadata)}</dd></div>
           <div className="dw-property"><dt>Raster size</dt><dd>{metadata ? `${metadata.width} × ${metadata.height}` : "—"}</dd></div>
           <div className="dw-property"><dt>Elevation product</dt><dd>{mode}</dd></div>
+          <div className="dw-property"><dt>Geometry model</dt><dd>{modelId ?? (geometryReady ? "DA3" : "—")}</dd></div>
+          <div className="dw-property"><dt>Tiling</dt><dd>{tileCount === undefined ? "—" : `${tileCount} tiles · ${harmonizedTiles ?? 0} harmonized`}</dd></div>
         </dl>
       </section>
 
       <section className="dw-section">
-        <div className="dw-section-title">Official validation</div>
-        <div className="dw-validation-empty">
-          <strong>Reference DSM required</strong>
-          <p>Load LiDAR or another reference surface to compute RMSE, MAE, correlation and residual diagnostics.</p>
-        </div>
+        <div className="dw-section-title">Held-out model evidence</div>
+        {validationEvidence ? (
+          <>
+            <dl className="dw-property-list">
+              <div className="dw-property"><dt>Dataset</dt><dd>{validationEvidence.dataset}</dd></div>
+              <div className="dw-property"><dt>Protocol</dt><dd>{validationEvidence.anchorCount}-anchor holdout</dd></div>
+              <div className="dw-property"><dt>RMSE</dt><dd>{validationEvidence.rmseM.toFixed(3)} m</dd></div>
+              <div className="dw-property"><dt>MAE</dt><dd>{validationEvidence.maeM.toFixed(3)} m</dd></div>
+              <div className="dw-property"><dt>Pearson r</dt><dd>{validationEvidence.pearsonR === null ? "—" : validationEvidence.pearsonR.toFixed(3)}</dd></div>
+              <div className="dw-property"><dt>Held-out pixels</dt><dd>{validationEvidence.heldoutPixels.toLocaleString()}</dd></div>
+            </dl>
+            <div className="dw-validation-empty">
+              <strong>Separate benchmark scene</strong>
+              <p>These metrics are from the declared sparse-anchor OrthoLoC holdout protocol, not reference validation of the currently displayed terrain.</p>
+            </div>
+          </>
+        ) : (
+          <div className="dw-validation-empty">
+            <strong>Reference DSM required</strong>
+            <p>Load LiDAR or another reference surface to compute RMSE, MAE, correlation and residual diagnostics.</p>
+          </div>
+        )}
       </section>
     </aside>
   );
