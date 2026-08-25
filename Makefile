@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh
+.PHONY: test verify service frontend-build da3-setup da3-smoke demo-rdsm demo-mesh demo-ui
 
 test:
 	python -m pytest
@@ -23,3 +23,6 @@ demo-rdsm:
 
 demo-mesh:
 	depthwizard mesh-rdsm artifacts/demo/geotiff-rdsm/rdsm.tif data/demo/RGB.byte.tif artifacts/demo/geotiff-mesh --vertical-scale 5000
+
+demo-ui:
+	bash scripts/demo_ui.sh
