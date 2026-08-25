@@ -42,6 +42,7 @@ export function Inspector({
   const hasInput = metadata !== null;
   const georeferenced = Boolean(metadata?.crs);
   const mode = elevationMode ?? (hasInput ? (georeferenced ? "Calibration eligible" : "Relative DSM") : "—");
+  const benchmarkDataset = validationEvidence?.dataset.split("/")[0]?.trim() ?? "—";
 
   return (
     <aside className="dw-inspector" aria-label="Analysis inspector">
@@ -80,8 +81,8 @@ export function Inspector({
         {validationEvidence ? (
           <>
             <dl className="dw-property-list">
-              <div className="dw-property"><dt>Dataset</dt><dd>{validationEvidence.dataset}</dd></div>
-              <div className="dw-property"><dt>Protocol</dt><dd>{validationEvidence.anchorCount}-anchor holdout</dd></div>
+              <div className="dw-property"><dt>Dataset</dt><dd title={validationEvidence.dataset}>{benchmarkDataset}</dd></div>
+              <div className="dw-property"><dt>Protocol</dt><dd>{validationEvidence.anchorCount} sparse anchors</dd></div>
               <div className="dw-property"><dt>RMSE</dt><dd>{validationEvidence.rmseM.toFixed(3)} m</dd></div>
               <div className="dw-property"><dt>MAE</dt><dd>{validationEvidence.maeM.toFixed(3)} m</dd></div>
               <div className="dw-property"><dt>Pearson r</dt><dd>{validationEvidence.pearsonR === null ? "—" : validationEvidence.pearsonR.toFixed(3)}</dd></div>
@@ -89,7 +90,7 @@ export function Inspector({
             </dl>
             <div className="dw-validation-empty">
               <strong>Separate benchmark scene</strong>
-              <p>These metrics are from the declared sparse-anchor OrthoLoC holdout protocol, not reference validation of the currently displayed terrain.</p>
+              <p>Metrics use the declared sparse-anchor OrthoLoC holdout protocol; they are not reference validation of the displayed Joshimath terrain.</p>
             </div>
           </>
         ) : (
