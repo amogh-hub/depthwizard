@@ -16,9 +16,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
-      - run: pytest
-      - run: ruff check src tests
+      - run: python -m pip install -e ".[dev,ml]"
+      - run: python scripts/verify.py
 
   desktop-frontend:
     runs-on: ubuntu-latest
@@ -30,5 +29,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install
+      - run: npm install --no-audit --no-fund
       - run: npm run build
