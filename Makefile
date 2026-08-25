@@ -10,7 +10,7 @@ service:
 	depthwizard serve --host 127.0.0.1 --port 8765
 
 frontend-build:
-	cd apps/desktop && npm run build
+	cd apps/desktop && npm install --no-audit --no-fund && npm run build
 
 da3-setup:
 	bash scripts/setup_da3_macos.sh
