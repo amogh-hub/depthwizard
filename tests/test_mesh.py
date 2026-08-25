@@ -23,3 +23,16 @@ def test_metric_mesh_coordinates_and_export(tmp_path: Path) -> None:
     assert output.exists()
     assert output.stat().st_size > 100
     assert result.faces == 40
+
+
+def test_invalid_source_pixels_remove_terrain_faces() -> None:
+    elevation = np.arange(16, dtype=np.float32).reshape(4, 4)
+    rgb = np.full((4, 4, 3), 140, dtype=np.uint8)
+    valid = np.ones((4, 4), dtype=bool)
+    valid[:2, :2] = False
+
+    full = terrain_mesh_from_dsm(elevation, rgb)
+    masked = terrain_mesh_from_dsm(elevation, rgb, valid_mask=valid)
+
+    assert len(full.faces) == 18
+    assert 0 < len(masked.faces) < len(full.faces)
