@@ -17,10 +17,12 @@ from depthwizard.evaluation.report import validate_geospatial_dsm
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import (
     inspect_raster,
+    read_rgb,
     reproject_to_match,
     write_float_geotiff,
     write_relative_tiff,
 )
+from depthwizard.mesh.terrain import export_lod_pyramid
 from depthwizard.pipeline.geometry import infer_geometry_scene
 
 app = typer.Typer(no_args_is_help=True, help="DepthWizard engineering CLI")
@@ -116,6 +118,92 @@ def reconstruct_da3(
     print(f"Device: {report['device']}")
     print(f"Product: {rdsm_path}")
     print(f"Tiles: {scene.tile_count} ({scene.harmonized_tiles} harmonized)")
+    print(f"Wall time: {elapsed:.2f} s")
+    print(f"Report: {report_path}")
+
+
+@app.command("mesh-rdsm")
+def mesh_rdsm(
+    rdsm: Path,
+    texture: Path,
+    output_dir: Path,
+    vertical_scale: float = typer.Option(
+        1.0,
+        min=1e-6,
+        help="Visualization-only multiplier for dimensionless rDSM elevation",
+    ),
+) -> None:
+    """Export textured GLB LOD terrain from a DepthWizard rDSM and matching RGB source."""
+    if not rdsm.exists():
+        raise typer.BadParameter(f"rDSM does not exist: {rdsm}")
+    if not texture.exists():
+        raise typer.BadParameter(f"texture does not exist: {texture}")
+
+    with rasterio.open(rdsm) as src:
+        elevation = src.read(1).astype(np.float32)
+        valid = np.isfinite(elevation)
+        if src.nodata is not None:
+            valid &= elevation != src.nodata
+        if not np.all(valid):
+            raise typer.BadParameter("mesh-rdsm currently requires a fully valid rDSM raster")
+        gsd_x = abs(float(src.transform.a)) if not src.transform.is_identity else 1.0
+        gsd_y = abs(float(src.transform.e)) if not src.transform.is_identity else 1.0
+        crs = src.crs.to_string() if src.crs is not None else None
+
+    rgb = read_rgb(texture)
+    if rgb.shape[:2] != elevation.shape:
+        raise typer.BadParameter(
+            f"texture shape {rgb.shape[:2]} does not match rDSM shape {elevation.shape}"
+        )
+
+    visual_elevation = elevation * np.float32(vertical_scale)
+    started = time.perf_counter()
+    results = export_lod_pyramid(
+        output_dir,
+        visual_elevation,
+        rgb,
+        gsd_x=gsd_x,
+        gsd_y=gsd_y,
+        strides=(1, 2, 4, 8),
+    )
+    elapsed = time.perf_counter() - started
+
+    report = {
+        "status": "PASS",
+        "product": "textured_terrain_lod",
+        "source_rdsm": str(rdsm.resolve()),
+        "texture": str(texture.resolve()),
+        "crs": crs,
+        "gsd_x": gsd_x,
+        "gsd_y": gsd_y,
+        "vertical_scale": vertical_scale,
+        "vertical_scale_semantics": "visualization_only_for_dimensionless_rdsm",
+        "wall_time_seconds": elapsed,
+        "lods": [
+            {
+                "path": str(result.path.resolve()),
+                "stride": result.stride,
+                "vertices": result.vertices,
+                "faces": result.faces,
+                "width_samples": result.width_samples,
+                "height_samples": result.height_samples,
+            }
+            for result in results
+        ],
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "mesh_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    print("[bold green]DepthWizard terrain mesh export: PASS[/bold green]")
+    print(f"CRS: {crs or 'none'}")
+    print(f"Ground spacing: {gsd_x:.3f} x {gsd_y:.3f}")
+    print(f"Visualization vertical scale: {vertical_scale:g}x")
+    for index, result in enumerate(results):
+        print(
+            f"LOD{index}: {result.path.name} — {result.vertices:,} vertices / "
+            f"{result.faces:,} faces"
+        )
     print(f"Wall time: {elapsed:.2f} s")
     print(f"Report: {report_path}")
 
