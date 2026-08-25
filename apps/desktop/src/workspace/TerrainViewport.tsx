@@ -17,8 +17,8 @@ export function TerrainViewport({ meshUrl, cameraMode }: { meshUrl?: string; cam
     if (!host || !meshUrl) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xe7ebef);
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1_000_000);
+    scene.background = new THREE.Color(0xebeff3);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1_000_000);
     camera.position.set(0, 250, 350);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -26,8 +26,8 @@ export function TerrainViewport({ meshUrl, cameraMode }: { meshUrl?: string; cam
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     host.appendChild(renderer.domElement);
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x667085, 2.3));
-    const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x728094, 2.15));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
     sun.position.set(300, 700, 240);
     scene.add(sun);
 
@@ -57,15 +57,16 @@ export function TerrainViewport({ meshUrl, cameraMode }: { meshUrl?: string; cam
       sceneCenter = bounds.getCenter(new THREE.Vector3());
       sceneSize = bounds.getSize(new THREE.Vector3());
       orbit.target.copy(sceneCenter);
-      const distance = Math.max(sceneSize.x, sceneSize.y, sceneSize.z) * 1.4;
+      const distance = Math.max(sceneSize.x, sceneSize.z, sceneSize.y * 2) * 0.95;
       camera.position.set(
-        sceneCenter.x + distance * 0.45,
-        sceneCenter.y + distance * 0.65,
-        sceneCenter.z + distance * 0.75,
+        sceneCenter.x + distance * 0.55,
+        sceneCenter.y + distance * 0.50,
+        sceneCenter.z + distance * 0.80,
       );
       camera.near = Math.max(distance / 10000, 0.01);
       camera.far = Math.max(distance * 20, 1000);
       camera.updateProjectionMatrix();
+      orbit.update();
     });
 
     const resize = () => {
@@ -91,7 +92,7 @@ export function TerrainViewport({ meshUrl, cameraMode }: { meshUrl?: string; cam
       firstPerson.enabled = mode === "firstPerson";
 
       if (mode !== previousMode && mode === "topDown" && loaded) {
-        const distance = Math.max(sceneSize.x, sceneSize.z) * 1.2;
+        const distance = Math.max(sceneSize.x, sceneSize.z) * 1.05;
         camera.up.set(0, 0, -1);
         camera.position.set(sceneCenter.x, sceneCenter.y + distance, sceneCenter.z + 0.001);
         camera.lookAt(sceneCenter);
