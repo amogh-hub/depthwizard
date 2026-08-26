@@ -33,6 +33,7 @@ if __name__ == "__main__":
         "scripts/evaluate_potsdam_external.py",
         "scripts/evaluate_potsdam_external_v2.py",
         "scripts/preflight_potsdam_external_v2_execution.py",
+        "scripts/production_runtime_smoke.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_height_model.py",

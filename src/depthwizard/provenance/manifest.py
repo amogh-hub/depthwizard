@@ -28,12 +28,14 @@ def build_provenance(
     config: dict[str, Any],
     model_manifest: dict[str, Any] | None = None,
     warnings: list[str] | None = None,
+    source_sha256: str | None = None,
 ) -> dict[str, Any]:
     source = Path(source_path)
+    verified_source_sha256 = source_sha256 or sha256_file(source)
     return {
         "schema_version": 1,
         "created_at_utc": datetime.now(UTC).isoformat(),
-        "source": {"path": str(source), "sha256": sha256_file(source)},
+        "source": {"path": str(source), "sha256": verified_source_sha256},
         "config_sha256": canonical_json_hash(config),
         "model": model_manifest,
         "runtime": {

@@ -2,16 +2,17 @@
 
 DepthWizard is not considered complete, and submission-slide production does not begin, until every gate below has an evidence artifact and a PASS status. This file operationalizes the final-system contract in `MASTER_SPEC.md` and `docs/requirements-traceability.yaml`.
 
-## Gate A — Remote-sensing height estimator
+## Gate A — Production elevation estimator
 
-- DA3 remains a frozen geometry prior, not the final estimator.
-- DepthWizard dual-evidence refinement network is implemented and trained.
-- RGB overhead appearance, geometry prior and GSD/missing-metadata context are fused at multiple scales.
-- Dense heads exist for relative surface height, semantic structure, height distribution, surface normals/boundaries and aleatoric uncertainty.
-- Training objective contains robust height, gradient, normal, ordinal, semantic, heteroscedastic and seam/evidence terms where supervision exists.
-- Checkpoint provenance, config hash and reproducible training command are recorded.
+- DA3 remains the frozen foundation geometry prior and the externally safe production baseline.
+- The production estimator contains an explicit evidence-aware selector: calibrated DA3 is always available; a learned refinement branch may be selected only when its model/version has independent promotion evidence for the applicable operating domain.
+- A learned branch that lacks independent promotion evidence must never silently replace the baseline. The selected path and reason are recorded in project provenance.
+- DepthWizard's dual-evidence refinement research path fuses RGB overhead appearance, geometry prior and GSD/missing-metadata context at multiple scales and may emit relative surface height, semantic/structural context, distributional height information, normals/boundaries and aleatoric uncertainty where implemented and validated.
+- Learned-model training retains robust height, gradient, normal, ordinal/semantic, heteroscedastic and seam/evidence terms where supervision exists.
+- Checkpoint provenance, config hash, training command, promotion status and selector policy are recorded.
+- The consumed Potsdam external-v2 result is immutable evidence: V4 is **not** promoted; its failure cannot be overridden by target-driven tuning on Potsdam-v2.
 
-Evidence: `height_model_manifest.json`, `training_report.json`, checkpoint SHA-256.
+Evidence: estimator policy/manifest, `height_model_manifest.json`, training report, checkpoint SHA-256, external-promotion records.
 
 ## Gate B — Scientific validation
 
@@ -23,8 +24,9 @@ Evidence: `height_model_manifest.json`, `training_report.json`, checkpoint SHA-2
 - DA3-only and published reproducible baselines are run on identical evaluation inputs.
 - Required ablations are reported: refinement off, uncertainty weighting off, harmonization off, evidence calibration off and backbone substitution where feasible.
 - Error-confidence reliability and tile-seam diagnostics are included.
+- Negative results remain in the evidence record and cannot be rewritten as promotions.
 
-Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablation_report.json`, `baseline_comparison.json`.
+Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablation_report.json`, `baseline_comparison.json`, frozen external benchmark records.
 
 ## Gate C — Metric calibration
 
@@ -57,13 +59,14 @@ Evidence: round-trip raster tests and complete project artifact manifest.
 
 ## Gate E — Unified production workflow
 
-- One project job executes ingest -> preprocess -> geometry prior -> height refinement -> metric calibration -> geospatial export -> validation -> mesh assets -> desktop analysis.
+- One project job executes ingest -> preprocess -> geometry prior -> estimator selection/refinement -> metric calibration -> geospatial export -> validation -> mesh assets -> desktop analysis.
 - Jobs are atomic and resumable.
 - Large imagery uses bounded-memory tiling, overlap blending and harmonization.
 - Source files are never overwritten.
-- Every stage records timing, warnings, config hash and product paths.
+- Every stage records timing, warnings, config hash, selected estimator path, calibration evidence and product paths.
+- The desktop consumes this same production job graph; demo-only parallel pipelines are prohibited.
 
-Evidence: `end_to_end_acceptance_report.json`, resumability test, malformed-input recovery test.
+Evidence: `end_to_end_acceptance_report.json`, resumability test, malformed-input recovery test, project manifest.
 
 ## Gate F — Analytical 3D workstation
 

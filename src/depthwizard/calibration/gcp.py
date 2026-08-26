@@ -17,6 +17,8 @@ class GCPCalibrationOutput:
     gcp_residuals_m: np.ndarray
     sampled_relative_height: np.ndarray
     low_frequency_bias: np.ndarray
+    orientation_flipped: bool
+    anchor_correlation_before: float
 
 
 def _bilinear_sample(array: np.ndarray, row: float, col: float) -> float:
@@ -37,17 +39,28 @@ def _bilinear_sample(array: np.ndarray, row: float, col: float) -> float:
     return float(top * (1 - dy) + bottom * dy)
 
 
+def _anchor_correlation(samples: np.ndarray, elevations: np.ndarray) -> float:
+    if samples.size < 2 or np.ptp(samples) <= 1e-12 or np.ptp(elevations) <= 1e-12:
+        return float("nan")
+    return float(np.corrcoef(samples, elevations)[0, 1])
+
+
 def calibrate_relative_height_with_gcps(
     relative_height: np.ndarray,
     *,
     transform: Affine,
     gcps: list[GroundControlPoint],
     low_frequency_sigma_px: float = 32.0,
+    resolve_orientation: bool = True,
 ) -> GCPCalibrationOutput:
     """Calibrate relative height with sparse metric Ground Control Points.
 
     GCP coordinates are interpreted in the same CRS as the source raster. At least two reliable
-    points with distinguishable relative height are required to solve scale and offset.
+    points with distinguishable relative height are required to solve scale and offset. When
+    ``resolve_orientation`` is enabled, a negative GCP/relative-height correlation is recorded and
+    the relative-height polarity is inverted before the physically constrained positive-scale fit.
+    This mirrors the DEM calibration contract and prevents domain-shift polarity from being hidden
+    inside an invalid negative metric scale.
     """
     rel = np.asarray(relative_height, dtype=np.float64)
     if rel.ndim != 2:
@@ -75,16 +88,27 @@ def calibrate_relative_height_with_gcps(
 
     if len(samples) < 2:
         raise ValueError("fewer than two valid GCPs overlap finite relative-height pixels")
-    if np.ptp(np.asarray(samples)) <= 1e-8:
+    samples_array = np.asarray(samples, dtype=np.float64)
+    elevations_array = np.asarray(elevations, dtype=np.float64)
+    if np.ptp(samples_array) <= 1e-8:
         raise ValueError("GCPs do not span enough relative-height variation to determine scale")
 
+    correlation_before = _anchor_correlation(samples_array, elevations_array)
+    orientation_flipped = bool(resolve_orientation and np.isfinite(correlation_before) and correlation_before < 0)
+    if not resolve_orientation and np.isfinite(correlation_before) and correlation_before < 0:
+        raise ValueError(
+            "GCP evidence implies inverted height orientation while orientation resolution is disabled"
+        )
+
+    oriented_rel = -rel if orientation_flipped else rel
+    oriented_samples = -samples_array if orientation_flipped else samples_array
     fit = robust_affine_calibration(
-        np.asarray(samples),
-        np.asarray(elevations),
+        oriented_samples,
+        elevations_array,
         weights=np.asarray(weights),
     )
-    global_dsm = fit.scale * rel + fit.offset
-    residuals = np.asarray(elevations) - (fit.scale * np.asarray(samples) + fit.offset)
+    global_dsm = fit.scale * oriented_rel + fit.offset
+    residuals = elevations_array - (fit.scale * oriented_samples + fit.offset)
 
     # Sparse residual impulses are smoothed into a low-frequency correction field. Weight
     # normalization prevents regions far from any GCP from being forced toward zero residual.
@@ -114,6 +138,8 @@ def calibrate_relative_height_with_gcps(
         dsm=dsm.astype(np.float32),
         calibration=fit,
         gcp_residuals_m=residuals.astype(np.float32),
-        sampled_relative_height=np.asarray(samples, dtype=np.float32),
+        sampled_relative_height=samples_array.astype(np.float32),
         low_frequency_bias=bias.astype(np.float32),
+        orientation_flipped=orientation_flipped,
+        anchor_correlation_before=correlation_before,
     )

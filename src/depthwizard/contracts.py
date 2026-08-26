@@ -12,6 +12,22 @@ class InputKind(str, Enum):
     GEOREFERENCED = "georeferenced"
 
 
+class CalibrationMode(str, Enum):
+    NONE = "none"
+    DEM = "dem"
+    GCP = "gcp"
+    DEM_GCP = "dem_gcp"
+
+
+class ProjectRunStatus(str, Enum):
+    CREATED = "created"
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING_FOR_CALIBRATION = "waiting_for_calibration"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 class RasterMetadata(BaseModel):
     path: Path
     width: int = Field(gt=0)
@@ -66,15 +82,38 @@ class CalibrationResult(BaseModel):
 
 
 class ProcessingRequest(BaseModel):
+    """Permanent end-to-end project processing contract.
+
+    ``srtm_path`` is retained for compatibility with early callers. New code should use
+    ``dem_path`` because the calibration source may be SRTM, Copernicus DEM, or another explicit
+    geospatial DEM product. Supplying both names is rejected rather than guessed.
+    """
+
     source: Path
     output_dir: Path
+    dem_path: Path | None = None
     srtm_path: Path | None = None
     gcps: list[GroundControlPoint] = Field(default_factory=list)
     requested_output: Literal["rdsm", "dsm"] | None = None
+    band_indices: tuple[int, int, int] = (1, 2, 3)
+    tile_size: int = Field(default=1024, ge=256)
+    overlap: int = Field(default=128, ge=0)
+    harmonize_overlaps: bool = True
+    low_frequency_sigma_px: float = Field(default=24.0, ge=0.0)
+
+    @property
+    def metric_dem_path(self) -> Path | None:
+        return self.dem_path or self.srtm_path
 
     @model_validator(mode="after")
     def validate_requested_output(self) -> ProcessingRequest:
         suffix = self.source.suffix.lower()
         if suffix not in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}:
             raise ValueError("DepthWizard accepts PNG, JPG/JPEG, TIFF, and GeoTIFF inputs")
+        if self.dem_path is not None and self.srtm_path is not None:
+            raise ValueError("supply either dem_path or legacy srtm_path, not both")
+        if self.overlap >= self.tile_size:
+            raise ValueError("overlap must be smaller than tile_size")
+        if len(set(self.band_indices)) != 3 or any(index < 1 for index in self.band_indices):
+            raise ValueError("band_indices must contain three distinct positive 1-based bands")
         return self
