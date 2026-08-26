@@ -78,14 +78,16 @@ def _confidence_reliability(
                 semantics="unavailable_no_native_confidence_artifact",
             ),
             [
-                "No confidence artifact is available for this estimator path; "
-                "error-confidence reliability was not fabricated."
+                (
+                    "No confidence artifact is available for this estimator path; "
+                    "error-confidence reliability was not fabricated."
+                )
             ],
         )
 
     raw_path = artifact.get("path")
     if not isinstance(raw_path, str):
-        raise ValueError("confidence artifact path is malformed in project manifest")
+        raise TypeError("confidence artifact path is malformed in project manifest")
     confidence, confidence_valid = reproject_to_match(
         Path(raw_path),
         prediction_path,
