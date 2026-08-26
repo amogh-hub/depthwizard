@@ -70,6 +70,48 @@ class SlopeMetrics(BaseModel):
     p95_abs_error_degrees: float
 
 
+class ErrorConfidenceBin(BaseModel):
+    lower_confidence: float
+    upper_confidence: float
+    valid_pixels: int = Field(ge=0)
+    mean_confidence: float
+    mae_m: float
+    rmse_m: float
+
+
+class ReliabilityDiagnostics(BaseModel):
+    available: bool
+    semantics: str
+    valid_pixels: int = Field(default=0, ge=0)
+    confidence_abs_error_pearson_r: float | None = None
+    bins: list[ErrorConfidenceBin] = Field(default_factory=list)
+
+
+class ReferenceValidationRequest(BaseModel):
+    project_dir: Path
+    reference_path: Path
+    reference_label: str | None = None
+    min_valid_pixels: int = Field(default=128, ge=2)
+
+
+class ReferenceValidationReport(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    prediction_sha256: str
+    reference_path: Path
+    reference_sha256: str
+    reference_label: str | None = None
+    independence_check: str
+    alignment: str
+    valid_pixels: int = Field(ge=0)
+    coverage_fraction: float = Field(ge=0.0, le=1.0)
+    elevation: EvaluationMetrics
+    slope: SlopeMetrics
+    reliability: ReliabilityDiagnostics
+    artifacts: dict[str, str]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class CalibrationResult(BaseModel):
     scale: float
     offset: float
