@@ -92,6 +92,34 @@ def read_single_band(path: str | Path, band: int = 1) -> tuple[np.ndarray, dict]
     return arr, profile
 
 
+def _direct_read_exact_grid(
+    src: rasterio.io.DatasetReader,
+    dst_ref: rasterio.io.DatasetReader,
+    *,
+    source_band: int,
+    dst_nodata: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Read directly only when two rasters are provably on the exact same pixel grid.
+
+    Some authoritative paired datasets intentionally omit CRS metadata while preserving identical
+    DOP/DSM affine grids. Reprojection is undefined without a CRS, but no reprojection is needed
+    when width, height and affine transform are identical. This path is deliberately strict: a
+    missing CRS never permits shape-only alignment or transform mismatch.
+    """
+    same_shape = src.width == dst_ref.width and src.height == dst_ref.height
+    same_transform = src.transform.almost_equals(dst_ref.transform)
+    if not (same_shape and same_transform):
+        return None
+
+    source = src.read(source_band).astype(np.float32)
+    valid = src.read_masks(source_band) > 0
+    valid &= np.isfinite(source)
+    if src.nodata is not None and np.isfinite(src.nodata):
+        valid &= source != np.float32(src.nodata)
+    destination = np.where(valid, source, np.float32(dst_nodata)).astype(np.float32)
+    return destination, valid
+
+
 def reproject_to_match(
     source_path: str | Path,
     target_path: str | Path,
@@ -100,14 +128,33 @@ def reproject_to_match(
     resampling: Resampling = Resampling.bilinear,
     dst_nodata: float = np.nan,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Reproject one source band exactly onto the target raster grid.
+    """Align one source band exactly onto the target raster grid.
 
-    Returns (data, valid_mask). This is the canonical path for SRTM/reference alignment,
-    avoiding silent shape-only comparisons.
+    Normal geospatial inputs are reprojected using their CRS. If CRS metadata is absent on both
+    rasters, direct reading is allowed only when the two rasters already have identical dimensions
+    and affine transforms. Missing CRS plus any grid mismatch is rejected rather than guessed.
+
+    Returns ``(data, valid_mask)``.
     """
     with rasterio.open(source_path) as src, rasterio.open(target_path) as dst_ref:
         if src.crs is None or dst_ref.crs is None:
-            raise ValueError("both source and target require CRS for reprojection")
+            if src.crs is not None or dst_ref.crs is not None:
+                raise ValueError(
+                    "source/target CRS mismatch: one raster has CRS metadata and the other does not"
+                )
+            direct = _direct_read_exact_grid(
+                src,
+                dst_ref,
+                source_band=source_band,
+                dst_nodata=dst_nodata,
+            )
+            if direct is None:
+                raise ValueError(
+                    "CRS-free rasters can only be aligned when dimensions and affine transforms "
+                    "match exactly"
+                )
+            return direct
+
         destination = np.full((dst_ref.height, dst_ref.width), dst_nodata, dtype=np.float32)
         source = src.read(source_band).astype(np.float32)
         reproject(
