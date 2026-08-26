@@ -5,6 +5,7 @@ import json
 import math
 import time
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import rasterio
@@ -20,13 +21,17 @@ from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
 
+SurfaceProduct = Literal["dsm", "rdsm"]
+HorizontalUnits = Literal["m", "px"]
+VerticalUnits = Literal["m", "relative"]
+
 
 def _canonical_sha256(payload: object) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _surface_artifact(manifest: ProjectManifest) -> tuple[str, Path, str]:
+def _surface_artifact(manifest: ProjectManifest) -> tuple[SurfaceProduct, Path, str]:
     for name in ("dsm", "rdsm"):
         path = manifest.artifact_path(name)
         artifact = manifest.artifacts.get(name)
@@ -38,7 +43,8 @@ def _surface_artifact(manifest: ProjectManifest) -> tuple[str, Path, str]:
         actual_sha = sha256_file(path)
         if isinstance(recorded_sha, str) and recorded_sha != actual_sha:
             raise RuntimeError(f"project {name} artifact SHA-256 no longer matches the manifest")
-        return name, path, actual_sha
+        product: SurfaceProduct = "dsm" if name == "dsm" else "rdsm"
+        return product, path, actual_sha
     raise FileNotFoundError("project has no persisted DSM or rDSM available for 3D terrain")
 
 
@@ -176,6 +182,7 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             )
 
         metric_gsd = ground_sample_distance_m(surface_path)
+        horizontal_units: HorizontalUnits
         if metric_gsd is None:
             gsd_x = 1.0
             gsd_y = 1.0
@@ -183,7 +190,7 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
         else:
             gsd_x, gsd_y = metric_gsd
             horizontal_units = "m"
-        vertical_units = "m" if surface_product == "dsm" else "relative"
+        vertical_units: VerticalUnits = "m" if surface_product == "dsm" else "relative"
         strides = _lod_strides(elevation.shape, request.max_finest_samples, request.lod_levels)
 
         mesh_dir.mkdir(parents=True, exist_ok=True)
