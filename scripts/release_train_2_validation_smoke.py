@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import io
 import json
-import math
 import os
 import urllib.request
 from pathlib import Path
 
 import numpy as np
 import rasterio
-from PIL import Image
-from rasterio.transform import from_bounds
-from rasterio.warp import transform_bounds
+from affine import Affine
+from rasterio.enums import Resampling
 
 from depthwizard.contracts import (
     ProcessingRequest,
@@ -29,12 +26,8 @@ PROJECT_DIR = ROOT / "artifacts" / "acceptance" / "release-train-2-ortholoc"
 ORTHOLOC_BASE_URL = "https://cvg.cit.tum.de/webshare/g/papers/Dhaouadi/OrthoLoC/demo"
 DOP_URL = f"{ORTHOLOC_BASE_URL}/urban_residential_DOP.tif"
 DSM_URL = f"{ORTHOLOC_BASE_URL}/urban_residential_DSM.tif"
-TERRARIUM_TEMPLATE = (
-    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
-)
-TERRARIUM_ZOOM = 10
-TILE_SIZE = 256
-WORLD_HALF = 20037508.342789244
+XDSM_URL = f"{ORTHOLOC_BASE_URL}/urban_residential_xDSM.tif"
+CALIBRATION_DOWNSAMPLE_FACTOR = 16
 USER_AGENT = "DepthWizard-SIH26175/0.2 release-train-2-acceptance"
 
 
@@ -51,110 +44,80 @@ def _download(url: str, path: Path) -> bytes:
     return payload
 
 
-def _lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
-    n = 2**zoom
-    latitude = max(min(lat, 85.05112878), -85.05112878)
-    lat_rad = math.radians(latitude)
-    x = math.floor((lon + 180.0) / 360.0 * n)
-    y = math.floor((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
-    return x, y
+def _prepare_source_and_calibration_source() -> tuple[Path, Path]:
+    """Cache only the production source and calibration lineage before reconstruction.
 
-
-def _tile_bounds(
-    x: int,
-    y: int,
-    zoom: int,
-    *,
-    width_tiles: int,
-    height_tiles: int,
-) -> tuple[float, float, float, float]:
-    n = 2**zoom
-    span = 2.0 * WORLD_HALF / n
-    min_x = -WORLD_HALF + x * span
-    max_x = -WORLD_HALF + (x + width_tiles) * span
-    max_y = WORLD_HALF - y * span
-    min_y = WORLD_HALF - (y + height_tiles) * span
-    return min_x, min_y, max_x, max_y
-
-
-def _prepare_ortholoc_pair() -> tuple[Path, Path]:
+    The evaluation DSM is intentionally not downloaded here. The acceptance gate fetches that file
+    only after the production runtime has completed so the downstream evidence boundary is enforced
+    operationally, not merely documented.
+    """
     dop_path = DATA_DIR / "urban_residential_DOP.tif"
-    dsm_path = DATA_DIR / "urban_residential_DSM.tif"
+    xdsm_path = DATA_DIR / "urban_residential_xDSM.tif"
     _download(DOP_URL, dop_path)
-    _download(DSM_URL, dsm_path)
-    return dop_path, dsm_path
+    _download(XDSM_URL, xdsm_path)
+    return dop_path, xdsm_path
 
 
-def _terrarium_dem_for_source(source_path: Path) -> Path:
-    """Build independent low-resolution calibration evidence covering the source footprint."""
-    with rasterio.open(source_path) as src:
-        if src.crs is None:
-            raise ValueError("Release Train 2 acceptance requires georeferenced OrthoLoC imagery")
-        west, south, east, north = transform_bounds(
-            src.crs,
-            "EPSG:4326",
-            *src.bounds,
-            densify_pts=21,
+def _build_coarse_calibration_dem(calibration_source_path: Path) -> Path:
+    """Create a deliberately coarse, same-scene calibration surrogate for RT2 integration.
+
+    OrthoLoC's demo geodata is suitable for local metric geometry, but the acceptance gate must not
+    invent a global web-tile location when the source georeferencing cannot be safely interpreted as
+    a global slippy-map footprint. Instead, RT2 uses the public cross-domain xDSM as a *calibration
+    surrogate*, downsamples it by a fixed factor, and records that its lineage is not independent of
+    the downstream OrthoLoC reference DSM.
+
+    This artifact exists only to exercise the production metric-calibration path. It is not external
+    validation evidence and must never be used for model promotion.
+    """
+    with rasterio.open(calibration_source_path) as src:
+        if src.crs is None or src.transform.is_identity:
+            raise ValueError("RT2 calibration surrogate requires georeferenced xDSM evidence")
+        if src.count < 1:
+            raise ValueError("RT2 calibration surrogate requires at least one elevation band")
+
+        out_width = max(8, int(np.ceil(src.width / CALIBRATION_DOWNSAMPLE_FACTOR)))
+        out_height = max(8, int(np.ceil(src.height / CALIBRATION_DOWNSAMPLE_FACTOR)))
+        coarse = src.read(
+            1,
+            out_shape=(out_height, out_width),
+            masked=True,
+            resampling=Resampling.average,
         )
-
-    x_min, y_top = _lonlat_to_tile(west, north, TERRARIUM_ZOOM)
-    x_max, y_bottom = _lonlat_to_tile(east, south, TERRARIUM_ZOOM)
-    x0, x1 = sorted((x_min, x_max))
-    y0, y1 = sorted((y_top, y_bottom))
-    width_tiles = x1 - x0 + 1
-    height_tiles = y1 - y0 + 1
-    tile_count = width_tiles * height_tiles
-    if tile_count > 16:
-        raise RuntimeError(
-            f"OrthoLoC acceptance footprint unexpectedly requires {tile_count} Terrarium tiles"
+        nodata = float(src.nodata) if src.nodata is not None and np.isfinite(src.nodata) else -9999.0
+        data = np.asarray(coarse.filled(nodata), dtype=np.float32)
+        data[~np.isfinite(data)] = nodata
+        transform = src.transform * Affine.scale(
+            src.width / out_width,
+            src.height / out_height,
         )
+        crs = src.crs
 
-    mosaic = np.zeros(
-        (height_tiles * TILE_SIZE, width_tiles * TILE_SIZE),
-        dtype=np.float32,
-    )
-    for row, tile_y in enumerate(range(y0, y1 + 1)):
-        for col, tile_x in enumerate(range(x0, x1 + 1)):
-            url = TERRARIUM_TEMPLATE.format(z=TERRARIUM_ZOOM, x=tile_x, y=tile_y)
-            cache = DATA_DIR / "terrarium" / f"z{TERRARIUM_ZOOM}_{tile_x}_{tile_y}.png"
-            payload = _download(url, cache)
-            rgb = np.asarray(Image.open(io.BytesIO(payload)).convert("RGB"), dtype=np.float32)
-            if rgb.shape != (TILE_SIZE, TILE_SIZE, 3):
-                raise RuntimeError(f"unexpected Terrarium tile shape {rgb.shape} from {url}")
-            elevation = rgb[..., 0] * 256.0 + rgb[..., 1] + rgb[..., 2] / 256.0 - 32768.0
-            row0 = row * TILE_SIZE
-            col0 = col * TILE_SIZE
-            mosaic[row0 : row0 + TILE_SIZE, col0 : col0 + TILE_SIZE] = elevation
-
-    bounds = _tile_bounds(
-        x0,
-        y0,
-        TERRARIUM_ZOOM,
-        width_tiles=width_tiles,
-        height_tiles=height_tiles,
-    )
-    transform = from_bounds(*bounds, width=mosaic.shape[1], height=mosaic.shape[0])
-    output = DATA_DIR / f"terrarium_z{TERRARIUM_ZOOM}_calibration_dem.tif"
+    output = DATA_DIR / "urban_residential_xDSM_coarse_calibration.tif"
+    output.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
         output,
         "w",
         driver="GTiff",
-        height=mosaic.shape[0],
-        width=mosaic.shape[1],
+        height=out_height,
+        width=out_width,
         count=1,
         dtype="float32",
-        crs="EPSG:3857",
+        crs=crs,
         transform=transform,
-        nodata=-9999.0,
+        nodata=nodata,
         compress="deflate",
     ) as dst:
-        dst.write(mosaic, 1)
-        dst.set_band_description(1, "Independent low-resolution Terrarium calibration DEM")
+        dst.write(data, 1)
+        dst.set_band_description(1, "Coarse OrthoLoC xDSM calibration surrogate")
         dst.update_tags(
-            DEPTHWIZARD_ROLE="CALIBRATION_ONLY",
-            DEM_SOURCE="AWS Terrain Tiles / Mapzen Terrarium",
-            DEM_ENCODING="Terrarium",
-            DEM_ZOOM=str(TERRARIUM_ZOOM),
+            DEPTHWIZARD_ROLE="CALIBRATION_ONLY_INTEGRATION_SURROGATE",
+            CALIBRATION_SOURCE="TUM OrthoLoC urban_residential_xDSM.tif",
+            CALIBRATION_LINEAGE_INDEPENDENT="false",
+            DOWNSAMPLE_FACTOR=str(CALIBRATION_DOWNSAMPLE_FACTOR),
+            CLAIM_BOUNDARY=(
+                "Release Train 2 product integration only; not unseen validation or model-promotion evidence"
+            ),
         )
     return output
 
@@ -175,12 +138,13 @@ def _artifact_evidence(manifest: ProjectManifest) -> dict[str, dict[str, object]
 
 
 def main() -> None:
-    """Run the final RT2 local integration gate with separated calibration/evaluation lineage.
+    """Run the RT2 local integration gate with an enforced downstream reference boundary.
 
-    The OrthoLoC scene is not treated as unseen model-promotion evidence here. It is intentionally
-    reused only as a product-integration acceptance scene. Metric scale comes from an independent
-    Terrarium DEM; the TUM OrthoLoC DSM is loaded only after the production DSM is complete and is
-    used exclusively by the downstream validation subsystem.
+    This smoke intentionally does not create new scientific model-promotion evidence. The public
+    OrthoLoC cross-domain xDSM is downsampled into a coarse calibration surrogate, while the regular
+    OrthoLoC DSM is not downloaded until after the production DSM is complete. Because both belong to
+    the same scene/dataset lineage, the acceptance report explicitly records that calibration and
+    evaluation are not lineage-independent.
     """
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -188,18 +152,16 @@ def main() -> None:
 
     print("DepthWizard Release Train 2 acceptance")
     print("Purpose: integrated production validation smoke; NOT model promotion or unseen Gate B evidence")
-    print("Preparing/caching OrthoLoC optical + DSM evaluation pair...")
-    source_path, reference_path = _prepare_ortholoc_pair()
-    print("Preparing independent AWS Terrain Tiles / Terrarium calibration DEM...")
-    dem_path = _terrarium_dem_for_source(source_path)
+    print("Preparing/caching OrthoLoC optical source + cross-domain calibration source...")
+    source_path, calibration_source_path = _prepare_source_and_calibration_source()
+    print("Building deliberately coarse OrthoLoC xDSM calibration surrogate...")
+    dem_path = _build_coarse_calibration_dem(calibration_source_path)
 
     source_sha = sha256_file(source_path)
+    calibration_source_sha = sha256_file(calibration_source_path)
     dem_sha = sha256_file(dem_path)
-    reference_sha = sha256_file(reference_path)
-    if dem_sha == reference_sha:
-        raise RuntimeError("calibration DEM and evaluation DSM unexpectedly have identical SHA-256")
 
-    print("Running real production elevation runtime with independent low-resolution DEM evidence...")
+    print("Running real production elevation runtime with coarse calibration evidence...")
     runtime_result = ProductionElevationRuntime().run(
         ProcessingRequest(
             source=source_path,
@@ -214,33 +176,50 @@ def main() -> None:
     if runtime_result.status is not ProjectRunStatus.COMPLETE:
         raise RuntimeError(f"production runtime did not complete: {runtime_result.status.value}")
 
-    print("Production DSM complete. Loading TUM OrthoLoC DSM as downstream evaluation-only evidence...")
+    print("Production DSM complete. Fetching TUM OrthoLoC DSM as downstream evaluation-only evidence...")
+    reference_path = DATA_DIR / "urban_residential_DSM.tif"
+    _download(DSM_URL, reference_path)
+    reference_sha = sha256_file(reference_path)
+    if dem_sha == reference_sha:
+        raise RuntimeError("calibration DEM and evaluation DSM unexpectedly have identical SHA-256")
+    if calibration_source_sha == reference_sha:
+        raise RuntimeError("calibration source and evaluation DSM unexpectedly have identical SHA-256")
+
     validation = validate_project_reference(
         ReferenceValidationRequest(
             project_dir=PROJECT_DIR,
             reference_path=reference_path,
-            reference_label="TUM OrthoLoC urban_residential DSM / evaluation-only",
+            reference_label="TUM OrthoLoC urban_residential DSM / evaluation-only integration reference",
             min_valid_pixels=1000,
         )
     )
     manifest = ProjectManifest.load(PROJECT_DIR)
 
     acceptance = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_INTEGRATED_VALIDATION_PATH",
         "purpose": (
             "Release Train 2 production integration acceptance; not an unseen benchmark and not "
             "model-promotion evidence"
         ),
         "scientific_separation": {
-            "calibration": "AWS Terrain Tiles / Mapzen Terrarium low-resolution DEM only",
-            "evaluation": "TUM OrthoLoC urban_residential DSM only after production DSM completion",
+            "reference_boundary_enforced": True,
+            "evaluation_reference_fetched_after_runtime": True,
+            "calibration": (
+                "coarse surrogate downsampled from TUM OrthoLoC urban_residential_xDSM.tif"
+            ),
+            "evaluation": (
+                "TUM OrthoLoC urban_residential_DSM.tif supplied only after production DSM completion"
+            ),
+            "lineage_independent": False,
+            "calibration_source_sha256": calibration_source_sha,
             "calibration_dem_sha256": dem_sha,
             "evaluation_reference_sha256": reference_sha,
-            "distinct_sha256": dem_sha != reference_sha,
+            "distinct_file_sha256": dem_sha != reference_sha and calibration_source_sha != reference_sha,
             "note": (
-                "OrthoLoC urban_residential has prior DepthWizard research use. This run validates "
-                "the integrated product path and must not be presented as unseen Gate B evidence."
+                "The calibration surrogate and evaluation DSM are distinct files but share the same "
+                "OrthoLoC scene/dataset lineage. This smoke validates software integration and the "
+                "downstream reference boundary only; it is not independent accuracy evidence."
             ),
         },
         "source": {
@@ -252,13 +231,17 @@ def main() -> None:
         "calibration_evidence": {
             "path": str(dem_path.resolve()),
             "sha256": dem_sha,
-            "source": "AWS Terrain Tiles / Mapzen Terrarium",
-            "zoom": TERRARIUM_ZOOM,
+            "source_path": str(calibration_source_path.resolve()),
+            "source_sha256": calibration_source_sha,
+            "source": "TUM OrthoLoC urban_residential_xDSM.tif",
+            "downsample_factor": CALIBRATION_DOWNSAMPLE_FACTOR,
+            "lineage_independent": False,
         },
         "evaluation_reference": {
             "path": str(reference_path.resolve()),
             "sha256": reference_sha,
-            "source": "TUM OrthoLoC DSM",
+            "source": "TUM OrthoLoC urban_residential_DSM.tif",
+            "fetched_after_runtime": True,
         },
         "runtime": runtime_result.as_dict(),
         "validation": validation.model_dump(mode="json"),
@@ -273,7 +256,8 @@ def main() -> None:
 
     print("DepthWizard Release Train 2 integrated validation path: PASS")
     print(f"Project: {PROJECT_DIR}")
-    print(f"Calibration DEM SHA-256: {dem_sha}")
+    print(f"Calibration source SHA-256: {calibration_source_sha}")
+    print(f"Coarse calibration DEM SHA-256: {dem_sha}")
     print(f"Evaluation DSM SHA-256: {reference_sha}")
     print(f"Valid evaluation pixels: {validation.valid_pixels:,}")
     print(
@@ -286,7 +270,7 @@ def main() -> None:
         f"Slope: RMSE {validation.slope.rmse_degrees:.3f}° | "
         f"MAE {validation.slope.mae_degrees:.3f}°"
     )
-    print("Claim boundary: engineering/product acceptance only; no model-promotion claim.")
+    print("Claim boundary: engineering/product acceptance only; calibration/reference lineage is not independent.")
     print(f"Acceptance report: {report_path}")
 
 
