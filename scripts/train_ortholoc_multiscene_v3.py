@@ -17,6 +17,7 @@ from depthwizard.data.ortholoc import (
 )
 from depthwizard.evaluation.metrics import compute_elevation_metrics
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
+from depthwizard.height_model.training import PriorReferenceCalibrationError
 from depthwizard.provenance.manifest import sha256_file
 from scripts import train_ortholoc_multiscene as legacy
 from scripts import train_ortholoc_multiscene_v2 as v2
@@ -114,6 +115,123 @@ def select_diversity_split(
     return train_selected, validation_selected, development_selected
 
 
+def training_candidate_groups(
+    selected_train: list[OrthoLoCRemoteScene],
+    train_discovered: list[OrthoLoCRemoteScene],
+) -> dict[str, list[OrthoLoCRemoteScene]]:
+    """Return deterministic same-location fallback queues for training-only quality filtering.
+
+    Geographic groups are fixed *before* any DSM-dependent quality decision. Within each declared
+    training location, the originally selected scenes are attempted first and remaining same-domain
+    scenes are ordered by filename. This lets the training set replace a DA3/reference pair that
+    violates the required positive-height convention without changing geographic composition.
+
+    This helper is deliberately training-only. Validation scenes must never be replaced after
+    looking at their reference relationship because doing so would condition model selection on
+    validation labels.
+    """
+    selected_locations = sorted({scene.location_id for scene in selected_train})
+    selected_by_location: dict[str, list[OrthoLoCRemoteScene]] = {
+        location: sorted(
+            [scene for scene in selected_train if scene.location_id == location],
+            key=lambda scene: scene.filename,
+        )
+        for location in selected_locations
+    }
+    discovered_by_location: dict[str, list[OrthoLoCRemoteScene]] = {
+        location: sorted(
+            [
+                scene
+                for scene in train_discovered
+                if scene.same_domain and scene.location_id == location
+            ],
+            key=lambda scene: scene.filename,
+        )
+        for location in selected_locations
+    }
+
+    groups: dict[str, list[OrthoLoCRemoteScene]] = {}
+    for location in selected_locations:
+        preferred = selected_by_location[location]
+        preferred_names = {scene.filename for scene in preferred}
+        remaining = [
+            scene
+            for scene in discovered_by_location[location]
+            if scene.filename not in preferred_names
+        ]
+        candidates = preferred + remaining
+        if len(candidates) < TRAIN_SAMPLES_PER_LOCATION:
+            raise RuntimeError(
+                f"training location {location} exposes only {len(candidates)} same-domain scenes; "
+                f"{TRAIN_SAMPLES_PER_LOCATION} are required"
+            )
+        groups[location] = candidates
+    return groups
+
+
+def load_training_scenes_with_replacement(
+    selected_train: list[OrthoLoCRemoteScene],
+    train_discovered: list[OrthoLoCRemoteScene],
+    prior: legacy.DA3MonocularPrior,
+) -> tuple[list[legacy.SceneData], list[dict[str, str]]]:
+    """Load exactly two usable training scenes per fixed geographic group.
+
+    Only ``PriorReferenceCalibrationError`` is recoverable here. All IO, alignment, CRS, shape,
+    GSD, and implementation errors remain fatal. Rejections are recorded so the final provenance
+    states exactly which training examples were screened and why.
+    """
+    groups = training_candidate_groups(selected_train, train_discovered)
+    accepted: list[legacy.SceneData] = []
+    rejections: list[dict[str, str]] = []
+
+    for location, candidates in groups.items():
+        accepted_for_location = 0
+        for remote in candidates:
+            try:
+                scene = legacy.load_scene(remote, "train", prior, include_target=True)
+            except PriorReferenceCalibrationError as exc:
+                reason = str(exc)
+                rejections.append(
+                    {
+                        "scene_id": remote.scene_id,
+                        "location_id": location,
+                        "reason": reason,
+                    }
+                )
+                print(
+                    f"training quality rejection: {remote.scene_id} | {reason} | "
+                    "trying next pre-declared same-location candidate"
+                )
+                continue
+
+            accepted.append(scene)
+            accepted_for_location += 1
+            if accepted_for_location == TRAIN_SAMPLES_PER_LOCATION:
+                break
+
+        if accepted_for_location != TRAIN_SAMPLES_PER_LOCATION:
+            rejected_ids = [
+                item["scene_id"] for item in rejections if item["location_id"] == location
+            ]
+            raise RuntimeError(
+                f"training location {location} could supply only {accepted_for_location}/"
+                f"{TRAIN_SAMPLES_PER_LOCATION} positive-height scenes after deterministic "
+                f"training-only quality screening; rejected={rejected_ids}"
+            )
+
+    counts = Counter(scene.location_id for scene in accepted)
+    expected = {
+        location: TRAIN_SAMPLES_PER_LOCATION
+        for location in sorted({scene.location_id for scene in selected_train})
+    }
+    if counts != expected:
+        raise RuntimeError(
+            f"training replacement violated fixed geographic composition: got={dict(counts)} "
+            f"expected={expected}"
+        )
+    return accepted, rejections
+
+
 def main() -> None:
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     os.environ.setdefault("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", "1")
@@ -124,9 +242,11 @@ def main() -> None:
     device = legacy.resolve_device()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    train_discovered = discover_remote_scenes("train")
+    outplace_discovered = discover_remote_scenes("test_outPlace")
     train_remote, validation_remote, development_remote = select_diversity_split(
-        discover_remote_scenes("train"),
-        discover_remote_scenes("test_outPlace"),
+        train_discovered,
+        outplace_discovered,
     )
     print(
         "Diversity geographic split: "
@@ -134,26 +254,50 @@ def main() -> None:
         f"validation_locations={sorted({scene.location_id for scene in validation_remote})} | "
         f"development_outPlace={sorted({scene.location_id for scene in development_remote})}"
     )
-    print(f"Training scenes ({len(train_remote)}): {[scene.scene_id for scene in train_remote]}")
-    print(f"Validation scenes ({len(validation_remote)}): {[scene.scene_id for scene in validation_remote]}")
     print(
-        "Protocol note: out-of-place development scenes have already been inspected and are not "
-        "eligible as final Gate B evidence. Final claims still require a new untouched holdout."
+        f"Initial training candidates ({len(train_remote)}): "
+        f"{[scene.scene_id for scene in train_remote]}"
+    )
+    print(f"Fixed validation scenes ({len(validation_remote)}): {[scene.scene_id for scene in validation_remote]}")
+    print(
+        "Protocol note: training-only prior/reference quality screening may replace a rejected "
+        "scene only within its already-declared training location. Validation scenes are fixed "
+        "before inspection and are never label-conditioned replacements. Out-of-place development "
+        "scenes have already been inspected and are not eligible as final Gate B evidence."
     )
 
     prior = legacy.DA3MonocularPrior(device="auto")
-    train_scenes = [
-        legacy.load_scene(scene, "train", prior, include_target=True) for scene in train_remote
-    ]
-    validation_scenes = [
-        legacy.load_scene(scene, "validation", prior, include_target=True)
-        for scene in validation_remote
-    ]
+    train_scenes, training_quality_rejections = load_training_scenes_with_replacement(
+        train_remote,
+        train_discovered,
+        prior,
+    )
+    try:
+        validation_scenes = [
+            legacy.load_scene(scene, "validation", prior, include_target=True)
+            for scene in validation_remote
+        ]
+    except PriorReferenceCalibrationError as exc:
+        raise RuntimeError(
+            "a fixed V3 validation scene cannot support the positive-height DA3 calibration "
+            "protocol. The run is intentionally aborted rather than selecting a replacement after "
+            "examining validation reference data; define a new protocol version before changing "
+            "validation membership."
+        ) from exc
     development_scenes = [
         legacy.load_scene(scene, "test_outPlace", prior, include_target=False)
         for scene in development_remote
     ]
     del prior
+
+    print(
+        f"Accepted training scenes ({len(train_scenes)}): {[scene.scene_id for scene in train_scenes]}"
+    )
+    if training_quality_rejections:
+        print(
+            "Training-only quality exclusions: "
+            f"{[item['scene_id'] for item in training_quality_rejections]}"
+        )
 
     for scene in train_scenes:
         fit = scene.prior_reference_fit
@@ -372,6 +516,7 @@ def main() -> None:
         "best_validation_objective": best_validation_objective,
         "training_scene_ids": [scene.scene_id for scene in train_scenes],
         "training_locations": sorted({scene.location_id for scene in train_scenes}),
+        "training_quality_rejections": training_quality_rejections,
         "validation_scene_ids": [scene.scene_id for scene in validation_scenes],
         "validation_locations": sorted({scene.location_id for scene in validation_scenes}),
         "development_outplace_locations": sorted(
@@ -402,9 +547,11 @@ def main() -> None:
         "model_promoted_over_da3_on_development_outplace": promoted,
         "purpose": (
             "Diversity-first development acceptance after V1/V2 showed that small four-location "
-            "training did not transfer. Five training locations contribute two scenes each and "
-            "two different locations are held out for checkpoint selection. Development outPlace "
-            "results are not final evidence because those locations have already been inspected."
+            "training did not transfer. Five fixed training locations contribute two usable scenes "
+            "each after training-only positive-height quality screening, and two different fixed "
+            "locations are held out for checkpoint selection. Validation membership is never "
+            "changed using reference-derived quality information. Development outPlace results are "
+            "not final evidence because those locations have already been inspected."
         ),
         "dataset": "OrthoLoC",
         "dataset_license": "CC BY-NC-SA 4.0",
@@ -414,6 +561,7 @@ def main() -> None:
         "split": {
             "train_scene_ids": [scene.scene_id for scene in train_scenes],
             "train_locations": sorted({scene.location_id for scene in train_scenes}),
+            "training_quality_rejections": training_quality_rejections,
             "validation_scene_ids": [scene.scene_id for scene in validation_scenes],
             "validation_locations": sorted({scene.location_id for scene in validation_scenes}),
             "development_outPlace_locations": sorted(
