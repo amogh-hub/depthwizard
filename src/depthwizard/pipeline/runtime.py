@@ -9,7 +9,10 @@ from typing import Protocol
 import numpy as np
 import rasterio
 
-from depthwizard.calibration.evidence import calibrate_relative_height_with_dem
+from depthwizard.calibration.evidence import (
+    EvidenceCalibrationOutput,
+    calibrate_relative_height_with_dem,
+)
 from depthwizard.calibration.gcp import calibrate_relative_height_with_gcps
 from depthwizard.contracts import (
     CalibrationMode,
@@ -89,6 +92,13 @@ class _GeometryState:
     harmonized_tiles: int
 
 
+@dataclass(frozen=True)
+class _CalibrationOutcome:
+    dsm: np.ndarray
+    evidence: dict[str, object]
+    mode: CalibrationMode
+
+
 def _write_json_atomic(path: Path, payload: dict[str, object]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -110,13 +120,18 @@ def _request_config(request: ProcessingRequest) -> dict[str, object]:
     return request.model_dump(mode="json")
 
 
-def _geometry_config(request: ProcessingRequest) -> dict[str, object]:
+def _geometry_config(
+    request: ProcessingRequest,
+    estimator_decision: EstimatorDecision,
+) -> dict[str, object]:
+    """Hash every decision capable of changing the persisted relative geometry artifact."""
     return {
         "source": str(request.source.resolve(strict=False)),
         "band_indices": list(request.band_indices),
         "tile_size": request.tile_size,
         "overlap": request.overlap,
         "harmonize_overlaps": request.harmonize_overlaps,
+        "estimator": estimator_decision.as_dict(),
     }
 
 
@@ -169,14 +184,26 @@ def _read_float_product(path: Path) -> np.ndarray:
         return np.where(valid, array, np.nan).astype(np.float32)
 
 
+def _dem_evidence_payload(dem_path: Path, result: EvidenceCalibrationOutput) -> dict[str, object]:
+    return {
+        "source": str(dem_path.resolve()),
+        "sha256": sha256_file(dem_path),
+        "calibration": result.calibration.model_dump(),
+        "orientation_flipped": result.orientation_flipped,
+        "anchor_correlation_before": result.anchor_correlation_before,
+        "anchor_correlation_after": result.anchor_correlation_after,
+        "frequency_match_sigma_px": result.frequency_match_sigma_px,
+        "anchor_stride_px": result.anchor_stride_px,
+        "anchors": int(result.anchor_mask.sum()),
+    }
+
+
 class ProductionElevationRuntime:
     """Unified production runtime for truthful rDSM/metric DSM project processing.
 
-    The runtime is deliberately evidence-gated: a georeferenced project may reconstruct and pause
-    for calibration evidence, but it cannot be marked as an absolute DSM without DEM and/or GCP
-    evidence. The expensive geometry stage is resumable and immutable under a geometry-config hash.
-    Completed projects are treated as evidence artifacts and are not silently overwritten by a
-    changed processing request.
+    Georeferenced imagery may reconstruct once and pause for DEM/GCP evidence, but cannot become a
+    metric DSM without that evidence. The geometry stage is resumable under a hash containing every
+    geometry-affecting parameter and estimator decision. Completed projects are immutable evidence.
     """
 
     def __init__(
@@ -275,7 +302,13 @@ class ProductionElevationRuntime:
         georeferenced: bool,
     ) -> tuple[_GeometryState, bool]:
         existing = manifest.artifact_path("rdsm")
-        if manifest.stage_completed(ProcessingStage.GEOMETRY) and existing is not None and existing.is_file():
+        reusable = (
+            manifest.stage_completed(ProcessingStage.GEOMETRY)
+            and existing is not None
+            and existing.is_file()
+        )
+        if reusable:
+            assert existing is not None
             details = manifest.stages[ProcessingStage.GEOMETRY.value].get("details", {})
             confidence_path = manifest.artifact_path("confidence")
             confidence = (
@@ -367,12 +400,45 @@ class ProductionElevationRuntime:
             False,
         )
 
+    def _dem_calibration(
+        self,
+        manifest: ProjectManifest,
+        request: ProcessingRequest,
+        geometry: _GeometryState,
+        dem_path: Path,
+    ) -> EvidenceCalibrationOutput:
+        aligned_dem, dem_valid = reproject_to_match(dem_path, request.source)
+        target_gsd_m = _mean_gsd(ground_sample_distance_m(request.source))
+        dem_effective_gsd_m = _mean_gsd(ground_sample_distance_m(dem_path))
+        common = {
+            "dem_valid": dem_valid & np.isfinite(geometry.relative_height),
+            "low_frequency_sigma_px": request.low_frequency_sigma_px,
+        }
+        if target_gsd_m is not None and dem_effective_gsd_m is not None:
+            return calibrate_relative_height_with_dem(
+                geometry.relative_height,
+                aligned_dem,
+                target_gsd_m=target_gsd_m,
+                dem_effective_gsd_m=dem_effective_gsd_m,
+                **common,
+            )
+        manifest.add_warning(
+            "DEM/source physical GSD could not both be derived; calibration frequency matching "
+            "was not applied rather than guessed"
+        )
+        return calibrate_relative_height_with_dem(
+            geometry.relative_height,
+            aligned_dem,
+            dem_valid=dem_valid & np.isfinite(geometry.relative_height),
+            low_frequency_sigma_px=request.low_frequency_sigma_px,
+        )
+
     def _calibrate(
         self,
         manifest: ProjectManifest,
         request: ProcessingRequest,
         geometry: _GeometryState,
-    ) -> tuple[np.ndarray, dict[str, object], CalibrationMode]:
+    ) -> _CalibrationOutcome:
         dem_path = request.metric_dem_path
         gcps = request.gcps
         with rasterio.open(request.source) as source:
@@ -386,46 +452,18 @@ class ProductionElevationRuntime:
         if dem_path is not None:
             if not dem_path.is_file():
                 raise FileNotFoundError(f"metric DEM does not exist: {dem_path}")
-            aligned_dem, dem_valid = reproject_to_match(dem_path, request.source)
-            target_gsd = ground_sample_distance_m(request.source)
-            dem_gsd = ground_sample_distance_m(dem_path)
-            target_gsd_m = _mean_gsd(target_gsd)
-            dem_effective_gsd_m = _mean_gsd(dem_gsd)
-            frequency_kwargs: dict[str, float] = {}
-            if target_gsd_m is not None and dem_effective_gsd_m is not None:
-                frequency_kwargs = {
-                    "target_gsd_m": target_gsd_m,
-                    "dem_effective_gsd_m": dem_effective_gsd_m,
-                }
-            else:
-                manifest.add_warning(
-                    "DEM/source physical GSD could not both be derived; calibration frequency "
-                    "matching was not applied rather than guessed"
-                )
-            dem_result = calibrate_relative_height_with_dem(
-                geometry.relative_height,
-                aligned_dem,
-                dem_valid=dem_valid & np.isfinite(geometry.relative_height),
-                low_frequency_sigma_px=request.low_frequency_sigma_px,
-                **frequency_kwargs,
-            )
-            dem_payload: dict[str, object] = {
-                "source": str(dem_path.resolve()),
-                "sha256": sha256_file(dem_path),
-                "calibration": dem_result.calibration.model_dump(),
-                "orientation_flipped": dem_result.orientation_flipped,
-                "anchor_correlation_before": dem_result.anchor_correlation_before,
-                "anchor_correlation_after": dem_result.anchor_correlation_after,
-                "frequency_match_sigma_px": dem_result.frequency_match_sigma_px,
-                "anchor_stride_px": dem_result.anchor_stride_px,
-                "anchors": int(dem_result.anchor_mask.sum()),
-            }
+            dem_result = self._dem_calibration(manifest, request, geometry, dem_path)
+            dem_payload = _dem_evidence_payload(dem_path, dem_result)
             if not gcps:
-                return dem_result.dsm, {"dem": dem_payload}, CalibrationMode.DEM
+                return _CalibrationOutcome(
+                    dsm=dem_result.dsm,
+                    evidence={"dem": dem_payload},
+                    mode=CalibrationMode.DEM,
+                )
 
-            # DEM provides broad spatial support first. Sparse GCPs then receive the highest
-            # reliability by refining the already metric field. Orientation resolution is disabled
-            # for this second stage: a negative metric-DSM/GCP relation is treated as bad evidence.
+            # DEM establishes broad spatial support. GCPs then receive highest reliability by
+            # refining the already metric field. A negative relation at this stage is contradictory
+            # evidence and is rejected instead of flipping an already metric surface.
             gcp_result = calibrate_relative_height_with_gcps(
                 dem_result.dsm,
                 transform=transform,
@@ -433,9 +471,9 @@ class ProductionElevationRuntime:
                 low_frequency_sigma_px=request.low_frequency_sigma_px,
                 resolve_orientation=False,
             )
-            return (
-                gcp_result.dsm,
-                {
+            return _CalibrationOutcome(
+                dsm=gcp_result.dsm,
+                evidence={
                     "fusion_method": "dem_then_gcp_high_reliability_refinement",
                     "dem": dem_payload,
                     "gcp_refinement": {
@@ -446,7 +484,7 @@ class ProductionElevationRuntime:
                         "orientation_flipped": gcp_result.orientation_flipped,
                     },
                 },
-                CalibrationMode.DEM_GCP,
+                mode=CalibrationMode.DEM_GCP,
             )
 
         gcp_result = calibrate_relative_height_with_gcps(
@@ -456,9 +494,9 @@ class ProductionElevationRuntime:
             low_frequency_sigma_px=request.low_frequency_sigma_px,
             resolve_orientation=True,
         )
-        return (
-            gcp_result.dsm,
-            {
+        return _CalibrationOutcome(
+            dsm=gcp_result.dsm,
+            evidence={
                 "gcp": {
                     "calibration": gcp_result.calibration.model_dump(),
                     "gcp_count_supplied": len(gcps),
@@ -467,7 +505,7 @@ class ProductionElevationRuntime:
                     "orientation_flipped": gcp_result.orientation_flipped,
                 }
             },
-            CalibrationMode.GCP,
+            mode=CalibrationMode.GCP,
         )
 
     def _write_provenance(
@@ -518,6 +556,51 @@ class ProductionElevationRuntime:
         )
         return path
 
+    def _complete_relative_project(
+        self,
+        manifest: ProjectManifest,
+        request: ProcessingRequest,
+        geometry: _GeometryState,
+        *,
+        job_id: str | None,
+        resumed: bool,
+        reason: str,
+    ) -> ProjectRunResult:
+        manifest.record_stage(
+            ProcessingStage.CALIBRATION,
+            status="skipped",
+            details={"reason": reason, "metric_claim": False},
+        )
+        current_rdsm = manifest.artifact_path("rdsm")
+        if current_rdsm is None or not current_rdsm.is_file():
+            raise RuntimeError("relative project completed geometry without a durable rDSM artifact")
+        provenance = self._write_provenance(
+            manifest,
+            request,
+            geometry,
+            calibration_mode=CalibrationMode.NONE,
+        )
+        export_artifacts = {
+            "rdsm": str(current_rdsm.resolve()),
+            "provenance": str(provenance.resolve()),
+        }
+        confidence_path = manifest.artifact_path("confidence")
+        if confidence_path is not None:
+            export_artifacts["confidence"] = str(confidence_path.resolve(strict=False))
+        manifest.record_stage(
+            ProcessingStage.EXPORT,
+            status="completed",
+            artifacts=export_artifacts,
+            details={
+                "elevation_units": "relative",
+                "metric_claim": False,
+                "source_files_overwritten": False,
+            },
+        )
+        manifest.record_stage(ProcessingStage.COMPLETE, status="completed")
+        manifest.mark_status(ProjectRunStatus.COMPLETE, job_id=job_id)
+        return _result_from_manifest(manifest, resumed=resumed)
+
     def run(self, request: ProcessingRequest, *, job_id: str | None = None) -> ProjectRunResult:
         if not request.source.is_file():
             raise FileNotFoundError(f"source raster does not exist: {request.source}")
@@ -526,7 +609,7 @@ class ProductionElevationRuntime:
         current_stage: ProcessingStage | None = None
 
         source_hash = sha256_file(request.source)
-        geometry_hash = canonical_json_hash(_geometry_config(request))
+        geometry_hash = canonical_json_hash(_geometry_config(request, self.estimator_decision))
         run_hash = canonical_json_hash(_request_config(request))
 
         if manifest.source_sha256 is not None and manifest.source_sha256 != source_hash:
@@ -537,8 +620,8 @@ class ProductionElevationRuntime:
             and manifest.stage_completed(ProcessingStage.GEOMETRY)
         ):
             raise RuntimeError(
-                "geometry-affecting configuration changed after reconstruction; create a new project "
-                "directory rather than mixing incompatible artifacts"
+                "geometry-affecting configuration or estimator policy changed after reconstruction; "
+                "create a new project directory rather than mixing incompatible artifacts"
             )
         if manifest.status == ProjectRunStatus.COMPLETE.value:
             if manifest.run_config_sha256 != run_hash:
@@ -564,7 +647,8 @@ class ProductionElevationRuntime:
             manifest.record_stage(ProcessingStage.INGEST, status="running")
             if max(request.band_indices) > metadata.count:
                 raise ValueError(
-                    f"RGB band mapping {request.band_indices} exceeds source band count {metadata.count}"
+                    f"RGB band mapping {request.band_indices} exceeds source band count "
+                    f"{metadata.count}"
                 )
             manifest.record_stage(
                 ProcessingStage.INGEST,
@@ -579,68 +663,35 @@ class ProductionElevationRuntime:
                 georeferenced=georeferenced,
             )
 
+            current_stage = ProcessingStage.CALIBRATION
             if not georeferenced:
                 if request.requested_output == "dsm":
                     raise ValueError(
                         "non-georeferenced imagery cannot produce an absolute DSM without spatial "
                         "metadata; request rDSM or provide georeferenced imagery"
                     )
-                current_stage = ProcessingStage.CALIBRATION
-                manifest.record_stage(
-                    ProcessingStage.CALIBRATION,
-                    status="skipped",
-                    details={
-                        "reason": "non_georeferenced_input",
-                        "metric_claim": False,
-                    },
-                )
                 current_stage = ProcessingStage.EXPORT
-                provenance = self._write_provenance(
+                return self._complete_relative_project(
                     manifest,
                     request,
                     geometry,
-                    calibration_mode=CalibrationMode.NONE,
+                    job_id=job_id,
+                    resumed=geometry_resumed,
+                    reason="non_georeferenced_input",
                 )
-                manifest.record_stage(
-                    ProcessingStage.EXPORT,
-                    status="completed",
-                    artifacts={
-                        "rdsm": str((manifest.artifact_path("rdsm") or Path()).resolve()),
-                        "provenance": str(provenance.resolve()),
-                    },
-                    details={"elevation_units": "relative", "metric_claim": False},
-                )
-                manifest.record_stage(ProcessingStage.COMPLETE, status="completed")
-                manifest.mark_status(ProjectRunStatus.COMPLETE, job_id=job_id)
-                return _result_from_manifest(manifest, resumed=geometry_resumed)
 
             if request.requested_output == "rdsm":
-                current_stage = ProcessingStage.CALIBRATION
-                manifest.record_stage(
-                    ProcessingStage.CALIBRATION,
-                    status="skipped",
-                    details={
-                        "reason": "explicit_relative_output_requested",
-                        "metric_claim": False,
-                    },
-                )
-                provenance = self._write_provenance(
+                current_stage = ProcessingStage.EXPORT
+                return self._complete_relative_project(
                     manifest,
                     request,
                     geometry,
-                    calibration_mode=CalibrationMode.NONE,
+                    job_id=job_id,
+                    resumed=geometry_resumed,
+                    reason="explicit_relative_output_requested",
                 )
-                manifest.record_stage(
-                    ProcessingStage.EXPORT,
-                    status="completed",
-                    details={"elevation_units": "relative", "metric_claim": False},
-                )
-                manifest.record_stage(ProcessingStage.COMPLETE, status="completed")
-                manifest.mark_status(ProjectRunStatus.COMPLETE, job_id=job_id)
-                return _result_from_manifest(manifest, resumed=geometry_resumed)
 
             if request.metric_dem_path is None and not request.gcps:
-                current_stage = ProcessingStage.CALIBRATION
                 manifest.record_stage(
                     ProcessingStage.CALIBRATION,
                     status="waiting",
@@ -659,24 +710,19 @@ class ProductionElevationRuntime:
                 manifest.mark_status(ProjectRunStatus.WAITING_FOR_CALIBRATION, job_id=job_id)
                 return _result_from_manifest(manifest, resumed=geometry_resumed)
 
-            current_stage = ProcessingStage.CALIBRATION
             started = time.perf_counter()
             manifest.record_stage(ProcessingStage.CALIBRATION, status="running")
-            dsm, calibration_payload, calibration_mode = self._calibrate(
-                manifest,
-                request,
-                geometry,
-            )
+            calibration = self._calibrate(manifest, request, geometry)
             dsm_path = request.output_dir / "products" / "dsm.tif"
             write_float_geotiff(
                 dsm_path,
-                dsm,
+                calibration.dsm,
                 template_path=request.source,
                 description="DepthWizard absolute Digital Surface Model (metres)",
                 tags={
                     "DEPTHWIZARD_PRODUCT": "ABSOLUTE_DSM_METRES",
                     "ELEVATION_UNITS": "metres",
-                    "CALIBRATION_MODE": calibration_mode.value,
+                    "CALIBRATION_MODE": calibration.mode.value,
                     "ESTIMATOR_PATH": self.estimator_decision.selected_path.value,
                 },
             )
@@ -689,9 +735,9 @@ class ProductionElevationRuntime:
             )
             calibration_document: dict[str, object] = {
                 "schema": "depthwizard.calibration.v1",
-                "mode": calibration_mode.value,
+                "mode": calibration.mode.value,
                 "metric_claim": True,
-                "evidence": calibration_payload,
+                "evidence": calibration.evidence,
             }
             calibration_path = request.output_dir / "calibration.json"
             _write_json_atomic(calibration_path, calibration_document)
@@ -710,9 +756,9 @@ class ProductionElevationRuntime:
                     "calibration": str(calibration_path.resolve()),
                 },
                 details={
-                    "mode": calibration_mode.value,
+                    "mode": calibration.mode.value,
                     "metric_claim": True,
-                    "evidence": calibration_payload,
+                    "evidence": calibration.evidence,
                 },
                 elapsed_seconds=time.perf_counter() - started,
             )
@@ -723,7 +769,11 @@ class ProductionElevationRuntime:
             source_gsd = ground_sample_distance_m(request.source)
             slope_path: Path | None = None
             if source_gsd is not None:
-                slope = slope_degrees(dsm, gsd_x=source_gsd[0], gsd_y=source_gsd[1])
+                slope = slope_degrees(
+                    calibration.dsm,
+                    gsd_x=source_gsd[0],
+                    gsd_y=source_gsd[1],
+                )
                 slope_path = request.output_dir / "products" / "slope.tif"
                 write_float_geotiff(
                     slope_path,
@@ -752,7 +802,7 @@ class ProductionElevationRuntime:
                 manifest,
                 request,
                 geometry,
-                calibration_mode=calibration_mode,
+                calibration_mode=calibration.mode,
             )
             export_artifacts = {
                 "dsm": str(dsm_path.resolve()),
