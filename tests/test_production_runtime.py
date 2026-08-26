@@ -180,5 +180,8 @@ def test_completed_project_rejects_geometry_configuration_drift(tmp_path: Path) 
     runtime = ProductionElevationRuntime(prior=FakePrior())
     runtime.run(ProcessingRequest(source=source, output_dir=project, tile_size=256))
 
-    with pytest.raises(RuntimeError, match="geometry-affecting configuration changed"):
+    with pytest.raises(
+        RuntimeError,
+        match="geometry-affecting configuration or estimator policy changed",
+    ):
         runtime.run(ProcessingRequest(source=source, output_dir=project, tile_size=512))
