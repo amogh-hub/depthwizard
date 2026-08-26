@@ -116,7 +116,7 @@ def spatial_column_holdout(
         raise ValueError("train_fraction must be in [0.5, 0.85]")
     if gap_px < 0:
         raise ValueError("gap_px must be non-negative")
-    split = int(round(width * train_fraction))
+    split = round(width * train_fraction)
     half_gap = gap_px // 2
     train_end = split - half_gap
     val_start = split + (gap_px - half_gap)
