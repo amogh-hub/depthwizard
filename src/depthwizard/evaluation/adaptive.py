@@ -23,11 +23,13 @@ class BlendCandidateScore:
 @dataclass(frozen=True)
 class AdaptiveBlendSelection:
     selected_weight: float
-    baseline_cv_rmse_m: float
-    selected_cv_rmse_m: float
+    baseline_cv_rmse_m: float | None
+    selected_cv_rmse_m: float | None
     relative_cv_improvement: float
     safety_margin_fraction: float
     near_best_fraction: float
+    selection_evidence_valid: bool
+    fallback_reason: str | None
     candidate_scores: tuple[BlendCandidateScore, ...]
 
 
@@ -119,6 +121,35 @@ def _cross_validated_anchor_rmse(
     return float(np.sqrt(np.mean(all_squared)))
 
 
+def _fallback_selection(
+    *,
+    scores: list[BlendCandidateScore],
+    safety_margin_fraction: float,
+    near_best_fraction: float,
+    reason: str,
+    baseline_cv_rmse_m: float | None = None,
+) -> AdaptiveBlendSelection:
+    """Return exact DA3 when anchor evidence cannot defensibly rank learned refinement.
+
+    The operational invariant is fail-closed: an inability to validate the refinement policy must
+    never make the baseline unavailable. Metric calibration of DA3 itself is still performed later
+    by ``sparse_anchor_holdout_benchmark`` and remains free to reject the scene if the *full* anchor
+    set is genuinely insufficient. This helper only handles failure of the nested policy-selection
+    cross-validation.
+    """
+    return AdaptiveBlendSelection(
+        selected_weight=0.0,
+        baseline_cv_rmse_m=baseline_cv_rmse_m,
+        selected_cv_rmse_m=baseline_cv_rmse_m,
+        relative_cv_improvement=0.0,
+        safety_margin_fraction=float(safety_margin_fraction),
+        near_best_fraction=float(near_best_fraction),
+        selection_evidence_valid=False,
+        fallback_reason=reason,
+        candidate_scores=tuple(scores),
+    )
+
+
 def select_evidence_adaptive_blend(
     geometry_prior: np.ndarray,
     refined_relative_height: np.ndarray,
@@ -139,6 +170,10 @@ def select_evidence_adaptive_blend(
     held-out anchor fold. A non-zero refinement is accepted only when its cross-validated RMSE
     improves over exact DA3 by at least ``safety_margin_fraction``. Among candidates within
     ``near_best_fraction`` of the best valid score, the smallest correction weight is preferred.
+
+    If nested cross-validation cannot produce a defensible DA3 reference score, the policy fails
+    closed to exact DA3. That is different from final metric calibration: the complete declared
+    anchor set is still used afterwards and may independently accept or reject DA3 itself.
 
     This is an operational calibration policy, not a replacement for untouched scientific
     validation. It is designed for the SIH setting where coarse DEM/GCP evidence is available and
@@ -196,10 +231,44 @@ def select_evidence_adaptive_blend(
         )
 
     if 0.0 not in valid_scores:
-        raise RuntimeError("exact DA3 fallback failed anchor cross-validation")
+        baseline_rejection = next(
+            (
+                score.rejection_reason
+                for score in scores
+                if score.weight == 0.0 and score.rejection_reason is not None
+            ),
+            "exact DA3 anchor cross-validation was unavailable",
+        )
+        return _fallback_selection(
+            scores=scores,
+            safety_margin_fraction=safety_margin_fraction,
+            near_best_fraction=near_best_fraction,
+            reason=(
+                "adaptive policy evidence was insufficient; preserved exact DA3 fallback: "
+                f"{baseline_rejection}"
+            ),
+        )
+
     baseline_score = valid_scores[0.0]
-    if not np.isfinite(baseline_score) or baseline_score <= 0.0:
-        raise RuntimeError("exact DA3 anchor CV produced an invalid baseline RMSE")
+    if not np.isfinite(baseline_score) or baseline_score < 0.0:
+        return _fallback_selection(
+            scores=scores,
+            safety_margin_fraction=safety_margin_fraction,
+            near_best_fraction=near_best_fraction,
+            reason="adaptive policy produced a non-finite/negative DA3 CV score",
+        )
+    if baseline_score == 0.0:
+        return AdaptiveBlendSelection(
+            selected_weight=0.0,
+            baseline_cv_rmse_m=0.0,
+            selected_cv_rmse_m=0.0,
+            relative_cv_improvement=0.0,
+            safety_margin_fraction=float(safety_margin_fraction),
+            near_best_fraction=float(near_best_fraction),
+            selection_evidence_valid=True,
+            fallback_reason="exact DA3 anchor-CV RMSE is zero; refinement cannot improve it",
+            candidate_scores=tuple(scores),
+        )
 
     best_weight, best_score = min(valid_scores.items(), key=lambda item: (item[1], item[0]))
     improvement = (baseline_score - best_score) / baseline_score
@@ -224,6 +293,8 @@ def select_evidence_adaptive_blend(
         relative_cv_improvement=float(selected_improvement),
         safety_margin_fraction=float(safety_margin_fraction),
         near_best_fraction=float(near_best_fraction),
+        selection_evidence_valid=True,
+        fallback_reason=None,
         candidate_scores=tuple(scores),
     )
 
@@ -248,7 +319,8 @@ def adaptive_sparse_anchor_holdout_benchmark(
 
     The same deterministic anchor mask is used for DA3 calibration, adaptive blend selection and
     final metric calibration. Blend selection itself uses only cross-validated anchor residuals;
-    raster evaluation pixels remain excluded throughout policy selection.
+    raster evaluation pixels remain excluded throughout policy selection. If nested CV is too weak
+    to rank candidates, exact DA3 is preserved and full-anchor metric calibration proceeds normally.
     """
     geometry = np.asarray(geometry_prior, dtype=np.float64)
     refined = np.asarray(refined_relative_height, dtype=np.float64)
