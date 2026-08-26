@@ -1,0 +1,32 @@
+.dw-raster-view {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 20px;
+  background: #e8edf1;
+}
+
+.dw-raster-view::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(44, 62, 80, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(44, 62, 80, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.dw-raster-view img {
+  position: relative;
+  z-index: 1;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid rgba(174, 186, 198, 0.82);
+  background: #f7f8fa;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.10);
+}
