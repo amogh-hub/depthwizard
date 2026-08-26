@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
@@ -47,6 +48,40 @@ def test_reproject_to_match_and_export(tmp_path: Path) -> None:
         assert src.descriptions[0] == "test"
 
 
+def test_crs_free_exact_grid_alignment_is_allowed_without_guessing(tmp_path: Path) -> None:
+    reference = tmp_path / "reference_no_crs.tif"
+    target = tmp_path / "target_no_crs.tif"
+    transform = from_origin(1000.0, 2000.0, 0.25, 0.25)
+    values = np.arange(64, dtype=np.float32).reshape(8, 8)
+    _write(reference, values, transform=transform, crs=None)
+    _write(target, np.ones((8, 8), dtype=np.float32), transform=transform, crs=None)
+
+    aligned, valid = reproject_to_match(reference, target)
+
+    assert valid.all()
+    np.testing.assert_allclose(aligned, values)
+
+
+def test_crs_free_alignment_rejects_transform_mismatch(tmp_path: Path) -> None:
+    reference = tmp_path / "reference_no_crs.tif"
+    target = tmp_path / "target_no_crs.tif"
+    _write(
+        reference,
+        np.ones((8, 8), dtype=np.float32),
+        transform=from_origin(1000.0, 2000.0, 0.25, 0.25),
+        crs=None,
+    )
+    _write(
+        target,
+        np.ones((8, 8), dtype=np.float32),
+        transform=from_origin(1000.5, 2000.0, 0.25, 0.25),
+        crs=None,
+    )
+
+    with pytest.raises(ValueError, match="dimensions and affine transforms"):
+        reproject_to_match(reference, target)
+
+
 def test_ground_sample_distance_is_metric_for_projected_crs(tmp_path: Path) -> None:
     path = tmp_path / "projected.tif"
     _write(path, np.ones((8, 8)), transform=from_origin(500000, 1500000, 10, 10))
@@ -74,3 +109,25 @@ def test_ground_sample_distance_converts_geographic_degrees_to_metres(tmp_path: 
     assert gsd is not None
     assert 10.0 < gsd[0] < 11.5
     assert 10.5 < gsd[1] < 11.5
+
+
+def test_crs_free_metric_affine_requires_explicit_ortholoc_opt_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "ortholoc_unpacked.tif"
+    _write(
+        path,
+        np.ones((8, 8), dtype=np.float32),
+        transform=from_origin(500.0, 600.0, 0.2, 0.3),
+        crs=None,
+    )
+
+    monkeypatch.delenv("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", raising=False)
+    assert ground_sample_distance_m(path) is None
+
+    monkeypatch.setenv("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", "1")
+    gsd = ground_sample_distance_m(path)
+    assert gsd is not None
+    assert abs(gsd[0] - 0.2) < 1e-6
+    assert abs(gsd[1] - 0.3) < 1e-6
