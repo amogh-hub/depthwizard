@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -17,9 +18,30 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
     Affine coefficients are expressed in CRS units, which can be degrees for geographic rasters.
     Converting neighbouring pixel centres to WGS84 and measuring geodesic distance avoids silently
     labelling angular pixel sizes as metres.
+
+    The OrthoLoC unpacked benchmark is a special, explicit exception: its public dataset contract
+    defines the DOP/DSM pixel scale in metres even though some unpacked TIFFs omit a formal CRS.
+    The dedicated multiscene acceptance target opts into that interpretation with
+    ``DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1``. No other CRS-free raster is treated as metric.
     """
     with rasterio.open(path) as src:
-        if src.crs is None or src.transform.is_identity:
+        if src.crs is None:
+            allow_ortholoc_metric_affine = (
+                os.environ.get("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE") == "1"
+            )
+            if not allow_ortholoc_metric_affine or src.transform.is_identity:
+                return None
+            gsd_x = float(np.hypot(src.transform.a, src.transform.d))
+            gsd_y = float(np.hypot(src.transform.b, src.transform.e))
+            if (
+                not np.isfinite(gsd_x)
+                or not np.isfinite(gsd_y)
+                or gsd_x <= 0
+                or gsd_y <= 0
+            ):
+                raise ValueError("CRS-free OrthoLoC affine grid has invalid metric pixel spacing")
+            return gsd_x, gsd_y
+        if src.transform.is_identity:
             return None
         col = (src.width - 1) / 2.0
         row = (src.height - 1) / 2.0
