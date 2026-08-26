@@ -153,6 +153,65 @@ export type ReferenceValidationReport = {
   warnings: string[];
 };
 
+export type NormalizedPoint = {
+  x: number;
+  y: number;
+};
+
+export type RasterSample = {
+  available: boolean;
+  value: number | null;
+  units: string | null;
+  semantics: string;
+};
+
+export type ProjectProbeResult = {
+  project_id: string;
+  point: NormalizedPoint;
+  pixel_col: number;
+  pixel_row: number;
+  map_x: number | null;
+  map_y: number | null;
+  longitude: number | null;
+  latitude: number | null;
+  surface_product: "dsm" | "rdsm";
+  surface: RasterSample;
+  slope: RasterSample;
+  reference: RasterSample;
+  residual: RasterSample;
+  confidence: RasterSample;
+};
+
+export type ProfileSample = {
+  fraction: number;
+  point: NormalizedPoint;
+  distance_pixels: number;
+  distance_m: number | null;
+  surface: RasterSample;
+  slope: RasterSample;
+  reference: RasterSample;
+  residual: RasterSample;
+  confidence: RasterSample;
+};
+
+export type ProjectProfileResult = {
+  project_id: string;
+  surface_product: "dsm" | "rdsm";
+  start: NormalizedPoint;
+  end: NormalizedPoint;
+  sample_count: number;
+  horizontal_distance_pixels: number;
+  horizontal_distance_m: number | null;
+  vertical_delta: number | null;
+  vertical_units: string | null;
+  minimum_surface: number | null;
+  maximum_surface: number | null;
+  elevation_gain: number | null;
+  elevation_loss: number | null;
+  samples: ProfileSample[];
+  semantics: string;
+};
+
 export type ProjectPreviewLayer =
   | "optical"
   | "rdsm"
@@ -246,6 +305,25 @@ export function validateProjectReference(
 export function getProjectValidation(projectDir: string): Promise<ReferenceValidationReport> {
   const query = new URLSearchParams({ project_dir: projectDir });
   return coreFetch<ReferenceValidationReport>(`/v1/projects/validation?${query.toString()}`);
+}
+
+export function probeProject(projectDir: string, point: NormalizedPoint): Promise<ProjectProbeResult> {
+  return coreFetch<ProjectProbeResult>("/v1/projects/probe", {
+    method: "POST",
+    body: JSON.stringify({ project_dir: projectDir, point }),
+  });
+}
+
+export function sampleProjectProfile(
+  projectDir: string,
+  start: NormalizedPoint,
+  end: NormalizedPoint,
+  samples = 160,
+): Promise<ProjectProfileResult> {
+  return coreFetch<ProjectProfileResult>("/v1/projects/profile", {
+    method: "POST",
+    body: JSON.stringify({ project_dir: projectDir, start, end, samples }),
+  });
 }
 
 export async function getProjectPreviewUrl(
