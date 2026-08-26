@@ -1,65 +1,37 @@
-# DepthWizard — SIH26175
+# DepthWizard
 
-Final-system engineering repository for **ISRO / Smart India Hackathon 2026** problem statement **SIH26175 — DepthWizard: Single-View Height Estimation and 3D Flythrough**.
+DepthWizard is the SIH26175 engineering repository for **single-view height estimation and 3D flythrough** from optical remote-sensing imagery.
 
-This repository is intentionally structured as the final production system from day one. There is no separate MVP/prototype branch or demo-only application architecture.
+The repository is being built as the final scientific/geospatial system rather than as a disposable hackathon prototype. Core requirements include geospatially honest relative-vs-metric elevation handling, robust calibration, deterministic large-raster processing, validation evidence, and an analytical 3D desktop workflow.
 
-## Implemented permanent foundations
+## Current engineering gates
 
-- explicit PNG/JPG/TIFF/GeoTIFF raster inspection and RGB band handling;
-- geospatially correct reprojection of DEM/reference rasters to the prediction grid;
-- truthful rDSM export with no invented CRS or metric units;
-- GeoTIFF DSM export preserving CRS/geotransform;
-- robust Huber/IRLS relative-to-metric affine calibration;
-- conservative DEM evidence weighting and low-frequency terrain-bias correction;
-- official RMSE / MAE / Pearson correlation metrics plus diagnostic error statistics;
-- slope derivation and slope validation;
-- residual GeoTIFF + `metrics.json` evidence generation;
-- overlap-aware tiled accumulation and deterministic tile-grid generation;
-- textured metric terrain GLB generation and LOD-pyramid export;
-- SHA-256 provenance helpers and resumable project manifest primitives;
-- dataset registry enforcing geographic split integrity and cross-sensor holdout rules;
-- permanent geometry-prior interface plus DA3MONO-LARGE adapter boundary;
-- loopback-only FastAPI local core service with optional per-session token;
-- Tauri/React/Three.js desktop application shell and permanent scientific design system;
-- CI skeleton and SIH requirement traceability.
-
-## Python verification
+Run the Python quality gate with:
 
 ```bash
-python -m pip install -e ".[dev]"
-pytest
+make verify
 ```
 
-Current test suite covers calibration, geospatial reprojection/export, rDSM semantics, official metrics, slope metrics, tiling, mesh generation, dataset split integrity and local-service raster inspection.
-
-## Core CLI
+For the frozen ISPRS Potsdam external benchmark, the historical strict v1 run is preserved and the active acceptance protocol is **external-v2**, which changes only the reference metadata contract after a documented one-column official-file discrepancy:
 
 ```bash
-depthwizard inspect imagery.tif
-depthwizard calibrate-dem relative_height.tif srtm.tif dsm.tif
-depthwizard validate-dsm dsm.tif reference_lidar.tif evidence/
-depthwizard serve --host 127.0.0.1 --port 8765
+make potsdam-contract-audit
+make potsdam-external-acceptance
 ```
 
-## Desktop application
+Protocol details:
 
-`apps/desktop` is the permanent Tauri + React + Three.js workstation. The UI does not fabricate scientific content: until a real reconstruction is available, the central canvas remains in a truthful empty/processing state.
+- `docs/potsdam-external-benchmark-v1.md` — immutable aborted historical run;
+- `docs/potsdam-external-benchmark-v2.md` — sealed metadata-contract correction used by the current external acceptance target.
 
-```bash
-cd apps/desktop
-npm install
-npm run tauri dev
-```
+## Product modes
 
-The desktop requires the local DepthWizard core service; production packaging will launch the sidecar automatically with a session token.
+- **Non-georeferenced RGB** → dimensionless relative DSM (rDSM), never fake metres.
+- **Georeferenced RGB** → absolute DSM in metres when adequate independent calibration evidence exists.
+- **3D analysis** → textured terrain/structure mesh with measurement, profile, validation, confidence and geospatial export workflows as implementation gates are completed.
 
-## Architecture authority
+## Scientific discipline
 
-Read in this order:
+DepthWizard keeps development, calibration and evaluation evidence separate. External targets are not used to tune checkpoint selection, reference-adaptive blending, metric scale/orientation, or post-hoc promotion thresholds. Failed or aborted frozen evaluations remain part of the evidence record rather than being silently rewritten.
 
-1. `MASTER_SPEC.md`
-2. `docs/requirements-traceability.yaml`
-3. `docs/adr/`
-
-Every feature and scientific claim must trace to an official SIH/ISRO requirement or an explicit competitive-quality objective.
+See `MASTER_SPEC.md` for the authoritative final-system engineering direction.
