@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from depthwizard.height_model.training import (
+    PriorReferenceCalibrationError,
     canonicalize_reference_to_prior,
     fit_reference_to_prior,
     fit_rgb_ranges,
@@ -65,6 +67,15 @@ def test_reference_fit_ignores_validation_only_distortion() -> None:
 
     assert abs(clean_fit.scale_m_per_prior_unit - distorted_fit.scale_m_per_prior_unit) < 1e-6
     assert abs(clean_fit.offset_m - distorted_fit.offset_m) < 1e-6
+
+
+def test_reference_fit_raises_typed_error_for_inverted_training_prior() -> None:
+    geometry = np.linspace(0.0, 1.0, num=40 * 60, dtype=np.float32).reshape(40, 60)
+    reference = 900.0 - 120.0 * geometry
+    train = np.ones_like(geometry, dtype=bool)
+
+    with pytest.raises(PriorReferenceCalibrationError, match=r"Pearson r=-1\.0000"):
+        fit_reference_to_prior(geometry, reference, train)
 
 
 def test_rgb_normalization_and_patch_enumeration() -> None:
