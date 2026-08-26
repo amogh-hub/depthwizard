@@ -225,7 +225,8 @@ class DepthWizardHeightModel(nn.Module):
         head_channels = rgb_channels[0]
         self.height_residual_head = nn.Conv2d(head_channels, 1, kernel_size=1)
         nn.init.zeros_(self.height_residual_head.weight)
-        nn.init.zeros_(self.height_residual_head.bias)
+        if self.height_residual_head.bias is not None:
+            nn.init.zeros_(self.height_residual_head.bias)
         self.log_variance_head = nn.Conv2d(head_channels, 1, kernel_size=1)
         self.semantic_head = nn.Conv2d(
             head_channels,
