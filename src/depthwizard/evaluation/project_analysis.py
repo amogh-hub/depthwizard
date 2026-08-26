@@ -6,7 +6,7 @@ from typing import Literal
 
 import numpy as np
 import rasterio
-from pyproj import Geod, Transformer
+from pyproj import CRS, Geod, Transformer
 
 from depthwizard.contracts import (
     NormalizedPoint,
@@ -85,6 +85,23 @@ def _artifact_sample(manifest: ProjectManifest, name: str, point: NormalizedPoin
     )
 
 
+def _safe_geographic_coordinates(
+    crs: object,
+    x: float,
+    y: float,
+) -> tuple[float | None, float | None]:
+    try:
+        transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        longitude, latitude = transformer.transform(x, y)
+    except Exception:
+        return None, None
+    if not np.isfinite(longitude) or not np.isfinite(latitude):
+        return None, None
+    if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
+        return None, None
+    return float(longitude), float(latitude)
+
+
 def _spatial_coordinates(
     path: Path,
     point: NormalizedPoint,
@@ -94,9 +111,8 @@ def _spatial_coordinates(
         if src.crs is None or src.transform.is_identity:
             return col, row, None, None, None, None
         x, y = src.xy(row, col)
-        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-        longitude, latitude = transformer.transform(x, y)
-        return col, row, float(x), float(y), float(longitude), float(latitude)
+        longitude, latitude = _safe_geographic_coordinates(src.crs, float(x), float(y))
+        return col, row, float(x), float(y), longitude, latitude
 
 
 def probe_project(request: ProjectProbeRequest) -> ProjectProbeResult:
@@ -130,6 +146,20 @@ def probe_project(request: ProjectProbeRequest) -> ProjectProbeResult:
     )
 
 
+def _projected_distance_factors(crs: CRS) -> tuple[float, float] | None:
+    """Return projected-coordinate conversion factors to metres when the CRS declares them."""
+    if not crs.is_projected or len(crs.axis_info) < 2:
+        return None
+    x_factor = crs.axis_info[0].unit_conversion_factor
+    y_factor = crs.axis_info[1].unit_conversion_factor
+    if x_factor is None or y_factor is None:
+        return None
+    factors = (float(x_factor), float(y_factor))
+    if not all(np.isfinite(value) and value > 0 for value in factors):
+        return None
+    return factors
+
+
 def _profile_distances(
     surface_path: Path,
     points: list[NormalizedPoint],
@@ -148,17 +178,43 @@ def _profile_distances(
         if src.crs is None or src.transform.is_identity:
             return pixel_distance, [None for _ in points]
 
-        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-        geographic: list[tuple[float, float]] = []
-        for col, row in pixels:
-            x, y = src.xy(row, col)
-            longitude, latitude = transformer.transform(x, y)
-            geographic.append((float(longitude), float(latitude)))
+        crs = CRS.from_user_input(src.crs)
+        map_coordinates = [
+            tuple(float(value) for value in src.xy(row, col))
+            for col, row in pixels
+        ]
 
-    metric_distance: list[float | None] = [0.0]
+        projected_factors = _projected_distance_factors(crs)
+        if projected_factors is not None:
+            x_factor, y_factor = projected_factors
+            metric_distance: list[float | None] = [0.0]
+            cumulative = 0.0
+            for (x0, y0), (x1, y1) in pairwise(map_coordinates):
+                segment = float(
+                    np.hypot((x1 - x0) * x_factor, (y1 - y0) * y_factor)
+                )
+                if not np.isfinite(segment):
+                    return pixel_distance, [None for _ in points]
+                cumulative += segment
+                metric_distance.append(cumulative)
+            return pixel_distance, metric_distance
+
+        if not crs.is_geographic:
+            return pixel_distance, [None for _ in points]
+
+        geographic: list[tuple[float, float]] = []
+        for x, y in map_coordinates:
+            longitude, latitude = _safe_geographic_coordinates(crs, x, y)
+            if longitude is None or latitude is None:
+                return pixel_distance, [None for _ in points]
+            geographic.append((longitude, latitude))
+
+    metric_distance = [0.0]
     cumulative = 0.0
     for (lon0, lat0), (lon1, lat1) in pairwise(geographic):
         _, _, segment = _GEOD.inv(lon0, lat0, lon1, lat1)
+        if not np.isfinite(segment):
+            return pixel_distance, [None for _ in points]
         cumulative += float(abs(segment))
         metric_distance.append(cumulative)
     return pixel_distance, metric_distance

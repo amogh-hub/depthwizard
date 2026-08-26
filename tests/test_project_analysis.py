@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 from depthwizard.contracts import (
     NormalizedPoint,
@@ -14,7 +14,14 @@ from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.provenance.manifest import sha256_file
 
 
-def _write_surface(path: Path, values: np.ndarray, *, units: str = "m") -> None:
+def _write_surface(
+    path: Path,
+    values: np.ndarray,
+    *,
+    units: str = "m",
+    crs: str = "EPSG:32643",
+    transform: Affine | None = None,
+) -> None:
     del units
     path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
@@ -25,8 +32,8 @@ def _write_surface(path: Path, values: np.ndarray, *, units: str = "m") -> None:
         width=values.shape[1],
         count=1,
         dtype="float32",
-        crs="EPSG:32643",
-        transform=from_origin(500000, 1400000, 1.0, 1.0),
+        crs=crs,
+        transform=transform or from_origin(500000, 1400000, 1.0, 1.0),
         nodata=-9999.0,
     ) as dst:
         dst.write(values.astype(np.float32), 1)
@@ -107,6 +114,52 @@ def test_profile_reports_metric_distance_and_surface_delta(tmp_path: Path) -> No
     assert result.minimum_surface == 110.0
     assert result.maximum_surface == 120.0
     assert result.samples[-1].reference.value == 119.0
+
+
+def test_projected_profile_uses_declared_linear_units_without_global_roundtrip(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    source = tmp_path / "rgb.tif"
+    source.touch()
+    dsm = project / "products" / "dsm.tif"
+    values = np.arange(121, dtype=np.float32).reshape(11, 11)
+    _write_surface(
+        dsm,
+        values,
+        crs="EPSG:32632",
+        transform=from_origin(100_000_000, 100_000_000, 1.0, 1.0),
+    )
+
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        dsm,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(dsm),
+    )
+
+    profile = sample_project_profile(
+        ProjectProfileRequest(
+            project_dir=project,
+            start=NormalizedPoint(x=0.0, y=0.5),
+            end=NormalizedPoint(x=1.0, y=0.5),
+            samples=11,
+        )
+    )
+    probe = probe_project(
+        ProjectProbeRequest(
+            project_dir=project,
+            point=NormalizedPoint(x=0.5, y=0.5),
+        )
+    )
+
+    assert profile.horizontal_distance_m == 10.0
+    assert probe.map_x is not None
+    assert probe.map_y is not None
+    assert probe.longitude is None
+    assert probe.latitude is None
 
 
 def test_relative_project_never_invents_metric_distance(tmp_path: Path) -> None:

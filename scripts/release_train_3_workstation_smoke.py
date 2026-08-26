@@ -62,7 +62,11 @@ def _preview_contract(layer: PreviewLayer) -> dict[str, object]:
     payload = render_project_layer_preview(PROJECT_DIR, layer, max_side=512)
     if not payload.startswith(PNG_SIGNATURE):
         raise RuntimeError(f"project preview layer '{layer}' did not render as PNG")
-    return {"layer": layer, "bytes": len(payload), "sha256": __import__("hashlib").sha256(payload).hexdigest()}
+    return {
+        "layer": layer,
+        "bytes": len(payload),
+        "sha256": __import__("hashlib").sha256(payload).hexdigest(),
+    }
 
 
 def main() -> None:
@@ -127,6 +131,20 @@ def main() -> None:
     if available_surface_samples < 2:
         raise RuntimeError("profile has insufficient raster-backed surface samples")
 
+    scene_diagonal_m = float(
+        np.hypot(
+            max(mesh.raster_width - 1, 0) * abs(mesh.gsd_x),
+            max(mesh.raster_height - 1, 0) * abs(mesh.gsd_y),
+        )
+    )
+    if not np.isfinite(scene_diagonal_m) or scene_diagonal_m <= 0:
+        raise RuntimeError("mesh report does not preserve a finite positive metric scene extent")
+    if profile.horizontal_distance_m > scene_diagonal_m * 1.01:
+        raise RuntimeError(
+            "profile distance exceeds the full metric scene diagonal; projected-coordinate "
+            "distance semantics are inconsistent with the persisted mesh/raster scale"
+        )
+
     if not export.bundle_path.is_file() or sha256_file(export.bundle_path) != export.bundle_sha256:
         raise RuntimeError("previously accepted project export bundle no longer matches its recorded hash")
     if export.include_source:
@@ -161,6 +179,8 @@ def main() -> None:
             "samples": profile.sample_count,
             "available_surface_samples": available_surface_samples,
             "horizontal_distance_m": profile.horizontal_distance_m,
+            "scene_diagonal_m": scene_diagonal_m,
+            "distance_within_scene_extent": True,
             "vertical_delta": profile.vertical_delta,
             "vertical_units": profile.vertical_units,
         },
@@ -174,7 +194,9 @@ def main() -> None:
         "scientific_boundary": (
             "Terrain LODs, UV analytical overlays, camera flythroughs, renderer LOD selection and "
             "3D analysis graphics are display derivatives. Numeric probe/profile values remain "
-            "raster-backed. Export remains a transport derivative. No sealed benchmark was rerun."
+            "raster-backed. Projected CRS profiles use declared linear coordinate units converted "
+            "to metres rather than requiring a potentially invalid global WGS84 round-trip. "
+            "Export remains a transport derivative. No sealed benchmark was rerun."
         ),
     }
     output_dir = PROJECT_DIR / "workstation"
@@ -191,6 +213,7 @@ def main() -> None:
         f"Metric profile: {profile.sample_count} samples · "
         f"{profile.horizontal_distance_m:.2f} m · {available_surface_samples} available surface samples"
     )
+    print(f"Metric scene diagonal guard: {scene_diagonal_m:.2f} m")
     print(f"Accepted export SHA-256 preserved: {export.bundle_sha256}")
     print("Reference data used for mesh geometry: NO")
     print("Consumed benchmark/model-promotion protocols rerun: NO")
