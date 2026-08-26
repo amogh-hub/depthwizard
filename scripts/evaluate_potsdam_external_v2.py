@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import rasterio
+import torch
 from rasterio.enums import Resampling
 from rasterio.warp import reproject
 
@@ -13,6 +16,7 @@ from depthwizard.evaluation.potsdam import (
     PotsdamTilePaths,
     benchmark_full_coverage_mask,
     inspect_potsdam_reference_contract,
+    protocol_sha256,
 )
 from depthwizard.provenance.manifest import sha256_file
 from scripts import evaluate_potsdam_external as v1
@@ -21,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "artifacts" / "evaluation" / "potsdam-external-v2"
 PROTOCOL_SEAL_PATH = OUT_DIR / "protocol_seal.json"
 REPORT_PATH = OUT_DIR / "potsdam_external_report.json"
+V1_PROTOCOL_SEAL_PATH = ROOT / "artifacts" / "evaluation" / "potsdam-external-v1" / "protocol_seal.json"
 MAX_TRAILING_EDGE_DEFICIT_PX = 1
 V1_PROTOCOL_SHA256 = "6452480ae7cc55d63eff5cab9bf6b449bfb00222591e79070854c57dc6e35923"
 
@@ -28,8 +33,32 @@ V1_PROTOCOL_SHA256 = "6452480ae7cc55d63eff5cab9bf6b449bfb00222591e79070854c57dc6
 # getattr/setattr keep that reuse explicit without pretending the v1 helpers are public API.
 _CORE_PROTOCOL_PAYLOAD = getattr(v1, "_protocol_payload")
 _CORE_EVALUATE_TILE = getattr(v1, "_evaluate_tile")
+_CORE_LOAD_V4_MODEL = getattr(v1, "_load_v4_model")
 _SEALED_REFERENCE_CONTRACTS: dict[str, dict[str, object]] = {}
 _REFERENCE_RUNTIME: dict[str, dict[str, object]] = {}
+
+
+def _verify_historical_v1_seal() -> None:
+    if not V1_PROTOCOL_SEAL_PATH.is_file():
+        raise FileNotFoundError(
+            "historical external-v1 protocol seal is missing; do not create external-v2 without "
+            f"the preserved v1 evidence record: {V1_PROTOCOL_SEAL_PATH}"
+        )
+    document = json.loads(V1_PROTOCOL_SEAL_PATH.read_text(encoding="utf-8"))
+    actual = document.get("protocol_sha256")
+    if actual != V1_PROTOCOL_SHA256:
+        raise RuntimeError(
+            "historical external-v1 protocol seal digest does not match the preserved run: "
+            f"expected {V1_PROTOCOL_SHA256}, got {actual!r}"
+        )
+
+
+def _assert_v2_unconsumed() -> None:
+    if PROTOCOL_SEAL_PATH.exists():
+        raise RuntimeError(
+            "external-v2 protocol seal already exists. Treat v2 as consumed; do not delete or "
+            "rewrite its seal to rerun a changed evaluator."
+        )
 
 
 def _reference_contracts(tile_paths: list[PotsdamTilePaths]) -> dict[str, dict[str, object]]:
@@ -121,7 +150,12 @@ def _load_reference_after_seal_v2(
             raise ValueError(
                 f"Potsdam reference CRS must resolve to EPSG:32633; got {source_crs}"
             )
-        reference_bounds = tuple(float(value) for value in src.bounds)
+        reference_bounds = (
+            float(src.bounds.left),
+            float(src.bounds.bottom),
+            float(src.bounds.right),
+            float(src.bounds.top),
+        )
         reproject(
             source=rasterio.band(src, 1),
             destination=destination,
@@ -190,7 +224,45 @@ def _configure_v2() -> None:
     setattr(v1, "_evaluate_tile", _evaluate_tile_v2)
 
 
+def preflight() -> None:
+    """Validate the complete v2 metadata/provenance contract without consuming its seal."""
+    _verify_historical_v1_seal()
+    _assert_v2_unconsumed()
+
+    tile_paths = [
+        v1.resolve_potsdam_tile_paths(v1.DATASET_ROOT, tile_id)
+        for tile_id in v1.FROZEN_POTSDAM_TILE_IDS
+    ]
+    rgb_contracts = [v1.inspect_potsdam_rgb_contract(tile.rgb) for tile in tile_paths]
+    if not v1.COPDEM_PATH.is_file():
+        raise FileNotFoundError(
+            "Copernicus GLO-30 calibration tile is missing; external-v1 should have downloaded it: "
+            f"{v1.COPDEM_PATH}"
+        )
+    model, checkpoint = _CORE_LOAD_V4_MODEL(torch.device("cpu"))
+    del model
+    protocol = _protocol_payload_v2(tile_paths, rgb_contracts, checkpoint)
+    candidate_digest = protocol_sha256(protocol)
+
+    print("=== DEPTHWIZARD POTSDAM EXTERNAL-V2 PREFLIGHT ===")
+    print("Historical v1 seal: VERIFIED")
+    print("V2 seal already exists: NO")
+    print(f"Frozen tiles: {list(v1.FROZEN_POTSDAM_TILE_IDS)}")
+    for tile_id, contract in _SEALED_REFERENCE_CONTRACTS.items():
+        print(
+            f"{tile_id}: reference shape {contract['reference_shape']} | "
+            f"missing trailing rows {contract['missing_trailing_rows']} | "
+            f"columns {contract['missing_trailing_columns']}"
+        )
+    print(f"Candidate v2 protocol SHA256: {candidate_digest}")
+    print("Potsdam DSM pixel values read: NO")
+    print("V2 protocol seal created: NO")
+    print("Ready for one sealed external-v2 execution. ✅")
+
+
 def main() -> None:
+    _verify_historical_v1_seal()
+    _assert_v2_unconsumed()
     _configure_v2()
     print("DepthWizard Potsdam external-v2: metadata-contract correction only")
     print(f"Historical external-v1 seal preserved: {V1_PROTOCOL_SHA256}")
@@ -206,4 +278,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    arguments = sys.argv[1:]
+    if not arguments:
+        main()
+    elif arguments == ["--preflight-only"]:
+        preflight()
+    else:
+        raise SystemExit("usage: python -m scripts.evaluate_potsdam_external_v2 [--preflight-only]")
