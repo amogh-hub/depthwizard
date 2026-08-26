@@ -17,9 +17,9 @@ from depthwizard.height_model.losses import compute_height_losses
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
 from depthwizard.height_model.training import (
     PatchWindow,
+    canonicalize_reference_to_prior,
+    fit_reference_to_prior,
     fit_rgb_ranges,
-    fit_robust_range,
-    normalize_relative_target,
     normalize_rgb,
     patch_windows,
     spatial_column_holdout,
@@ -43,12 +43,12 @@ DSM_URL = f"{BASE_URL}/urban_residential_DSM.tif"
 USER_AGENT = "DepthWizard-SIH26175/0.2 training-acceptance"
 SEED = 26175
 PATCH_SIZE = 192
-STRIDE = 128
+STRIDE = 96
 TRAIN_FRACTION = 0.68
 HOLDOUT_GAP_PX = 64
-EPOCHS = 12
+EPOCHS = 18
 BATCH_SIZE = 2
-LEARNING_RATE = 2e-4
+LEARNING_RATE = 1.5e-4
 ANCHOR_COUNT = 64
 
 
@@ -287,10 +287,19 @@ def main() -> None:
     if int(train_mask.sum()) < 10_000 or int(validation_mask.sum()) < 10_000:
         raise RuntimeError("insufficient spatially disjoint paired pixels for training acceptance")
 
-    target_scale = fit_robust_range(reference, train_mask)
-    target = normalize_relative_target(reference, target_scale)
+    # Fit one scene-level metric<->relative relation using training pixels only, then express the
+    # entire reference DSM in DA3-relative coordinates. This preserves global consistency across
+    # all patches and leaves final metric scale recovery to the production DEM/GCP calibrator.
+    target_fit = fit_reference_to_prior(geometry, reference, train_mask)
+    target = canonicalize_reference_to_prior(reference, target_fit)
     rgb_ranges = fit_rgb_ranges(rgb_raw, train_mask)
     rgb = normalize_rgb(rgb_raw, rgb_ranges)
+
+    print(
+        "Training target canonicalization: "
+        f"{target_fit.scale_m_per_prior_unit:.3f} m/prior + {target_fit.offset_m:.3f} m | "
+        f"dense-train fit RMSE {target_fit.rmse_m:.3f} m"
+    )
 
     train_windows = patch_windows(
         train_mask,
@@ -442,6 +451,7 @@ def main() -> None:
         tags={
             "PURPOSE": "training_pipeline_acceptance",
             "EVALUATION_SCOPE": "spatial_holdout_same_scene_not_final_benchmark",
+            "RELATIVE_COORDINATE": "DA3_SCENE_CANONICAL",
         },
     )
 
@@ -452,7 +462,7 @@ def main() -> None:
         "seed": SEED,
         "best_epoch": best_epoch,
         "best_validation_loss": best_validation_loss,
-        "target_range_m": asdict(target_scale),
+        "target_prior_fit": asdict(target_fit),
         "rgb_ranges": [asdict(scale) for scale in rgb_ranges],
         "source": "OrthoLoC demo / urban_residential",
         "purpose": "training pipeline acceptance only",
@@ -489,7 +499,7 @@ def main() -> None:
             "history": history,
         },
         "gsd_m": {"x": metric_gsd[0], "y": metric_gsd[1], "conditioning": gsd_m},
-        "target_normalization_m": asdict(target_scale),
+        "target_prior_canonicalization": asdict(target_fit),
         "evaluation": {
             "protocol": "same_scene_spatial_holdout_plus_64_sparse_metric_anchors",
             "heldout_pixels": int(refined_benchmark.evaluation_mask.sum()),
