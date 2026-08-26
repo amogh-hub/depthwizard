@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from depthwizard import __version__
 from depthwizard.contracts import (
     ProcessingRequest,
+    ProjectExportReport,
+    ProjectExportRequest,
     ProjectMeshBuildRequest,
     ProjectMeshReport,
     ProjectProbeRequest,
@@ -30,6 +32,7 @@ from depthwizard.contracts import (
 )
 from depthwizard.evaluation.project_analysis import probe_project, sample_project_profile
 from depthwizard.evaluation.project_validation import validate_project_reference
+from depthwizard.export.project_package import build_project_export, load_project_export
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import inspect_raster
 from depthwizard.mesh.project_mesh import build_project_mesh, load_project_mesh
@@ -310,6 +313,60 @@ def project_mesh_lod(project_dir: Path, level: int) -> FileResponse:
             "Cache-Control": "no-store",
             "ETag": f'"{lod.sha256}"',
             "X-DepthWizard-Mesh-SHA256": lod.sha256,
+        },
+    )
+
+
+@app.post(
+    "/v1/projects/export",
+    response_model=ProjectExportReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_export_build(request: ProjectExportRequest) -> ProjectExportReport:
+    try:
+        return build_project_export(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/projects/export",
+    response_model=ProjectExportReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_export_report(project_dir: Path) -> ProjectExportReport:
+    try:
+        return load_project_export(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/projects/export/archive", dependencies=[Depends(_session_guard)])
+def project_export_archive(project_dir: Path) -> FileResponse:
+    try:
+        report = load_project_export(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FileResponse(
+        path=report.bundle_path,
+        media_type="application/zip",
+        filename=report.bundle_path.name,
+        headers={
+            "Cache-Control": "no-store",
+            "ETag": f'"{report.bundle_sha256}"',
+            "X-DepthWizard-Export-SHA256": report.bundle_sha256,
         },
     )
 
