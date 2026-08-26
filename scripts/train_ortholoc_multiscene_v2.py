@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
 
+from depthwizard.evaluation.holdout import sparse_anchor_holdout_benchmark
 from depthwizard.evaluation.metrics import compute_elevation_metrics
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
 from depthwizard.height_model.multiscene import (
@@ -24,6 +25,16 @@ SEED = legacy.SEED
 EPOCHS = legacy.EPOCHS
 BATCH_SIZE = legacy.BATCH_SIZE
 LEARNING_RATE = 1.0e-4
+
+
+@dataclass(frozen=True)
+class SafeSceneEvaluation:
+    report: dict[str, object]
+    baseline_values: np.ndarray
+    refined_values: np.ndarray | None
+    reference_values: np.ndarray
+    uncertainty_values: np.ndarray | None
+    refined_rejection_reason: str | None
 
 
 def _metric_scales_for_patches(
@@ -91,26 +102,132 @@ def validation_objective(
     return float(np.mean(losses))
 
 
+def evaluate_scene_safely(
+    model: DepthWizardHeightModel,
+    scene: legacy.SceneData,
+    device: torch.device,
+) -> SafeSceneEvaluation:
+    """Evaluate a candidate without converting a scientific calibration rejection into a crash.
+
+    The sparse-anchor benchmark intentionally rejects a relative field whose sampled anchors are
+    too weakly correlated with the reference DSM. During model development that means the epoch is
+    an invalid candidate, not that the whole training process should terminate. Baseline DA3 is
+    still evaluated normally; only the rejected refined candidate is withheld from aggregation.
+    """
+    refined, uncertainty, covered = legacy.predict_scene(model, scene, device)
+    evaluation_valid = scene.supervision_valid & covered & np.isfinite(refined)
+
+    baseline = sparse_anchor_holdout_benchmark(
+        scene.geometry,
+        scene.reference_m,
+        valid_mask=evaluation_valid,
+        anchor_count=legacy.ANCHOR_COUNT,
+        seed=legacy.SEED,
+        exclusion_radius_px=4,
+    )
+
+    try:
+        refined_result = sparse_anchor_holdout_benchmark(
+            refined,
+            scene.reference_m,
+            valid_mask=evaluation_valid,
+            anchor_count=legacy.ANCHOR_COUNT,
+            seed=legacy.SEED,
+            exclusion_radius_px=4,
+        )
+    except ValueError as exc:
+        common_mask = baseline.evaluation_mask
+        baseline_metrics = compute_elevation_metrics(
+            baseline.prediction,
+            scene.reference_m,
+            valid_mask=common_mask,
+        )
+        reason = str(exc)
+        report: dict[str, object] = {
+            "scene_id": scene.scene_id,
+            "location_id": scene.location_id,
+            "gsd_m": scene.gsd_m,
+            "heldout_pixels": int(common_mask.sum()),
+            "da3": baseline_metrics.model_dump(),
+            "depthwizard": None,
+            "depthwizard_calibration_valid": False,
+            "depthwizard_calibration_rejection": reason,
+            "uncertainty_abs_error_pearson": None,
+        }
+        return SafeSceneEvaluation(
+            report=report,
+            baseline_values=baseline.prediction[common_mask],
+            refined_values=None,
+            reference_values=scene.reference_m[common_mask],
+            uncertainty_values=None,
+            refined_rejection_reason=reason,
+        )
+
+    common_mask = baseline.evaluation_mask & refined_result.evaluation_mask
+    baseline_metrics = compute_elevation_metrics(
+        baseline.prediction,
+        scene.reference_m,
+        valid_mask=common_mask,
+    )
+    refined_metrics = compute_elevation_metrics(
+        refined_result.prediction,
+        scene.reference_m,
+        valid_mask=common_mask,
+    )
+    abs_error = np.abs(refined_result.prediction - scene.reference_m)
+    reliability = legacy.uncertainty_error_correlation(uncertainty, abs_error, common_mask)
+    report = {
+        "scene_id": scene.scene_id,
+        "location_id": scene.location_id,
+        "gsd_m": scene.gsd_m,
+        "heldout_pixels": int(common_mask.sum()),
+        "da3": baseline_metrics.model_dump(),
+        "depthwizard": refined_metrics.model_dump(),
+        "depthwizard_calibration_valid": True,
+        "depthwizard_calibration_rejection": None,
+        "rmse_delta_m": float(refined_metrics.rmse_m - baseline_metrics.rmse_m),
+        "mae_delta_m": float(refined_metrics.mae_m - baseline_metrics.mae_m),
+        "uncertainty_abs_error_pearson": reliability,
+    }
+    return SafeSceneEvaluation(
+        report=report,
+        baseline_values=baseline.prediction[common_mask],
+        refined_values=refined_result.prediction[common_mask],
+        reference_values=scene.reference_m[common_mask],
+        uncertainty_values=uncertainty[common_mask],
+        refined_rejection_reason=None,
+    )
+
+
 def calibrated_scene_metrics(
     model: DepthWizardHeightModel,
     scenes: list[legacy.SceneData],
     device: torch.device,
-) -> tuple[float, float]:
-    """Return aggregate DA3/refined RMSE under the actual sparse-anchor calibration protocol."""
+) -> tuple[float, float, list[str]]:
+    """Return aggregate DA3/refined RMSE plus any refined-calibration rejection reasons."""
     baseline_values: list[np.ndarray] = []
     refined_values: list[np.ndarray] = []
     reference_values: list[np.ndarray] = []
+    rejections: list[str] = []
     for scene in scenes:
-        _, baseline, refined, reference, _ = legacy.evaluate_scene(model, scene, device)
-        baseline_values.append(baseline)
-        refined_values.append(refined)
-        reference_values.append(reference)
+        evaluation = evaluate_scene_safely(model, scene, device)
+        baseline_values.append(evaluation.baseline_values)
+        reference_values.append(evaluation.reference_values)
+        if evaluation.refined_values is None:
+            reason = evaluation.refined_rejection_reason or "unspecified calibration rejection"
+            rejections.append(f"{scene.scene_id}: {reason}")
+        else:
+            refined_values.append(evaluation.refined_values)
+
     baseline_all = np.concatenate(baseline_values)
-    refined_all = np.concatenate(refined_values)
     reference_all = np.concatenate(reference_values)
     baseline_metrics = compute_elevation_metrics(baseline_all, reference_all)
+    if rejections:
+        return baseline_metrics.rmse_m, float("inf"), rejections
+
+    refined_all = np.concatenate(refined_values)
     refined_metrics = compute_elevation_metrics(refined_all, reference_all)
-    return baseline_metrics.rmse_m, refined_metrics.rmse_m
+    return baseline_metrics.rmse_m, refined_metrics.rmse_m, []
 
 
 def _balanced_epoch_indices(
@@ -201,16 +318,21 @@ def main() -> None:
         device,
         rng,
     )
-    validation_da3_rmse, initial_validation_rmse = calibrated_scene_metrics(
+    validation_da3_rmse, initial_validation_rmse, initial_rejections = calibrated_scene_metrics(
         model,
         validation_scenes,
         device,
     )
+    if initial_rejections or not np.isfinite(initial_validation_rmse):
+        raise RuntimeError(
+            "identity DA3 validation calibration was unexpectedly rejected: "
+            + "; ".join(initial_rejections)
+        )
     best_validation_rmse = initial_validation_rmse
     best_validation_objective = initial_objective
     best_epoch = 0
     best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
-    history: list[dict[str, float | int]] = []
+    history: list[dict[str, object]] = []
 
     print(
         f"Initial validation calibration: DA3 {validation_da3_rmse:.3f} m | "
@@ -251,36 +373,47 @@ def main() -> None:
             device,
             rng,
         )
-        val_da3_rmse, val_refined_rmse = calibrated_scene_metrics(
+        val_da3_rmse, val_refined_rmse, val_rejections = calibrated_scene_metrics(
             model,
             validation_scenes,
             device,
         )
         train_loss = float(np.mean(epoch_losses))
-        delta = val_refined_rmse - val_da3_rmse
+        delta = val_refined_rmse - val_da3_rmse if np.isfinite(val_refined_rmse) else float("inf")
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": train_loss,
                 "validation_objective": val_objective,
                 "validation_da3_rmse_m": val_da3_rmse,
-                "validation_depthwizard_rmse_m": val_refined_rmse,
-                "validation_rmse_delta_m": delta,
+                "validation_depthwizard_rmse_m": (
+                    val_refined_rmse if np.isfinite(val_refined_rmse) else None
+                ),
+                "validation_rmse_delta_m": delta if np.isfinite(delta) else None,
+                "validation_calibration_valid": not val_rejections,
+                "validation_calibration_rejections": val_rejections,
                 "learning_rate": float(optimizer.param_groups[0]["lr"]),
             }
         )
-        print(
-            f"epoch {epoch:02d}/{EPOCHS} | train {train_loss:.5f} | "
-            f"val-objective {val_objective:.5f} | val-RMSE {val_refined_rmse:.3f} m "
-            f"(DA3 {val_da3_rmse:.3f}, delta {delta:+.3f})"
-        )
-        if val_refined_rmse < best_validation_rmse - 1e-6:
-            best_validation_rmse = val_refined_rmse
-            best_validation_objective = val_objective
-            best_epoch = epoch
-            best_state = {
-                key: value.detach().cpu().clone() for key, value in model.state_dict().items()
-            }
+        if val_rejections:
+            print(
+                f"epoch {epoch:02d}/{EPOCHS} | train {train_loss:.5f} | "
+                f"val-objective {val_objective:.5f} | val-RMSE REJECTED "
+                f"(DA3 {val_da3_rmse:.3f}) | {'; '.join(val_rejections)}"
+            )
+        else:
+            print(
+                f"epoch {epoch:02d}/{EPOCHS} | train {train_loss:.5f} | "
+                f"val-objective {val_objective:.5f} | val-RMSE {val_refined_rmse:.3f} m "
+                f"(DA3 {val_da3_rmse:.3f}, delta {delta:+.3f})"
+            )
+            if val_refined_rmse < best_validation_rmse - 1e-6:
+                best_validation_rmse = val_refined_rmse
+                best_validation_objective = val_objective
+                best_epoch = epoch
+                best_state = {
+                    key: value.detach().cpu().clone() for key, value in model.state_dict().items()
+                }
         scheduler.step()
 
     elapsed = time.perf_counter() - started
@@ -292,39 +425,58 @@ def main() -> None:
     refined_values: list[np.ndarray] = []
     reference_values: list[np.ndarray] = []
     uncertainty_values: list[np.ndarray] = []
+    development_rejections: list[str] = []
     for scene in development_scenes:
-        scene_report, baseline, refined, reference, uncertainty = legacy.evaluate_scene(
-            model,
-            scene,
-            device,
-        )
-        scene_reports.append(scene_report)
-        baseline_values.append(baseline)
-        refined_values.append(refined)
-        reference_values.append(reference)
-        uncertainty_values.append(uncertainty)
-        da3_rmse = _dict_metric(scene_report, "da3", "rmse_m")
-        refined_rmse = _dict_metric(scene_report, "depthwizard", "rmse_m")
+        evaluation = evaluate_scene_safely(model, scene, device)
+        scene_reports.append(evaluation.report)
+        baseline_values.append(evaluation.baseline_values)
+        reference_values.append(evaluation.reference_values)
+        da3_rmse = _dict_metric(evaluation.report, "da3", "rmse_m")
+        if evaluation.refined_values is None:
+            reason = evaluation.refined_rejection_reason or "unspecified calibration rejection"
+            development_rejections.append(f"{scene.scene_id}: {reason}")
+            print(
+                f"development {scene.scene_id}: DA3 {da3_rmse:.3f} m | "
+                f"DepthWizard REJECTED | {reason}"
+            )
+            continue
+
+        refined_values.append(evaluation.refined_values)
+        if evaluation.uncertainty_values is None:
+            raise RuntimeError("valid refined development evaluation is missing uncertainty values")
+        uncertainty_values.append(evaluation.uncertainty_values)
+        refined_rmse = _dict_metric(evaluation.report, "depthwizard", "rmse_m")
         print(
             f"development {scene.scene_id}: DA3 {da3_rmse:.3f} m | "
             f"DepthWizard {refined_rmse:.3f} m | delta {refined_rmse - da3_rmse:+.3f} m"
         )
 
     baseline_all = np.concatenate(baseline_values)
-    refined_all = np.concatenate(refined_values)
     reference_all = np.concatenate(reference_values)
-    uncertainty_all = np.concatenate(uncertainty_values)
     aggregate_da3 = compute_elevation_metrics(baseline_all, reference_all)
-    aggregate_refined = compute_elevation_metrics(refined_all, reference_all)
-    aggregate_reliability = legacy.uncertainty_error_correlation(
-        uncertainty_all,
-        np.abs(refined_all - reference_all),
-        np.ones_like(reference_all, dtype=bool),
+
+    aggregate_refined = None
+    aggregate_reliability = None
+    rmse_improvement_fraction = None
+    if not development_rejections:
+        refined_all = np.concatenate(refined_values)
+        uncertainty_all = np.concatenate(uncertainty_values)
+        aggregate_refined = compute_elevation_metrics(refined_all, reference_all)
+        aggregate_reliability = legacy.uncertainty_error_correlation(
+            uncertainty_all,
+            np.abs(refined_all - reference_all),
+            np.ones_like(reference_all, dtype=bool),
+        )
+        rmse_improvement_fraction = (
+            aggregate_da3.rmse_m - aggregate_refined.rmse_m
+        ) / aggregate_da3.rmse_m
+
+    promoted = bool(
+        aggregate_refined is not None
+        and rmse_improvement_fraction is not None
+        and rmse_improvement_fraction > 0.0
+        and best_epoch > 0
     )
-    rmse_improvement_fraction = (
-        aggregate_da3.rmse_m - aggregate_refined.rmse_m
-    ) / aggregate_da3.rmse_m
-    promoted = bool(rmse_improvement_fraction > 0.0 and best_epoch > 0)
 
     checkpoint_path = OUT_DIR / "height_model_multiscene_v2.pt"
     checkpoint = {
@@ -396,10 +548,21 @@ def main() -> None:
         "development_evaluation": {
             "protocol": "previously_inspected_test_outPlace_plus_64_sparse_metric_anchors",
             "scenes": scene_reports,
+            "calibration_rejections": development_rejections,
             "aggregate_da3": aggregate_da3.model_dump(),
-            "aggregate_depthwizard": aggregate_refined.model_dump(),
-            "rmse_delta_m": float(aggregate_refined.rmse_m - aggregate_da3.rmse_m),
-            "rmse_improvement_fraction": float(rmse_improvement_fraction),
+            "aggregate_depthwizard": (
+                aggregate_refined.model_dump() if aggregate_refined is not None else None
+            ),
+            "rmse_delta_m": (
+                float(aggregate_refined.rmse_m - aggregate_da3.rmse_m)
+                if aggregate_refined is not None
+                else None
+            ),
+            "rmse_improvement_fraction": (
+                float(rmse_improvement_fraction)
+                if rmse_improvement_fraction is not None
+                else None
+            ),
             "uncertainty_abs_error_pearson": aggregate_reliability,
         },
         "sources": source_manifest,
@@ -414,11 +577,18 @@ def main() -> None:
         f"Best epoch: {best_epoch} | validation sparse-anchor RMSE: "
         f"{best_validation_rmse:.3f} m | DA3: {validation_da3_rmse:.3f} m"
     )
-    print(
-        f"Aggregate development-outPlace DA3 RMSE: {aggregate_da3.rmse_m:.3f} m | "
-        f"DepthWizard: {aggregate_refined.rmse_m:.3f} m"
-    )
-    print(f"Development RMSE improvement: {100.0 * rmse_improvement_fraction:.2f}%")
+    if aggregate_refined is None or rmse_improvement_fraction is None:
+        print(
+            f"Aggregate development-outPlace DA3 RMSE: {aggregate_da3.rmse_m:.3f} m | "
+            "DepthWizard: REJECTED"
+        )
+        print("Development RMSE improvement: unavailable because calibration was rejected")
+    else:
+        print(
+            f"Aggregate development-outPlace DA3 RMSE: {aggregate_da3.rmse_m:.3f} m | "
+            f"DepthWizard: {aggregate_refined.rmse_m:.3f} m"
+        )
+        print(f"Development RMSE improvement: {100.0 * rmse_improvement_fraction:.2f}%")
     print(f"Development model promoted over DA3: {'YES' if promoted else 'NO'}")
     print(f"Checkpoint SHA-256: {report['checkpoint_sha256']}")
     print(f"Report: {report_path}")
