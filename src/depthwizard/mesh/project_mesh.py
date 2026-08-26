@@ -191,7 +191,8 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             gsd_x, gsd_y = metric_gsd
             horizontal_units = "m"
         vertical_units: VerticalUnits = "m" if surface_product == "dsm" else "relative"
-        strides = _lod_strides(elevation.shape, request.max_finest_samples, request.lod_levels)
+        raster_shape = (int(elevation.shape[0]), int(elevation.shape[1]))
+        strides = _lod_strides(raster_shape, request.max_finest_samples, request.lod_levels)
 
         mesh_dir.mkdir(parents=True, exist_ok=True)
         exports = export_lod_pyramid(
@@ -229,8 +230,8 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             vertical_units=vertical_units,
             gsd_x=gsd_x,
             gsd_y=gsd_y,
-            raster_width=elevation.shape[1],
-            raster_height=elevation.shape[0],
+            raster_width=raster_shape[1],
+            raster_height=raster_shape[0],
             valid_pixels=int(valid.sum()),
             minimum_elevation=float(np.min(valid_values)),
             maximum_elevation=float(np.max(valid_values)),
