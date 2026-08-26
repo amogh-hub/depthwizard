@@ -114,25 +114,38 @@ def make_batch(
     valid: np.ndarray,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if not windows:
+        raise ValueError("make_batch requires at least one patch window")
+
     rgb_batch = np.stack(
         [rgb[w.row_slice, w.col_slice].transpose(2, 0, 1) for w in windows],
         axis=0,
-    )
+    ).astype(np.float32, copy=False)
     geometry_batch = np.stack(
         [geometry[w.row_slice, w.col_slice] for w in windows],
         axis=0,
-    )[:, None]
+    )[:, None].astype(np.float32, copy=False)
     target_batch = np.stack(
         [target[w.row_slice, w.col_slice] for w in windows],
         axis=0,
-    )[:, None]
+    )[:, None].astype(np.float32, copy=False)
     valid_batch = np.stack(
         [valid[w.row_slice, w.col_slice] for w in windows],
         axis=0,
-    )[:, None]
+    )[:, None].astype(bool, copy=False)
 
-    target_batch = np.nan_to_num(target_batch, nan=0.0)
-    geometry_batch = np.nan_to_num(geometry_batch, nan=0.0)
+    # Invalid source/geometry/reference values must not leak extreme NoData sentinels into
+    # neighbouring valid convolutions even though the loss itself is masked.
+    rgb_batch = np.where(valid_batch, rgb_batch, np.float32(0.0)).astype(np.float32, copy=False)
+    geometry_batch = np.where(valid_batch, geometry_batch, np.float32(0.0)).astype(
+        np.float32,
+        copy=False,
+    )
+    target_batch = np.where(valid_batch, target_batch, np.float32(0.0)).astype(
+        np.float32,
+        copy=False,
+    )
+
     return (
         torch.from_numpy(rgb_batch).to(device=device, dtype=torch.float32),
         torch.from_numpy(geometry_batch).to(device=device, dtype=torch.float32),
@@ -145,17 +158,24 @@ def augment_batch(
     tensors: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     rng: np.random.Generator,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    result = tensors
+    rgb, geometry, target, valid = tensors
     if rng.random() < 0.5:
-        result = tuple(torch.flip(tensor, dims=(-1,)) for tensor in result)  # type: ignore[assignment]
+        rgb = torch.flip(rgb, dims=(-1,))
+        geometry = torch.flip(geometry, dims=(-1,))
+        target = torch.flip(target, dims=(-1,))
+        valid = torch.flip(valid, dims=(-1,))
     if rng.random() < 0.5:
-        result = tuple(torch.flip(tensor, dims=(-2,)) for tensor in result)  # type: ignore[assignment]
+        rgb = torch.flip(rgb, dims=(-2,))
+        geometry = torch.flip(geometry, dims=(-2,))
+        target = torch.flip(target, dims=(-2,))
+        valid = torch.flip(valid, dims=(-2,))
     rotations = int(rng.integers(0, 4))
     if rotations:
-        result = tuple(
-            torch.rot90(tensor, rotations, dims=(-2, -1)) for tensor in result
-        )  # type: ignore[assignment]
-    return result
+        rgb = torch.rot90(rgb, rotations, dims=(-2, -1))
+        geometry = torch.rot90(geometry, rotations, dims=(-2, -1))
+        target = torch.rot90(target, rotations, dims=(-2, -1))
+        valid = torch.rot90(valid, rotations, dims=(-2, -1))
+    return rgb, geometry, target, valid
 
 
 def validation_loss(
@@ -197,10 +217,11 @@ def predict_windows(
     *,
     rgb: np.ndarray,
     geometry: np.ndarray,
+    valid: np.ndarray,
     gsd_m: float,
     device: torch.device,
 ) -> tuple[np.ndarray, np.ndarray]:
-    height, width = geometry.shape
+    height, width = int(geometry.shape[0]), int(geometry.shape[1])
     accumulator = np.zeros((height, width), dtype=np.float64)
     weights = np.zeros((height, width), dtype=np.float64)
     axis = np.maximum(np.hanning(PATCH_SIZE), 0.05)
@@ -215,7 +236,7 @@ def predict_windows(
                 rgb=rgb,
                 geometry=geometry,
                 target=geometry,
-                valid=np.isfinite(geometry),
+                valid=valid,
                 device=device,
             )
             gsd = torch.full((rgb_t.shape[0],), gsd_m, device=device)
@@ -255,8 +276,9 @@ def main() -> None:
     reference, reference_valid = reproject_to_match(dsm_path, rdsm_path)
     paired_valid = source_valid & geometry_valid & reference_valid & np.isfinite(reference)
 
+    raster_shape = (int(reference.shape[0]), int(reference.shape[1]))
     train_region, validation_region = spatial_column_holdout(
-        reference.shape,
+        raster_shape,
         train_fraction=TRAIN_FRACTION,
         gap_px=HOLDOUT_GAP_PX,
     )
@@ -389,6 +411,7 @@ def main() -> None:
         validation_windows,
         rgb=rgb,
         geometry=geometry,
+        valid=validation_mask,
         gsd_m=gsd_m,
         device=device,
     )
