@@ -30,6 +30,7 @@ def test_height_model_emits_all_dense_heads() -> None:
         output = model(rgb, geometry, gsd_m=gsd)
 
     assert output.relative_height.shape == (2, 1, 64, 80)
+    assert output.relative_correction.shape == (2, 1, 64, 80)
     assert output.uncertainty.shape == (2, 1, 64, 80)
     assert output.semantic_logits.shape == (2, 5, 64, 80)
     assert output.height_bin_logits.shape == (2, 8, 64, 80)
@@ -39,6 +40,19 @@ def test_height_model_emits_all_dense_heads() -> None:
     assert torch.all(output.uncertainty > 0)
     normal_lengths = torch.linalg.vector_norm(output.normals, dim=1)
     assert torch.allclose(normal_lengths, torch.ones_like(normal_lengths), atol=1e-4)
+
+
+def test_untrained_height_refiner_is_exact_identity_on_geometry_prior() -> None:
+    torch.manual_seed(26175)
+    model = small_model().eval()
+    rgb = torch.rand(1, 3, 48, 64)
+    geometry = torch.rand(1, 1, 48, 64)
+
+    with torch.inference_mode():
+        output = model(rgb, geometry, gsd_m=torch.tensor([0.5]))
+
+    assert torch.count_nonzero(output.relative_correction) == 0
+    assert torch.equal(output.relative_height, geometry)
 
 
 def test_group_norm_is_valid_for_non_multiple_of_eight_channel_widths() -> None:
