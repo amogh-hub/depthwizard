@@ -42,6 +42,9 @@ rewriting evidence.
 - GCP calibration records and resolves relative-height polarity before a positive physical scale fit.
 - DEM+GCP mode uses DEM for broad support, then GCPs as higher-reliability metric refinement.
 - Weak or contradictory evidence raises an explicit failure.
+- A successful calibration establishes a metric elevation representation, not a scene-accuracy
+  guarantee. Calibration diagnostics and later validation/reliability products remain required for
+  scientific quality claims.
 
 ## Confidence contract
 
@@ -63,3 +66,8 @@ This architecture makes learned-model research non-blocking for the final produc
 strict path for future promotion. Scientific failures remain visible evidence, expensive geometry is
 reusable, source rasters are never overwritten, and every user-visible production claim can be
 traced to persisted artifacts and promotion/calibration evidence.
+
+Release Train 1 acceptance included deterministic CI, local strict verification, desktop production
+build and a real Apple-MPS DA3 smoke on the Joshimath engineering scene. The generated manifest,
+calibration document and provenance document were reviewed for internal consistency. That smoke is
+runtime acceptance only; its DEM-fit diagnostics are preserved but are not held-out accuracy evidence.
