@@ -23,6 +23,7 @@ if __name__ == "__main__":
         "tests",
         "scripts/train_ortholoc_height_acceptance.py",
         "scripts/train_ortholoc_multiscene.py",
+        "scripts/train_ortholoc_multiscene_v2.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_height_model.py",
