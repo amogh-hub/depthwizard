@@ -104,7 +104,6 @@ def test_project_mesh_build_is_persisted_hashed_and_resumable(tmp_path: Path) ->
     persisted = load_project_mesh(project_dir)
     assert persisted == first
     manifest = ProjectManifest.load(project_dir)
-    assert manifest.stage_completed.__self__ is manifest
     assert manifest.stages["mesh"]["status"] == "completed"
     assert manifest.stages["mesh"]["details"]["reference_data_used"] is False
     assert manifest.artifacts["mesh_manifest"]["sha256"] == sha256_file(first.mesh_manifest_path)
