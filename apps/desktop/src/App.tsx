@@ -6,17 +6,24 @@ import {
   getProjectPreviewUrl,
   getProjectValidation,
   inspectRaster,
+  probeProject,
+  sampleProjectProfile,
   submitProject,
   validateProjectReference,
+  type NormalizedPoint,
   type ProjectJobState,
   type ProjectManifest,
   type ProjectPreviewLayer,
+  type ProjectProbeResult,
+  type ProjectProfileResult,
   type RasterMetadata,
   type ReferenceValidationReport,
 } from "./api";
 import { Inspector, type ValidationEvidence } from "./components/Inspector";
 import { ToolRail } from "./components/ToolRail";
 import { UploadIcon } from "./components/icons";
+import { ComparisonViewport } from "./workspace/ComparisonViewport";
+import { RasterAnalysisViewport } from "./workspace/RasterAnalysisViewport";
 import { TerrainViewport, type CameraMode } from "./workspace/TerrainViewport";
 
 const views = ["Optical", "DSM", "3D Terrain", "Reference", "Residual", "Confidence"] as const;
@@ -119,6 +126,14 @@ export function App() {
   const [validatingReference, setValidatingReference] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [comparisonUrl, setComparisonUrl] = useState<string | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [probe, setProbe] = useState<ProjectProbeResult | null>(null);
+  const [lineStart, setLineStart] = useState<NormalizedPoint | null>(null);
+  const [lineEnd, setLineEnd] = useState<NormalizedPoint | null>(null);
+  const [measurement, setMeasurement] = useState<ProjectProfileResult | null>(null);
+  const [profile, setProfile] = useState<ProjectProfileResult | null>(null);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : undefined;
 
   useEffect(() => {
@@ -214,7 +229,7 @@ export function App() {
 
   const geometryReady = demoMode
     ? Boolean(meshUrl)
-    : Boolean(projectManifest?.artifacts.rdsm);
+    : Boolean(projectManifest?.artifacts.rdsm || projectManifest?.artifacts.dsm);
   const calibrationReady = demoMode
     ? Boolean(meshUrl)
     : Boolean(projectManifest?.artifacts.dsm);
@@ -222,6 +237,8 @@ export function App() {
   const processing = projectJob?.status === "queued" || projectJob?.status === "running";
   const waitingForCalibration = projectJob?.status === "waiting_for_calibration";
   const previewLayer = projectPreviewLayer(activeView, activeLayer, projectManifest);
+  const compareActive = activeTool === "Compare" && Boolean(projectValidation) && calibrationReady;
+  const analystInteractive = !demoMode && activeView !== "3D Terrain" && Boolean(projectDir) && geometryReady;
 
   useEffect(() => {
     if (demoMode || activeView === "3D Terrain" || !projectDir || !previewLayer) {
@@ -266,11 +283,59 @@ export function App() {
   }, [activeView, demoMode, previewLayer, projectDir, projectManifest?.updated_at_utc]);
 
   useEffect(() => {
+    if (!compareActive || !projectDir) {
+      setComparisonUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return null;
+      });
+      setComparisonLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    setComparisonLoading(true);
+    void getProjectPreviewUrl(projectDir, "reference")
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        createdUrl = url;
+        setComparisonUrl((current) => {
+          if (current) URL.revokeObjectURL(current);
+          return url;
+        });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setImportError(error instanceof Error ? error.message : "Unable to load comparison reference");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setComparisonLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [compareActive, projectDir, projectManifest?.updated_at_utc]);
+
+  useEffect(() => {
+    setLineStart(null);
+    setLineEnd(null);
+    setMeasurement(null);
+    setProfile(null);
     if (activeTool === "Validation" && projectValidation) {
       setActiveView("Residual");
       setActiveLayer("Residual");
+    } else if (activeTool === "Compare" && projectValidation) {
+      setActiveView("DSM");
+      setActiveLayer("DSM");
+    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady) {
+      setActiveView("DSM");
+      setActiveLayer("DSM");
     }
-  }, [activeTool, projectValidation]);
+  }, [activeTool, geometryReady, projectValidation]);
 
   const projectName = useMemo(
     () => (
@@ -280,6 +345,15 @@ export function App() {
     ),
     [demoMode, metadata],
   );
+
+  const resetAnalysis = () => {
+    setProbe(null);
+    setLineStart(null);
+    setLineEnd(null);
+    setMeasurement(null);
+    setProfile(null);
+    setAnalysisBusy(false);
+  };
 
   const importImagery = async () => {
     setImportError(null);
@@ -298,6 +372,7 @@ export function App() {
       setProjectManifest(null);
       setValidationEvidence(null);
       setProjectValidation(null);
+      resetAnalysis();
       setActiveLayer("Texture");
       setActiveView("3D Terrain");
     } catch (error) {
@@ -322,6 +397,7 @@ export function App() {
       setProjectDir(selectedDir);
       setProjectManifest(null);
       setProjectValidation(null);
+      resetAnalysis();
       setProjectJob(next);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Unable to start reconstruction");
@@ -347,6 +423,7 @@ export function App() {
         dem_path: dem,
         requested_output: "dsm",
       });
+      resetAnalysis();
       setProjectJob(next);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Unable to start metric calibration");
@@ -370,6 +447,7 @@ export function App() {
       const manifest = await getProjectManifest(projectDir);
       setProjectValidation(report);
       setProjectManifest(manifest);
+      resetAnalysis();
       setActiveLayer("Residual");
       setActiveView("Residual");
       setActiveTool("Validation");
@@ -380,22 +458,76 @@ export function App() {
     }
   };
 
+  const analyzePoint = async (point: NormalizedPoint) => {
+    if (!projectDir || !geometryReady) return;
+    setImportError(null);
+    setAnalysisBusy(true);
+    try {
+      setProbe(await probeProject(projectDir, point));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to sample project products");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
+
+  const analyzeRasterPoint = async (point: NormalizedPoint) => {
+    if (!projectDir || !geometryReady) return;
+    if (activeTool !== "Measure" && activeTool !== "Profiles") {
+      await analyzePoint(point);
+      return;
+    }
+
+    if (!lineStart || lineEnd) {
+      setLineStart(point);
+      setLineEnd(null);
+      setMeasurement(null);
+      setProfile(null);
+      await analyzePoint(point);
+      return;
+    }
+
+    setLineEnd(point);
+    setImportError(null);
+    setAnalysisBusy(true);
+    try {
+      const [nextProbe, transect] = await Promise.all([
+        probeProject(projectDir, point),
+        sampleProjectProfile(projectDir, lineStart, point, activeTool === "Profiles" ? 160 : 2),
+      ]);
+      setProbe(nextProbe);
+      if (activeTool === "Profiles") {
+        setProfile(transect);
+        setMeasurement(null);
+      } else {
+        setMeasurement(transect);
+        setProfile(null);
+      }
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to compute analyst transect");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
+
   const normalStatus = projectJob?.error
-    ?? (projectValidation
-      ? `Reference validation ready · RMSE ${projectValidation.elevation.rmse_m.toFixed(3)} m`
-      : projectJob?.status === "waiting_for_calibration"
-        ? "Geometry ready · metric evidence required"
-        : projectJob?.status === "complete"
-          ? "Production products ready"
-          : projectJob?.status === "failed"
-            ? "Processing failed"
-            : processing
-              ? "Production processing…"
-              : geometryReady
-                ? "Reconstruction loaded · local processing"
-                : metadata
-                  ? "Input ready · local processing"
-                  : "Ready · local processing");
+    ?? (analysisBusy
+      ? "Sampling persisted analytical products…"
+      : projectValidation
+        ? `Reference validation ready · RMSE ${projectValidation.elevation.rmse_m.toFixed(3)} m`
+        : projectJob?.status === "waiting_for_calibration"
+          ? "Geometry ready · metric evidence required"
+          : projectJob?.status === "complete"
+            ? "Production products ready"
+            : projectJob?.status === "failed"
+              ? "Processing failed"
+              : processing
+                ? "Production processing…"
+                : geometryReady
+                  ? "Reconstruction loaded · local processing"
+                  : metadata
+                    ? "Input ready · local processing"
+                    : "Ready · local processing");
 
   const viewAvailable = (view: (typeof views)[number]): boolean => {
     if (view === "3D Terrain") return meshReady;
@@ -434,6 +566,14 @@ export function App() {
     if (layer === "Confidence") setActiveView("Confidence");
     if (layer === "Residual") setActiveView("Residual");
   };
+
+  const analysisHint = activeTool === "Measure"
+    ? lineStart && !lineEnd ? "Select endpoint B" : "Select point A, then point B"
+    : activeTool === "Profiles"
+      ? lineStart && !lineEnd ? "Select transect endpoint B" : "Select transect endpoints A → B"
+      : activeTool === "Compare"
+        ? "Swipe reference against prediction · click to synchronize values"
+        : "Click raster to inspect synchronized project values";
 
   return (
     <main className="dw-app">
@@ -506,6 +646,12 @@ export function App() {
                 {mode.label}
               </button>
             ))}
+            {activeView !== "3D Terrain" && analystInteractive && (
+              <span className="dw-analysis-hint">{analysisHint}</span>
+            )}
+            {(lineStart || probe) && activeView !== "3D Terrain" && (
+              <button className="dw-chip" onClick={resetAnalysis}>Clear analysis</button>
+            )}
             <span className="dw-toolbar-divider" aria-hidden="true" />
             {layers.map((layer) => (
               <button
@@ -526,12 +672,26 @@ export function App() {
           {activeView === "3D Terrain" && meshReady && (
             <TerrainViewport meshUrl={meshUrl} cameraMode={cameraMode} />
           )}
-          {activeView !== "3D Terrain" && previewUrl && (
-            <div className="dw-raster-view" aria-label={`${previewLayer ?? activeView} raster preview`}>
-              <img src={previewUrl} alt={`${previewLayer ?? activeView} scientific raster`} />
-            </div>
+          {activeView !== "3D Terrain" && compareActive && previewUrl && comparisonUrl && (
+            <ComparisonViewport
+              predictionUrl={previewUrl}
+              referenceUrl={comparisonUrl}
+              cursorPoint={probe?.point}
+              onSelectPoint={analyzeRasterPoint}
+            />
           )}
-          {activeView !== "3D Terrain" && previewLoading && !previewUrl && (
+          {activeView !== "3D Terrain" && previewUrl && !(compareActive && comparisonUrl) && (
+            <RasterAnalysisViewport
+              src={previewUrl}
+              alt={`${previewLayer ?? activeView} scientific raster`}
+              interactive={analystInteractive}
+              cursorPoint={probe?.point}
+              lineStart={activeTool === "Measure" || activeTool === "Profiles" ? lineStart : null}
+              lineEnd={activeTool === "Measure" || activeTool === "Profiles" ? lineEnd : null}
+              onSelectPoint={analyzeRasterPoint}
+            />
+          )}
+          {activeView !== "3D Terrain" && (previewLoading || comparisonLoading) && !previewUrl && (
             <div className="dw-empty-canvas">
               <div className="dw-empty-card">
                 <h2>Loading scientific layer</h2>
@@ -543,49 +703,59 @@ export function App() {
             <>
               <div className="dw-canvas-context">
                 <strong>
-                  {activeView === "3D Terrain"
-                    ? demoMode ? "Absolute DSM" : "Relative DSM"
-                    : previewLayer === "residual"
-                      ? "Prediction − reference"
-                      : previewLayer === "reference"
-                        ? "Aligned reference DSM"
-                        : previewLayer === "slope"
-                          ? "Surface slope"
-                          : previewLayer === "confidence"
-                            ? "Model-native confidence"
-                            : previewLayer === "optical"
-                              ? "Optical RGB"
-                              : calibrationReady ? "Absolute DSM" : "Relative DSM"}
+                  {compareActive
+                    ? "Prediction ↔ reference comparison"
+                    : activeView === "3D Terrain"
+                      ? demoMode ? "Absolute DSM" : "Relative DSM"
+                      : previewLayer === "residual"
+                        ? "Prediction − reference"
+                        : previewLayer === "reference"
+                          ? "Aligned reference DSM"
+                          : previewLayer === "slope"
+                            ? "Surface slope"
+                            : previewLayer === "confidence"
+                              ? "Model-native confidence"
+                              : previewLayer === "optical"
+                                ? "Optical RGB"
+                                : calibrationReady ? "Absolute DSM" : "Relative DSM"}
                 </strong>
                 <span>
-                  {activeView === "3D Terrain"
-                    ? demoMode
-                      ? `${demoReport?.scene ?? "India scene"} · ${demoReport?.model ?? "DA3MONO-LARGE"}`
-                      : "DA3MONO-LARGE · textured terrain"
-                    : previewLayer === "residual"
-                      ? `${projectValidation?.valid_pixels.toLocaleString() ?? "—"} valid pixels · metres`
-                      : previewLayer === "reference"
-                        ? "evaluation-only · aligned to prediction grid"
-                        : previewLayer === "confidence"
-                          ? "not probability calibrated"
-                          : estimatorModel(projectManifest) ?? "persisted project raster"}
+                  {compareActive
+                    ? "evaluation-only reference · synchronized analyst cursor"
+                    : activeView === "3D Terrain"
+                      ? demoMode
+                        ? `${demoReport?.scene ?? "India scene"} · ${demoReport?.model ?? "DA3MONO-LARGE"}`
+                        : "DA3MONO-LARGE · textured terrain"
+                      : previewLayer === "residual"
+                        ? `${projectValidation?.valid_pixels.toLocaleString() ?? "—"} valid pixels · metres`
+                        : previewLayer === "reference"
+                          ? "evaluation-only · aligned to prediction grid"
+                          : previewLayer === "confidence"
+                            ? "not probability calibrated"
+                            : estimatorModel(projectManifest) ?? "persisted project raster"}
                 </span>
               </div>
               <div className="dw-north-indicator" aria-label="North indicator"><strong>N</strong><span>↑</span></div>
               <div className="dw-scene-badge">
                 <strong>
-                  {previewLayer === "residual"
-                    ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
-                    : demoMode || calibrationReady ? "Metric elevation" : "Relative elevation"}
+                  {analysisBusy
+                    ? "Sampling analytical products"
+                    : previewLayer === "residual"
+                      ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
+                      : demoMode || calibrationReady ? "Metric elevation" : "Relative elevation"}
                 </strong>
                 <span>
                   {previewLayer === "residual"
                     ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
-                    : demoMode
-                      ? "DEM-calibrated · metres · engineering path"
-                      : calibrationReady
-                        ? "evidence-calibrated · metres"
-                        : "dimensionless relative surface height · not metric height"}
+                    : activeTool === "Measure" && measurement
+                      ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m"} · Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
+                      : activeTool === "Profiles" && profile
+                        ? `${profile.sample_count} samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m"}`
+                        : demoMode
+                          ? "DEM-calibrated · metres · engineering path"
+                          : calibrationReady
+                            ? "evidence-calibrated · metres"
+                            : "dimensionless relative surface height · not metric height"}
                 </span>
               </div>
             </>
@@ -643,6 +813,11 @@ export function App() {
         harmonizedTiles={demoReport?.harmonized_tiles ?? stageNumber(projectManifest, "geometry", "harmonized_tiles")}
         validationEvidence={validationEvidence}
         projectValidation={projectValidation}
+        activeTool={activeTool}
+        probe={probe}
+        measurement={measurement}
+        profile={profile}
+        analysisBusy={analysisBusy}
       />
     </main>
   );
