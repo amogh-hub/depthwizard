@@ -154,8 +154,7 @@ def compute_height_losses(
     gradient = _gradient_loss(aligned_prediction, target, valid)
 
     target_normals = surface_normals_from_height(target)
-    aligned_normals = surface_normals_from_height(aligned_prediction)
-    cosine = 1.0 - torch.sum(aligned_normals * target_normals, dim=1, keepdim=True)
+    cosine = 1.0 - torch.sum(output.normals * target_normals, dim=1, keepdim=True)
     normals = _masked_mean(cosine, valid)
 
     bins = output.height_bin_logits.shape[1]
