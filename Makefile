@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -38,8 +38,11 @@ height-multiscene-acceptance: height-multiscene-v4
 height-adaptive-acceptance:
 	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.evaluate_ortholoc_adaptive_refinement
 
-height-frozen-holdout:
+height-frozen-holdout-v1:
 	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.evaluate_ortholoc_frozen_holdout
+
+height-frozen-holdout:
+	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.evaluate_ortholoc_frozen_location_v2
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py
