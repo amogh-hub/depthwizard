@@ -15,5 +15,15 @@ def run(*command: str) -> None:
 if __name__ == "__main__":
     run(sys.executable, "-m", "pytest")
     run(sys.executable, "-m", "ruff", "check", "src", "tests", "scripts")
-    run(sys.executable, "-m", "pyright", "src", "tests")
+    run(
+        sys.executable,
+        "-m",
+        "pyright",
+        "src",
+        "tests",
+        "scripts/train_ortholoc_height_acceptance.py",
+        "scripts/benchmark_ortholoc_demo.py",
+        "scripts/demo_india_absolute.py",
+        "scripts/smoke_height_model.py",
+    )
     print("Python verification passed: tests, lint, and static typing are green.")
