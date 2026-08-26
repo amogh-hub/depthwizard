@@ -8,7 +8,6 @@ import scipy.ndimage
 from depthwizard.calibration.robust import robust_affine_calibration
 from depthwizard.contracts import CalibrationResult
 
-
 _GAUSSIAN_FWHM_TO_SIGMA = 1.0 / 2.3548200450309493
 
 
