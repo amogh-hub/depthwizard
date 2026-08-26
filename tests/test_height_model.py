@@ -4,7 +4,12 @@ import torch
 from torch import nn
 
 from depthwizard.height_model.losses import align_scale_shift, compute_height_losses
-from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
+from depthwizard.height_model.model import (
+    BidirectionalGatedFusion,
+    CrossScaleContext,
+    DepthWizardHeightModel,
+    HeightModelConfig,
+)
 
 
 def small_model() -> DepthWizardHeightModel:
@@ -56,6 +61,41 @@ def test_untrained_height_refiner_is_exact_identity_on_geometry_prior() -> None:
     assert torch.equal(output.relative_height, geometry)
 
 
+def test_bidirectional_fusion_propagates_gradients_into_both_evidence_streams() -> None:
+    torch.manual_seed(26175)
+    fusion = BidirectionalGatedFusion(16, 8, dropout=0.0)
+    rgb = torch.rand(2, 16, 24, 20, requires_grad=True)
+    geometry = torch.rand(2, 8, 24, 20, requires_grad=True)
+
+    output = fusion(rgb, geometry)
+    assert output.rgb.shape == rgb.shape
+    assert output.geometry.shape == geometry.shape
+    assert output.joint.shape == rgb.shape
+
+    loss = output.joint.square().mean() + output.rgb.mean() + output.geometry.mean()
+    loss.backward()
+
+    assert rgb.grad is not None and torch.isfinite(rgb.grad).all()
+    assert geometry.grad is not None and torch.isfinite(geometry.grad).all()
+    assert torch.count_nonzero(rgb.grad) > 0
+    assert torch.count_nonzero(geometry.grad) > 0
+
+
+def test_cross_scale_context_preserves_shallow_grid_and_uses_deeper_features() -> None:
+    torch.manual_seed(26175)
+    module = CrossScaleContext(16, 32, dropout=0.0).eval()
+    shallow = torch.rand(1, 16, 32, 40)
+    deep = torch.rand(1, 32, 16, 20)
+
+    with torch.inference_mode():
+        with_context = module(shallow, deep)
+        without_context = module(shallow, torch.zeros_like(deep))
+
+    assert with_context.shape == shallow.shape
+    assert torch.isfinite(with_context).all()
+    assert not torch.allclose(with_context, without_context)
+
+
 def test_group_norm_is_valid_for_non_multiple_of_eight_channel_widths() -> None:
     model = DepthWizardHeightModel(
         HeightModelConfig(
@@ -70,6 +110,16 @@ def test_group_norm_is_valid_for_non_multiple_of_eight_channel_widths() -> None:
     group_norms = [module for module in model.modules() if isinstance(module, nn.GroupNorm)]
     assert group_norms
     assert all(module.num_channels % module.num_groups == 0 for module in group_norms)
+
+
+def test_architecture_version_is_explicit_and_rejects_unknown_variants() -> None:
+    assert HeightModelConfig().architecture_version == "bidirectional-cross-scale-v1"
+    try:
+        HeightModelConfig(architecture_version="unknown")
+    except ValueError as exc:
+        assert "architecture_version" in str(exc)
+    else:
+        raise AssertionError("unknown height-model architecture should be rejected")
 
 
 def test_affine_alignment_removes_relative_scale_and_offset_ambiguity() -> None:
