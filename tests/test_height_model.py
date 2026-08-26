@@ -36,7 +36,8 @@ def test_height_model_emits_all_dense_heads() -> None:
     assert output.height_bin_logits.shape == (2, 8, 64, 80)
     assert output.normals.shape == (2, 3, 64, 80)
     assert output.boundary_probability.shape == (2, 1, 64, 80)
-    assert torch.all((output.relative_height >= 0) & (output.relative_height <= 1))
+    assert torch.isfinite(output.relative_height).all()
+    assert torch.max(torch.abs(output.relative_correction)) <= model.config.max_relative_correction
     assert torch.all(output.uncertainty > 0)
     normal_lengths = torch.linalg.vector_norm(output.normals, dim=1)
     assert torch.allclose(normal_lengths, torch.ones_like(normal_lengths), atol=1e-4)
@@ -82,12 +83,32 @@ def test_affine_alignment_removes_relative_scale_and_offset_ambiguity() -> None:
     assert torch.allclose(aligned[valid], target[valid], atol=2e-5, rtol=2e-5)
 
 
+def test_height_losses_reward_scene_consistent_geometry() -> None:
+    torch.manual_seed(26175)
+    model = small_model().eval()
+    rgb = torch.rand(1, 3, 48, 48)
+    geometry = torch.rand(1, 1, 48, 48)
+    valid = torch.ones_like(geometry, dtype=torch.bool)
+
+    with torch.inference_mode():
+        output = model(rgb, geometry)
+
+    identical = compute_height_losses(output, geometry, valid)
+    shifted_target = geometry + 0.15 * torch.sin(
+        torch.linspace(0.0, 6.0, steps=48, dtype=geometry.dtype)
+    ).view(1, 1, 1, 48)
+    distorted = compute_height_losses(output, shifted_target, valid)
+
+    assert identical.regression < distorted.regression
+    assert identical.correlation <= distorted.correlation
+
+
 def test_height_losses_are_finite_and_differentiable() -> None:
     torch.manual_seed(26175)
     model = small_model().train()
     rgb = torch.rand(1, 3, 48, 48)
     geometry = torch.rand(1, 1, 48, 48)
-    target = torch.rand(1, 1, 48, 48)
+    target = geometry + 0.08 * torch.rand(1, 1, 48, 48)
     valid = torch.ones_like(target, dtype=torch.bool)
     valid[..., :4, :4] = False
     semantic = torch.randint(0, 5, (1, 48, 48))
