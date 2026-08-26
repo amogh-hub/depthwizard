@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import zipfile
@@ -16,7 +17,6 @@ _VALIDATION_ARTIFACTS = {
     "metrics",
     "validation_report",
 }
-_MESH_ARTIFACT_PREFIXES = ("terrain_lod", "mesh_manifest")
 _FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 
@@ -59,7 +59,9 @@ def _artifact_arcname(name: str, path: Path) -> str:
         return "mesh/mesh-manifest.json"
     if name.startswith("terrain_lod"):
         return f"mesh/{path.name}"
-    safe_name = "".join(character if character.isalnum() or character in "-_" else "_" for character in name)
+    safe_name = "".join(
+        character if character.isalnum() or character in "-_" else "_" for character in name
+    )
     return f"artifacts/{safe_name}{suffix}"
 
 
@@ -69,11 +71,11 @@ def _member_from_artifact(name: str, payload: dict[str, object]) -> _ExportMembe
     semantics = payload.get("semantics")
     units = payload.get("units")
     if not isinstance(raw_path, str) or not isinstance(recorded_sha, str):
-        raise ValueError(f"project artifact '{name}' has incomplete path/hash metadata")
+        raise TypeError(f"project artifact '{name}' has incomplete path/hash metadata")
     if not isinstance(semantics, str):
-        raise ValueError(f"project artifact '{name}' has no semantics")
+        raise TypeError(f"project artifact '{name}' has no semantics")
     if units is not None and not isinstance(units, str):
-        raise ValueError(f"project artifact '{name}' has invalid units metadata")
+        raise TypeError(f"project artifact '{name}' has invalid units metadata")
     path = Path(raw_path)
     if not path.is_file():
         raise FileNotFoundError(f"project artifact '{name}' is missing: {path}")
@@ -133,6 +135,14 @@ def _write_member(archive: zipfile.ZipFile, member: _ExportMember) -> None:
     info = _zip_info(member.arcname)
     with member.path.open("rb") as source, archive.open(info, "w") as destination:
         shutil.copyfileobj(source, destination, length=1024 * 1024)
+
+
+def _sha256_archive_member(archive: zipfile.ZipFile, arcname: str) -> str:
+    digest = hashlib.sha256()
+    with archive.open(arcname, "r") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _export_manifest_payload(
@@ -248,7 +258,7 @@ def load_project_export(project_dir: str | Path) -> ProjectExportReport:
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"unable to read export manifest: {exc}") from exc
     if not isinstance(payload, dict):
-        raise ValueError("export manifest root must be an object")
+        raise TypeError("export manifest root must be an object")
 
     manifest = ProjectManifest.load(directory)
     bundle_path = directory / "exports" / f"depthwizard-{manifest.project_id}.zip"
@@ -259,24 +269,51 @@ def load_project_export(project_dir: str | Path) -> ProjectExportReport:
     if recorded_manifest_sha != manifest_sha:
         raise RuntimeError("project manifest changed after the export was built; rebuild the export")
 
+    raw_include_source = payload.get("include_source", False)
+    raw_include_mesh = payload.get("include_mesh", True)
+    raw_include_validation = payload.get("include_validation", True)
+    if not all(
+        isinstance(value, bool)
+        for value in (raw_include_source, raw_include_mesh, raw_include_validation)
+    ):
+        raise TypeError("export manifest inclusion flags must be boolean")
     request = ProjectExportRequest(
         project_dir=directory,
-        include_source=bool(payload.get("include_source", False)),
-        include_mesh=bool(payload.get("include_mesh", True)),
-        include_validation=bool(payload.get("include_validation", True)),
+        include_source=raw_include_source,
+        include_mesh=raw_include_mesh,
+        include_validation=raw_include_validation,
     )
     members = _collect_members(request, manifest)
     expected = {member.arcname: member for member in members}
     raw_files = payload.get("files")
     if not isinstance(raw_files, list):
-        raise ValueError("export manifest files must be an array")
+        raise TypeError("export manifest files must be an array")
+    recorded_arcnames: set[str] = set()
     for item in raw_files:
         if not isinstance(item, dict) or not isinstance(item.get("arcname"), str):
-            raise ValueError("export manifest contains an invalid file entry")
+            raise TypeError("export manifest contains an invalid file entry")
         arcname = item["arcname"]
+        recorded_arcnames.add(arcname)
         member = expected.get(arcname)
         if member is None or item.get("sha256") != member.sha256:
             raise RuntimeError(f"export member identity changed after packaging: {arcname}")
+    if recorded_arcnames != set(expected):
+        raise RuntimeError("export manifest member set no longer matches current project artifacts")
+
+    required_archive_names = {"export-manifest.json", "project-manifest.json", *expected}
+    with zipfile.ZipFile(bundle_path) as archive:
+        archive_names = set(archive.namelist())
+        if archive_names != required_archive_names:
+            raise RuntimeError("export ZIP member set does not match the audited export manifest")
+        if _sha256_archive_member(archive, "project-manifest.json") != manifest_sha:
+            raise RuntimeError("packaged project-manifest.json identity mismatch")
+        if _sha256_archive_member(archive, "export-manifest.json") != sha256_file(
+            export_manifest_path
+        ):
+            raise RuntimeError("packaged export-manifest.json identity mismatch")
+        for arcname, member in expected.items():
+            if _sha256_archive_member(archive, arcname) != member.sha256:
+                raise RuntimeError(f"packaged export member SHA-256 mismatch: {arcname}")
 
     files = [
         ProjectExportFile(
