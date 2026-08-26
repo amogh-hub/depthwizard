@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
+
 from depthwizard.calibration.robust import robust_affine_calibration
 from depthwizard.contracts import CalibrationResult
-from scipy.ndimage import gaussian_filter
 
 
 _GAUSSIAN_FWHM_TO_SIGMA = 1.0 / 2.3548200450309493
