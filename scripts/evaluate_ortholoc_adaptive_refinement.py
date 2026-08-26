@@ -161,11 +161,11 @@ def _aggregate(
     baseline_metrics = compute_elevation_metrics(baseline, reference)
     adaptive_metrics = compute_elevation_metrics(adaptive, reference)
     improvement = (baseline_metrics.rmse_m - adaptive_metrics.rmse_m) / baseline_metrics.rmse_m
-    scene_deltas = [
-        float(report["adaptive_rmse_delta_m"])
-        for report in reports
-        if isinstance(report.get("adaptive_rmse_delta_m"), (int, float))
-    ]
+    scene_deltas: list[float] = []
+    for report in reports:
+        delta = report.get("adaptive_rmse_delta_m")
+        if isinstance(delta, (int, float)):
+            scene_deltas.append(float(delta))
     return {
         "scenes": reports,
         "aggregate_da3": baseline_metrics.model_dump(),
