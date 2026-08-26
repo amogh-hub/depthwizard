@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+import scipy.ndimage
 
 from depthwizard.calibration.robust import robust_affine_calibration
 from depthwizard.contracts import CalibrationResult
@@ -138,12 +138,14 @@ def _normalized_gaussian_filter(
         result[~mask] = np.nan
         return result
 
-    numerator = gaussian_filter(
+    numerator = scipy.ndimage.gaussian_filter(
         np.where(mask, array, 0.0),
         sigma=sigma_px,
         mode="nearest",
     )
-    denominator = gaussian_filter(mask.astype(np.float64), sigma=sigma_px, mode="nearest")
+    denominator = scipy.ndimage.gaussian_filter(
+        mask.astype(np.float64), sigma=sigma_px, mode="nearest"
+    )
     result = np.full(array.shape, np.nan, dtype=np.float64)
     np.divide(numerator, denominator, out=result, where=denominator > 1e-8)
     return result
@@ -296,8 +298,12 @@ def calibrate_relative_height_with_dem(
     if low_frequency_sigma_px <= 0:
         smooth_bias = np.zeros(rel.shape, dtype=np.float64)
     else:
-        numerator = gaussian_filter(raw_residual * residual_weight, sigma=low_frequency_sigma_px)
-        denominator = gaussian_filter(residual_weight, sigma=low_frequency_sigma_px)
+        numerator = scipy.ndimage.gaussian_filter(
+            raw_residual * residual_weight, sigma=low_frequency_sigma_px
+        )
+        denominator = scipy.ndimage.gaussian_filter(
+            residual_weight, sigma=low_frequency_sigma_px
+        )
         smooth_bias = np.divide(
             numerator,
             denominator,
