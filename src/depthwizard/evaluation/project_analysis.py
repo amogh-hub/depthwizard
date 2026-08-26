@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import pairwise
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import rasterio
@@ -20,6 +21,7 @@ from depthwizard.contracts import (
 from depthwizard.pipeline.project import ProjectManifest
 
 _GEOD = Geod(ellps="WGS84")
+SurfaceProduct = Literal["dsm", "rdsm"]
 
 
 def _load_project(project_dir: Path) -> ProjectManifest:
@@ -28,7 +30,7 @@ def _load_project(project_dir: Path) -> ProjectManifest:
     return ProjectManifest.load(project_dir)
 
 
-def _primary_surface(manifest: ProjectManifest) -> tuple[str, Path]:
+def _primary_surface(manifest: ProjectManifest) -> tuple[SurfaceProduct, Path]:
     for name in ("dsm", "rdsm"):
         path = manifest.artifact_path(name)
         if path is not None and path.is_file():
@@ -45,7 +47,8 @@ def _pixel_index(point: NormalizedPoint, *, width: int, height: int) -> tuple[in
 def _read_cell(path: Path, point: NormalizedPoint) -> float | None:
     with rasterio.open(path) as src:
         col, row = _pixel_index(point, width=src.width, height=src.height)
-        value = src.read(1, window=Window(col, row, 1, 1), masked=True)
+        window = Window(col_off=col, row_off=row, width=1, height=1)
+        value = src.read(1, window=window, masked=True)
         if value.size != 1 or bool(np.ma.getmaskarray(value)[0, 0]):
             return None
         scalar = float(value[0, 0])
