@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from depthwizard.evaluation.potsdam import (
     FROZEN_POTSDAM_TILE_IDS,
     POTSDAM_BENCHMARK_GSD_M,
     POTSDAM_NATIVE_GSD_M,
+    benchmark_full_coverage_mask,
     protocol_sha256,
     resolve_potsdam_tile_paths,
+    validate_trailing_edge_reference_shape,
     write_or_verify_protocol_seal,
 )
 
@@ -60,3 +65,26 @@ def test_protocol_seal_rejects_post_hoc_mutation(tmp_path: Path) -> None:
         assert "different contents" in str(exc)
     else:
         raise AssertionError("a consumed external protocol must not be mutable")
+
+
+def test_v2_accepts_only_one_pixel_trailing_edge_deficit() -> None:
+    assert validate_trailing_edge_reference_shape((6000, 6000), (6000, 6000)) == (0, 0)
+    assert validate_trailing_edge_reference_shape((6000, 6000), (6000, 5999)) == (0, 1)
+    assert validate_trailing_edge_reference_shape((6000, 6000), (5999, 6000)) == (1, 0)
+
+    with pytest.raises(ValueError, match="exceeds the sealed metadata tolerance"):
+        validate_trailing_edge_reference_shape((6000, 6000), (6000, 5998))
+    with pytest.raises(ValueError, match="may not extend beyond"):
+        validate_trailing_edge_reference_shape((6000, 6000), (6001, 6000))
+
+
+def test_v2_full_coverage_mask_excludes_partial_edge_cell() -> None:
+    mask = benchmark_full_coverage_mask(
+        target_height=2,
+        target_width=2,
+        target_transform=(1.0, 0.0, 0.0, 0.0, -1.0, 2.0),
+        reference_bounds=(0.0, 0.0, 1.9, 2.0),
+    )
+
+    expected = np.array([[True, False], [True, False]], dtype=bool)
+    np.testing.assert_array_equal(mask, expected)
