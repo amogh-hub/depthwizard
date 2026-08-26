@@ -63,19 +63,26 @@ the Joshimath calibration-only engineering demonstration.
 `make release-train-2-validation-smoke` uses:
 
 - **optical source:** TUM OrthoLoC `urban_residential_DOP.tif`;
-- **metric calibration only:** AWS Terrain Tiles / Mapzen Terrarium at zoom 10;
-- **downstream evaluation only:** TUM OrthoLoC `urban_residential_DSM.tif`.
+- **metric-calibration surrogate:** TUM OrthoLoC `urban_residential_xDSM.tif`, deterministically
+  downsampled by 16× before production calibration;
+- **downstream evaluation only:** TUM OrthoLoC `urban_residential_DSM.tif`, fetched only after the
+  production DSM has completed.
 
-The smoke downloads/caches the public OrthoLoC pair and only the Terrarium tiles required to cover
-the scene. The production runtime completes metric DSM generation before the OrthoLoC DSM is passed
-to the validation subsystem. Calibration DEM and evaluation DSM SHA-256 values are checked for
-separation and are recorded in `release-train-2-acceptance.json` together with the final project
-artifacts and metrics.
+The first RT2 acceptance implementation attempted to locate the OrthoLoC demo footprint in global
+Terrarium web tiles. That is not a safe assumption for dataset-local georeferencing: the local smoke
+reported an implausible 543,780-tile footprint and aborted before reconstruction. The corrected
+acceptance therefore does **not** invent a global location. It uses a coarse same-scene xDSM-derived
+calibration surrogate strictly for product-path integration and records that this calibration source
+is **not lineage-independent** from the downstream OrthoLoC evaluation DSM.
 
-This is an **integrated product acceptance**, not new model-promotion evidence. The
-`urban_residential` OrthoLoC scene has prior DepthWizard research use, so its result must not be
-presented as unseen Gate B evidence. No threshold, estimator policy or model selection may be tuned
-from this smoke.
+The evaluation DSM is deliberately not downloaded until the production metric DSM is complete.
+Calibration-source, coarse-calibration and evaluation-reference SHA-256 values are recorded in
+`release-train-2-acceptance.json`, together with explicit `lineage_independent: false` semantics.
+
+This is an **integrated product acceptance**, not new model-promotion or independent accuracy
+evidence. The `urban_residential` OrthoLoC scene has prior DepthWizard research use, so its result
+must not be presented as unseen Gate B evidence. No threshold, estimator policy or model selection
+may be tuned from this smoke.
 
 ## Acceptance before merge
 
@@ -89,10 +96,11 @@ from this smoke.
 - raster preview tests emit valid PNGs and reject absent layers;
 - point probes and deterministic profile/transect sampling are covered by automated tests;
 - local service API validates a generated metric project and reloads the same report;
-- `make release-train-2-validation-smoke` completes with Terrarium calibration evidence and the
-  OrthoLoC DSM held strictly downstream for evaluation;
+- `make release-train-2-validation-smoke` completes with the coarse xDSM calibration surrogate and
+  the regular OrthoLoC DSM held strictly downstream for evaluation;
 - generated `release-train-2-acceptance.json`, `metrics.json`, residual/reference GeoTIFFs, manifest
   stage and human report are reviewed;
+- the smoke is never described as calibration/evaluation lineage-independent evidence;
 - no result from the Joshimath calibration DEM itself is misrepresented as independent validation;
 - no RT2 acceptance result is used to reopen or tune the consumed Potsdam-v2 protocol.
 
