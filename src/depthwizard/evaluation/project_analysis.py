@@ -7,6 +7,7 @@ from typing import Literal
 import numpy as np
 import rasterio
 from pyproj import CRS, Geod, Transformer
+from pyproj.exceptions import CRSError, ProjError
 
 from depthwizard.contracts import (
     NormalizedPoint,
@@ -93,7 +94,7 @@ def _safe_geographic_coordinates(
     try:
         transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
         longitude, latitude = transformer.transform(x, y)
-    except Exception:
+    except (CRSError, ProjError):
         return None, None
     if not np.isfinite(longitude) or not np.isfinite(latitude):
         return None, None
