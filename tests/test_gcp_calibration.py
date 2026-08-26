@@ -1,5 +1,5 @@
 import numpy as np
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 from depthwizard.calibration.gcp import calibrate_relative_height_with_gcps
 from depthwizard.contracts import GroundControlPoint
@@ -7,14 +7,14 @@ from depthwizard.contracts import GroundControlPoint
 
 def _gcps_for_field(
     relative: np.ndarray,
-    transform: object,
+    transform: Affine,
     *,
     scale: float,
     offset: float,
 ) -> list[GroundControlPoint]:
     points: list[GroundControlPoint] = []
     for row, col in ((2, 2), (5, 12), (15, 4), (17, 17)):
-        px, py = transform * (col + 0.5, row + 0.5)  # type: ignore[operator]
+        px, py = transform * (col + 0.5, row + 0.5)
         points.append(
             GroundControlPoint(
                 x=px,
