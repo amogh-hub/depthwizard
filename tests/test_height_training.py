@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 from depthwizard.height_model.training import (
+    canonicalize_reference_to_prior,
+    fit_reference_to_prior,
     fit_rgb_ranges,
     fit_robust_range,
     normalize_relative_target,
@@ -34,6 +36,35 @@ def test_target_normalization_is_fit_only_on_training_mask() -> None:
     normalized = normalize_relative_target(values, scale)
     assert normalized[0, 0] == 0.0
     assert normalized[-1, -1] == 1.0
+
+
+def test_reference_canonicalization_recovers_prior_coordinates() -> None:
+    geometry = np.linspace(0.05, 0.95, num=40 * 60, dtype=np.float32).reshape(40, 60)
+    reference = 180.0 * geometry + 720.0
+    train = np.zeros_like(geometry, dtype=bool)
+    train[:, :38] = True
+
+    fit = fit_reference_to_prior(geometry, reference, train)
+    canonical = canonicalize_reference_to_prior(reference, fit)
+
+    assert abs(fit.scale_m_per_prior_unit - 180.0) < 1e-3
+    assert abs(fit.offset_m - 720.0) < 1e-3
+    assert np.allclose(canonical, geometry, atol=1e-5)
+
+
+def test_reference_fit_ignores_validation_only_distortion() -> None:
+    geometry = np.linspace(0.0, 1.0, num=48 * 80, dtype=np.float32).reshape(48, 80)
+    clean_reference = 95.0 * geometry + 410.0
+    distorted_reference = clean_reference.copy()
+    distorted_reference[:, 56:] += 10_000.0
+    train = np.zeros_like(geometry, dtype=bool)
+    train[:, :52] = True
+
+    clean_fit = fit_reference_to_prior(geometry, clean_reference, train)
+    distorted_fit = fit_reference_to_prior(geometry, distorted_reference, train)
+
+    assert abs(clean_fit.scale_m_per_prior_unit - distorted_fit.scale_m_per_prior_unit) < 1e-6
+    assert abs(clean_fit.offset_m - distorted_fit.offset_m) < 1e-6
 
 
 def test_rgb_normalization_and_patch_enumeration() -> None:
