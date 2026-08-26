@@ -100,6 +100,59 @@ export type ProjectManifest = {
   errors: Array<{ at_utc: string; stage: string | null; message: string }>;
 };
 
+export type EvaluationMetrics = {
+  valid_pixels: number;
+  mae_m: number;
+  rmse_m: number;
+  pearson_r: number | null;
+  mean_bias_m: number;
+  median_abs_error_m: number;
+  p90_abs_error_m: number;
+  p95_abs_error_m: number;
+};
+
+export type SlopeMetrics = {
+  valid_pixels: number;
+  mae_degrees: number;
+  rmse_degrees: number;
+  p95_abs_error_degrees: number;
+};
+
+export type ErrorConfidenceBin = {
+  lower_confidence: number;
+  upper_confidence: number;
+  valid_pixels: number;
+  mean_confidence: number;
+  mae_m: number;
+  rmse_m: number;
+};
+
+export type ReliabilityDiagnostics = {
+  available: boolean;
+  semantics: string;
+  valid_pixels: number;
+  confidence_abs_error_pearson_r: number | null;
+  bins: ErrorConfidenceBin[];
+};
+
+export type ReferenceValidationReport = {
+  schema_version: number;
+  project_id: string;
+  prediction_sha256: string;
+  reference_path: string;
+  reference_sha256: string;
+  reference_label: string | null;
+  independence_check: string;
+  alignment: string;
+  valid_pixels: number;
+  coverage_fraction: number;
+  elevation: EvaluationMetrics;
+  slope: SlopeMetrics;
+  reliability: ReliabilityDiagnostics;
+  artifacts: Record<string, string>;
+  warnings: string[];
+};
+
 type RuntimeConfig = {
   apiBase?: string;
   sessionToken?: string;
@@ -154,4 +207,24 @@ export function getProjectJob(jobId: string): Promise<ProjectJobState> {
 export function getProjectManifest(projectDir: string): Promise<ProjectManifest> {
   const query = new URLSearchParams({ project_dir: projectDir });
   return coreFetch<ProjectManifest>(`/v1/projects/manifest?${query.toString()}`);
+}
+
+export function validateProjectReference(
+  projectDir: string,
+  referencePath: string,
+  referenceLabel?: string,
+): Promise<ReferenceValidationReport> {
+  return coreFetch<ReferenceValidationReport>("/v1/projects/validate", {
+    method: "POST",
+    body: JSON.stringify({
+      project_dir: projectDir,
+      reference_path: referencePath,
+      reference_label: referenceLabel ?? null,
+    }),
+  });
+}
+
+export function getProjectValidation(projectDir: string): Promise<ReferenceValidationReport> {
+  const query = new URLSearchParams({ project_dir: projectDir });
+  return coreFetch<ReferenceValidationReport>(`/v1/projects/validation?${query.toString()}`);
 }
