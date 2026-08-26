@@ -4,14 +4,44 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from pyproj import Geod, Transformer
 from rasterio.enums import Resampling
 from rasterio.warp import reproject
 
 from depthwizard.contracts import RasterMetadata
 
 
+def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
+    """Return centre-pixel ground spacing in metres for a georeferenced raster.
+
+    Affine coefficients are expressed in CRS units, which can be degrees for geographic rasters.
+    Converting neighbouring pixel centres to WGS84 and measuring geodesic distance avoids silently
+    labelling angular pixel sizes as metres.
+    """
+    with rasterio.open(path) as src:
+        if src.crs is None or src.transform.is_identity:
+            return None
+        col = (src.width - 1) / 2.0
+        row = (src.height - 1) / 2.0
+        x0, y0 = src.transform * (col + 0.5, row + 0.5)
+        x1, y1 = src.transform * (col + 1.5, row + 0.5)
+        x2, y2 = src.transform * (col + 0.5, row + 1.5)
+        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
+        lon0, lat0 = transformer.transform(x0, y0)
+        lon1, lat1 = transformer.transform(x1, y1)
+        lon2, lat2 = transformer.transform(x2, y2)
+
+    geod = Geod(ellps="WGS84")
+    _, _, gsd_x = geod.inv(lon0, lat0, lon1, lat1)
+    _, _, gsd_y = geod.inv(lon0, lat0, lon2, lat2)
+    if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
+        raise ValueError("unable to derive positive metric ground sample distance")
+    return float(abs(gsd_x)), float(abs(gsd_y))
+
+
 def inspect_raster(path: str | Path) -> RasterMetadata:
     p = Path(path)
+    metric_gsd = ground_sample_distance_m(p)
     with rasterio.open(p) as src:
         transform = src.transform
         has_meaningful_transform = not transform.is_identity
@@ -24,8 +54,8 @@ def inspect_raster(path: str | Path) -> RasterMetadata:
             transform.f,
         ) if has_meaningful_transform else None
         crs = src.crs.to_string() if src.crs is not None else None
-        gsd_x = abs(transform.a) if has_meaningful_transform else None
-        gsd_y = abs(transform.e) if has_meaningful_transform else None
+        gsd_x = metric_gsd[0] if metric_gsd is not None else None
+        gsd_y = metric_gsd[1] if metric_gsd is not None else None
         return RasterMetadata(
             path=p,
             width=src.width,
@@ -127,7 +157,11 @@ def write_float_geotiff(
             BIGTIFF="IF_SAFER",
         )
         if template.width >= 16 and template.height >= 16:
-            profile.update(tiled=True, blockxsize=min(512, (template.width // 16) * 16), blockysize=min(512, (template.height // 16) * 16))
+            profile.update(
+                tiled=True,
+                blockxsize=min(512, (template.width // 16) * 16),
+                blockysize=min(512, (template.height // 16) * 16),
+            )
         else:
             profile.pop("tiled", None)
             profile.pop("blockxsize", None)
