@@ -14,7 +14,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from depthwizard import __version__
-from depthwizard.contracts import ProcessingRequest, ProjectRunStatus, RasterMetadata
+from depthwizard.contracts import (
+    ProcessingRequest,
+    ProjectRunStatus,
+    RasterMetadata,
+    ReferenceValidationReport,
+    ReferenceValidationRequest,
+)
+from depthwizard.evaluation.project_validation import validate_project_reference
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import inspect_raster
 from depthwizard.pipeline.project import ProjectManifest
@@ -172,3 +179,39 @@ def project_manifest(project_dir: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="project manifest root must be an object")
     return payload
+
+
+@app.post(
+    "/v1/projects/validate",
+    response_model=ReferenceValidationReport,
+    dependencies=[Depends(_session_guard)],
+)
+def validate_reference(request: ReferenceValidationRequest) -> ReferenceValidationReport:
+    if not (request.project_dir / "project-manifest.json").is_file():
+        raise HTTPException(status_code=404, detail="project manifest does not exist")
+    if not request.reference_path.is_file():
+        raise HTTPException(status_code=404, detail="reference DSM does not exist")
+    try:
+        return validate_project_reference(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/projects/validation",
+    response_model=ReferenceValidationReport,
+    dependencies=[Depends(_session_guard)],
+)
+def validation_report(project_dir: Path) -> ReferenceValidationReport:
+    path = project_dir / "metrics.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="project validation metrics do not exist")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return ReferenceValidationReport.model_validate(payload)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"unable to read validation metrics: {exc}") from exc
