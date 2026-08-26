@@ -100,6 +100,127 @@ export type ProjectManifest = {
   errors: Array<{ at_utc: string; stage: string | null; message: string }>;
 };
 
+export type EvaluationMetrics = {
+  valid_pixels: number;
+  mae_m: number;
+  rmse_m: number;
+  pearson_r: number | null;
+  mean_bias_m: number;
+  median_abs_error_m: number;
+  p90_abs_error_m: number;
+  p95_abs_error_m: number;
+};
+
+export type SlopeMetrics = {
+  valid_pixels: number;
+  mae_degrees: number;
+  rmse_degrees: number;
+  p95_abs_error_degrees: number;
+};
+
+export type ErrorConfidenceBin = {
+  lower_confidence: number;
+  upper_confidence: number;
+  valid_pixels: number;
+  mean_confidence: number;
+  mae_m: number;
+  rmse_m: number;
+};
+
+export type ReliabilityDiagnostics = {
+  available: boolean;
+  semantics: string;
+  valid_pixels: number;
+  confidence_abs_error_pearson_r: number | null;
+  bins: ErrorConfidenceBin[];
+};
+
+export type ReferenceValidationReport = {
+  schema_version: number;
+  project_id: string;
+  prediction_sha256: string;
+  reference_path: string;
+  reference_sha256: string;
+  reference_label: string | null;
+  independence_check: string;
+  alignment: string;
+  valid_pixels: number;
+  coverage_fraction: number;
+  elevation: EvaluationMetrics;
+  slope: SlopeMetrics;
+  reliability: ReliabilityDiagnostics;
+  artifacts: Record<string, string>;
+  warnings: string[];
+};
+
+export type NormalizedPoint = {
+  x: number;
+  y: number;
+};
+
+export type RasterSample = {
+  available: boolean;
+  value: number | null;
+  units: string | null;
+  semantics: string;
+};
+
+export type ProjectProbeResult = {
+  project_id: string;
+  point: NormalizedPoint;
+  pixel_col: number;
+  pixel_row: number;
+  map_x: number | null;
+  map_y: number | null;
+  longitude: number | null;
+  latitude: number | null;
+  surface_product: "dsm" | "rdsm";
+  surface: RasterSample;
+  slope: RasterSample;
+  reference: RasterSample;
+  residual: RasterSample;
+  confidence: RasterSample;
+};
+
+export type ProfileSample = {
+  fraction: number;
+  point: NormalizedPoint;
+  distance_pixels: number;
+  distance_m: number | null;
+  surface: RasterSample;
+  slope: RasterSample;
+  reference: RasterSample;
+  residual: RasterSample;
+  confidence: RasterSample;
+};
+
+export type ProjectProfileResult = {
+  project_id: string;
+  surface_product: "dsm" | "rdsm";
+  start: NormalizedPoint;
+  end: NormalizedPoint;
+  sample_count: number;
+  horizontal_distance_pixels: number;
+  horizontal_distance_m: number | null;
+  vertical_delta: number | null;
+  vertical_units: string | null;
+  minimum_surface: number | null;
+  maximum_surface: number | null;
+  elevation_gain: number | null;
+  elevation_loss: number | null;
+  samples: ProfileSample[];
+  semantics: string;
+};
+
+export type ProjectPreviewLayer =
+  | "optical"
+  | "rdsm"
+  | "dsm"
+  | "slope"
+  | "reference"
+  | "residual"
+  | "confidence";
+
 type RuntimeConfig = {
   apiBase?: string;
   sessionToken?: string;
@@ -113,7 +234,7 @@ declare global {
 
 const runtime = () => window.__DEPTHWIZARD_RUNTIME__ ?? {};
 
-async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
+function runtimeHeaders(init?: RequestInit): Headers {
   const config = runtime();
   const headers = new Headers(init?.headers);
   if (init?.body !== undefined && !headers.has("content-type")) {
@@ -122,14 +243,24 @@ async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (config.sessionToken) {
     headers.set("x-depthwizard-token", config.sessionToken);
   }
+  return headers;
+}
+
+async function checkedResponse(path: string, init?: RequestInit): Promise<Response> {
+  const config = runtime();
   const response = await fetch(`${config.apiBase ?? "http://127.0.0.1:8765"}${path}`, {
     ...init,
-    headers,
+    headers: runtimeHeaders(init),
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { detail?: string };
     throw new Error(body.detail ?? `DepthWizard core returned HTTP ${response.status}`);
   }
+  return response;
+}
+
+async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await checkedResponse(path, init);
   return response.json() as Promise<T>;
 }
 
@@ -154,4 +285,57 @@ export function getProjectJob(jobId: string): Promise<ProjectJobState> {
 export function getProjectManifest(projectDir: string): Promise<ProjectManifest> {
   const query = new URLSearchParams({ project_dir: projectDir });
   return coreFetch<ProjectManifest>(`/v1/projects/manifest?${query.toString()}`);
+}
+
+export function validateProjectReference(
+  projectDir: string,
+  referencePath: string,
+  referenceLabel?: string,
+): Promise<ReferenceValidationReport> {
+  return coreFetch<ReferenceValidationReport>("/v1/projects/validate", {
+    method: "POST",
+    body: JSON.stringify({
+      project_dir: projectDir,
+      reference_path: referencePath,
+      reference_label: referenceLabel ?? null,
+    }),
+  });
+}
+
+export function getProjectValidation(projectDir: string): Promise<ReferenceValidationReport> {
+  const query = new URLSearchParams({ project_dir: projectDir });
+  return coreFetch<ReferenceValidationReport>(`/v1/projects/validation?${query.toString()}`);
+}
+
+export function probeProject(projectDir: string, point: NormalizedPoint): Promise<ProjectProbeResult> {
+  return coreFetch<ProjectProbeResult>("/v1/projects/probe", {
+    method: "POST",
+    body: JSON.stringify({ project_dir: projectDir, point }),
+  });
+}
+
+export function sampleProjectProfile(
+  projectDir: string,
+  start: NormalizedPoint,
+  end: NormalizedPoint,
+  samples = 160,
+): Promise<ProjectProfileResult> {
+  return coreFetch<ProjectProfileResult>("/v1/projects/profile", {
+    method: "POST",
+    body: JSON.stringify({ project_dir: projectDir, start, end, samples }),
+  });
+}
+
+export async function getProjectPreviewUrl(
+  projectDir: string,
+  layer: ProjectPreviewLayer,
+  maxSide = 1600,
+): Promise<string> {
+  const query = new URLSearchParams({
+    project_dir: projectDir,
+    layer,
+    max_side: String(maxSide),
+  });
+  const response = await checkedResponse(`/v1/projects/preview?${query.toString()}`);
+  return URL.createObjectURL(await response.blob());
 }

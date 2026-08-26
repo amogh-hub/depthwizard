@@ -70,6 +70,121 @@ class SlopeMetrics(BaseModel):
     p95_abs_error_degrees: float
 
 
+class ErrorConfidenceBin(BaseModel):
+    lower_confidence: float
+    upper_confidence: float
+    valid_pixels: int = Field(ge=0)
+    mean_confidence: float
+    mae_m: float
+    rmse_m: float
+
+
+class ReliabilityDiagnostics(BaseModel):
+    available: bool
+    semantics: str
+    valid_pixels: int = Field(default=0, ge=0)
+    confidence_abs_error_pearson_r: float | None = None
+    bins: list[ErrorConfidenceBin] = Field(default_factory=list)
+
+
+class ReferenceValidationRequest(BaseModel):
+    project_dir: Path
+    reference_path: Path
+    reference_label: str | None = None
+    min_valid_pixels: int = Field(default=128, ge=2)
+
+
+class ReferenceValidationReport(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    prediction_sha256: str
+    reference_path: Path
+    reference_sha256: str
+    reference_label: str | None = None
+    independence_check: str
+    alignment: str
+    valid_pixels: int = Field(ge=0)
+    coverage_fraction: float = Field(ge=0.0, le=1.0)
+    elevation: EvaluationMetrics
+    slope: SlopeMetrics
+    reliability: ReliabilityDiagnostics
+    artifacts: dict[str, str]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NormalizedPoint(BaseModel):
+    """Image-relative coordinate independent of desktop preview resolution."""
+
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class RasterSample(BaseModel):
+    available: bool
+    value: float | None = None
+    units: str | None = None
+    semantics: str
+
+
+class ProjectProbeRequest(BaseModel):
+    project_dir: Path
+    point: NormalizedPoint
+
+
+class ProjectProbeResult(BaseModel):
+    project_id: str
+    point: NormalizedPoint
+    pixel_col: int = Field(ge=0)
+    pixel_row: int = Field(ge=0)
+    map_x: float | None = None
+    map_y: float | None = None
+    longitude: float | None = None
+    latitude: float | None = None
+    surface_product: Literal["dsm", "rdsm"]
+    surface: RasterSample
+    slope: RasterSample
+    reference: RasterSample
+    residual: RasterSample
+    confidence: RasterSample
+
+
+class ProjectProfileRequest(BaseModel):
+    project_dir: Path
+    start: NormalizedPoint
+    end: NormalizedPoint
+    samples: int = Field(default=128, ge=2, le=512)
+
+
+class ProfileSample(BaseModel):
+    fraction: float = Field(ge=0.0, le=1.0)
+    point: NormalizedPoint
+    distance_pixels: float = Field(ge=0.0)
+    distance_m: float | None = Field(default=None, ge=0.0)
+    surface: RasterSample
+    slope: RasterSample
+    reference: RasterSample
+    residual: RasterSample
+    confidence: RasterSample
+
+
+class ProjectProfileResult(BaseModel):
+    project_id: str
+    surface_product: Literal["dsm", "rdsm"]
+    start: NormalizedPoint
+    end: NormalizedPoint
+    sample_count: int = Field(ge=2)
+    horizontal_distance_pixels: float = Field(ge=0.0)
+    horizontal_distance_m: float | None = Field(default=None, ge=0.0)
+    vertical_delta: float | None = None
+    vertical_units: str | None = None
+    minimum_surface: float | None = None
+    maximum_surface: float | None = None
+    elevation_gain: float | None = Field(default=None, ge=0.0)
+    elevation_loss: float | None = Field(default=None, ge=0.0)
+    samples: list[ProfileSample]
+    semantics: str
+
+
 class CalibrationResult(BaseModel):
     scale: float
     offset: float

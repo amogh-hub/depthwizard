@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -58,6 +58,9 @@ potsdam-external-v2-execution-preflight:
 
 potsdam-external-acceptance:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.evaluate_potsdam_external_v2
+
+release-train-2-validation-smoke:
+	PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.release_train_2_validation_smoke
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py
