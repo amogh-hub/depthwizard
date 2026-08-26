@@ -11,11 +11,14 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from depthwizard import __version__
 from depthwizard.contracts import (
     ProcessingRequest,
+    ProjectMeshBuildRequest,
+    ProjectMeshReport,
     ProjectProbeRequest,
     ProjectProbeResult,
     ProjectProfileRequest,
@@ -29,6 +32,7 @@ from depthwizard.evaluation.project_analysis import probe_project, sample_projec
 from depthwizard.evaluation.project_validation import validate_project_reference
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import inspect_raster
+from depthwizard.mesh.project_mesh import build_project_mesh, load_project_mesh
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.runtime import ProductionElevationRuntime
 from depthwizard.visualization.raster_preview import PreviewLayer, render_project_layer_preview
@@ -249,6 +253,65 @@ def project_profile(request: ProjectProfileRequest) -> ProjectProfileResult:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/projects/mesh",
+    response_model=ProjectMeshReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_mesh_build(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
+    try:
+        return build_project_mesh(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/projects/mesh",
+    response_model=ProjectMeshReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_mesh_report(project_dir: Path) -> ProjectMeshReport:
+    try:
+        return load_project_mesh(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/projects/mesh/lod/{level}", dependencies=[Depends(_session_guard)])
+def project_mesh_lod(project_dir: Path, level: int) -> FileResponse:
+    if level < 0:
+        raise HTTPException(status_code=422, detail="terrain LOD level must be non-negative")
+    try:
+        report = load_project_mesh(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    lod = next((item for item in report.lods if item.level == level), None)
+    if lod is None:
+        raise HTTPException(status_code=404, detail=f"terrain LOD {level} is not available")
+    return FileResponse(
+        path=lod.path,
+        media_type="model/gltf-binary",
+        filename=lod.path.name,
+        headers={
+            "Cache-Control": "no-store",
+            "ETag": f'"{lod.sha256}"',
+            "X-DepthWizard-Mesh-SHA256": lod.sha256,
+        },
+    )
 
 
 @app.get("/v1/projects/preview", dependencies=[Depends(_session_guard)])
