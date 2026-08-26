@@ -73,15 +73,16 @@ def fit_rgb_ranges(
     image = np.asarray(rgb)
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError("rgb must have shape H x W x 3")
-    return tuple(
-        fit_robust_range(
+
+    def fit(channel: int) -> RobustRange:
+        return fit_robust_range(
             image[..., channel],
             fit_mask,
             lower_percentile=lower_percentile,
             upper_percentile=upper_percentile,
         )
-        for channel in range(3)
-    )
+
+    return fit(0), fit(1), fit(2)
 
 
 def normalize_rgb(
