@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import TypedDict
 
 import rasterio
 
@@ -21,6 +22,21 @@ AUDIT_PATH = OUT_DIR / "contract_audit_after_abort.json"
 PROTOCOL_SEAL_PATH = OUT_DIR / "protocol_seal.json"
 
 
+class RasterMetadata(TypedDict):
+    path: str
+    file_bytes: int
+    width: int
+    height: int
+    count: int
+    dtypes: list[str]
+    driver: str
+    crs: str | None
+    transform: list[float]
+    bounds: list[float]
+    nodata: float | int | None
+    block_shapes: list[list[int]]
+
+
 def _world_file_values(path: Path) -> list[float]:
     values = [
         float(line.strip())
@@ -32,7 +48,7 @@ def _world_file_values(path: Path) -> list[float]:
     return values
 
 
-def _metadata(path: Path) -> dict[str, object]:
+def _metadata(path: Path) -> RasterMetadata:
     """Read raster metadata only; never decode any raster pixel values."""
     with rasterio.open(path) as src:
         return {
@@ -44,15 +60,28 @@ def _metadata(path: Path) -> dict[str, object]:
             "dtypes": list(src.dtypes),
             "driver": src.driver,
             "crs": src.crs.to_string() if src.crs is not None else None,
-            "transform": [float(value) for value in src.transform[:6]],
+            "transform": [
+                float(src.transform.a),
+                float(src.transform.b),
+                float(src.transform.c),
+                float(src.transform.d),
+                float(src.transform.e),
+                float(src.transform.f),
+            ],
             "bounds": [float(value) for value in src.bounds],
             "nodata": src.nodata,
             "block_shapes": [list(shape) for shape in src.block_shapes],
         }
 
 
-def _almost_equal(left: list[float], right: list[float], tolerance: float = 1e-9) -> bool:
-    return len(left) == len(right) and all(abs(a - b) <= tolerance for a, b in zip(left, right, strict=True))
+def _almost_equal(
+    left: list[float],
+    right: list[float],
+    tolerance: float = 1e-9,
+) -> bool:
+    return len(left) == len(right) and all(
+        abs(a - b) <= tolerance for a, b in zip(left, right, strict=True)
+    )
 
 
 def main() -> None:
@@ -83,52 +112,54 @@ def main() -> None:
         rgb_world = _world_file_values(rgb_tfw)
         dsm_world = _world_file_values(dsm_tfw)
 
-        rgb_shape = [int(rgb_meta["height"]), int(rgb_meta["width"])]
-        dsm_shape = [int(dsm_meta["height"]), int(dsm_meta["width"])]
-        expected_shape = [int(POTSDAM_NATIVE_SHAPE[0]), int(POTSDAM_NATIVE_SHAPE[1])]
+        rgb_shape = [rgb_meta["height"], rgb_meta["width"]]
+        dsm_shape = [dsm_meta["height"], dsm_meta["width"]]
+        expected_shape = [POTSDAM_NATIVE_SHAPE[0], POTSDAM_NATIVE_SHAPE[1]]
 
         checks = {
             "rgb_matches_declared_native_shape": rgb_shape == expected_shape,
             "dsm_matches_declared_native_shape": dsm_shape == expected_shape,
             "rgb_dsm_shape_equal": rgb_shape == dsm_shape,
             "rgb_dsm_transform_equal": _almost_equal(
-                list(rgb_meta["transform"]), list(dsm_meta["transform"])
+                rgb_meta["transform"], dsm_meta["transform"]
             ),
-            "rgb_dsm_bounds_equal": _almost_equal(
-                list(rgb_meta["bounds"]), list(dsm_meta["bounds"])
-            ),
+            "rgb_dsm_bounds_equal": _almost_equal(rgb_meta["bounds"], dsm_meta["bounds"]),
             "rgb_dsm_world_file_equal": _almost_equal(rgb_world, dsm_world),
         }
 
         failed = [name for name, passed in checks.items() if not passed]
         mismatch_count += len(failed)
 
-        record: dict[str, object] = {
-            "tile_id": tile_id,
-            "rgb": rgb_meta,
-            "dsm": dsm_meta,
-            "rgb_world_file": str(rgb_tfw.resolve()),
-            "dsm_world_file": str(dsm_tfw.resolve()),
-            "rgb_world_values": rgb_world,
-            "dsm_world_values": dsm_world,
-            "checks": checks,
-            "failed_checks": failed,
-        }
-        tiles.append(record)
+        tiles.append(
+            {
+                "tile_id": tile_id,
+                "rgb": rgb_meta,
+                "dsm": dsm_meta,
+                "rgb_world_file": str(rgb_tfw.resolve()),
+                "dsm_world_file": str(dsm_tfw.resolve()),
+                "rgb_world_values": rgb_world,
+                "dsm_world_values": dsm_world,
+                "checks": checks,
+                "failed_checks": failed,
+            }
+        )
 
-        print(f"{tile_id}: RGB {rgb_meta['width']}x{rgb_meta['height']} | DSM {dsm_meta['width']}x{dsm_meta['height']}")
-        print(f"  transform equal: {checks['rgb_dsm_transform_equal']}")
-        print(f"  bounds equal:    {checks['rgb_dsm_bounds_equal']}")
-        print(f"  world file equal:{checks['rgb_dsm_world_file_equal']}")
-        print(f"  failed checks:   {failed if failed else 'NONE'}")
+        print(
+            f"{tile_id}: RGB {rgb_meta['width']}x{rgb_meta['height']} | "
+            f"DSM {dsm_meta['width']}x{dsm_meta['height']}"
+        )
+        print(f"  transform equal:  {checks['rgb_dsm_transform_equal']}")
+        print(f"  bounds equal:     {checks['rgb_dsm_bounds_equal']}")
+        print(f"  world file equal: {checks['rgb_dsm_world_file_equal']}")
+        print(f"  failed checks:    {failed if failed else 'NONE'}")
         print()
 
     payload: dict[str, object] = {
         "schema": "depthwizard.potsdam-contract-audit.v1",
         "purpose": (
             "Read-only post-abort metadata audit. No DSM raster pixel values are decoded. "
-            "Used only to diagnose the external-v1 data-contract failure without changing the sealed model, "
-            "tile membership, calibration source, metrics, or promotion rule."
+            "Used only to diagnose the external-v1 data-contract failure without changing the "
+            "sealed model, tile membership, calibration source, metrics, or promotion rule."
         ),
         "dataset_root": str(DATASET_ROOT.resolve()),
         "protocol_seal_present": PROTOCOL_SEAL_PATH.is_file(),
