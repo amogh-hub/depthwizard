@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -36,8 +37,8 @@ def _primary_surface(manifest: ProjectManifest) -> tuple[str, Path]:
 
 
 def _pixel_index(point: NormalizedPoint, *, width: int, height: int) -> tuple[int, int]:
-    col = int(round(point.x * max(width - 1, 0)))
-    row = int(round(point.y * max(height - 1, 0)))
+    col = round(point.x * max(width - 1, 0))
+    row = round(point.y * max(height - 1, 0))
     return min(max(col, 0), width - 1), min(max(row, 0), height - 1)
 
 
@@ -137,7 +138,7 @@ def _profile_distances(
             for point in points
         ]
         pixel_distance = [0.0]
-        for (previous_col, previous_row), (col, row) in zip(pixels, pixels[1:]):
+        for (previous_col, previous_row), (col, row) in pairwise(pixels):
             pixel_distance.append(
                 pixel_distance[-1] + float(np.hypot(col - previous_col, row - previous_row))
             )
@@ -154,7 +155,7 @@ def _profile_distances(
 
     metric_distance: list[float | None] = [0.0]
     cumulative = 0.0
-    for (lon0, lat0), (lon1, lat1) in zip(geographic, geographic[1:]):
+    for (lon0, lat0), (lon1, lat1) in pairwise(geographic):
         _, _, segment = _GEOD.inv(lon0, lat0, lon1, lat1)
         cumulative += float(abs(segment))
         metric_distance.append(cumulative)
@@ -182,7 +183,7 @@ def _surface_statistics(samples: list[ProfileSample]) -> tuple[
     )
     gain = 0.0
     loss = 0.0
-    for previous, current in zip(values, values[1:]):
+    for previous, current in pairwise(values):
         if previous is None or current is None:
             continue
         delta = float(current - previous)
