@@ -95,6 +95,10 @@ def test_height_losses_are_finite_and_differentiable() -> None:
     losses.total.backward()
     gradients = [parameter.grad for parameter in model.parameters() if parameter.requires_grad]
     assert any(gradient is not None and torch.isfinite(gradient).all() for gradient in gradients)
+    residual_gradient = model.height_residual_head.weight.grad
+    assert residual_gradient is not None
+    assert torch.isfinite(residual_gradient).all()
+    assert torch.count_nonzero(residual_gradient) > 0
 
 
 def test_height_model_rejects_misaligned_geometry() -> None:
