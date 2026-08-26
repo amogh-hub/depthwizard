@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
