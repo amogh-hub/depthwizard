@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from pytest import MonkeyPatch
 from rasterio.transform import from_origin
 
 from scripts.release_train_2_validation_smoke import (
@@ -31,7 +32,7 @@ def _write_calibration_source(path: Path) -> None:
 
 def test_coarse_calibration_surrogate_preserves_extent_and_claim_boundary(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     source = tmp_path / "source_xdsm.tif"
     _write_calibration_source(source)
