@@ -17,7 +17,6 @@ from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelCo
 from depthwizard.provenance.manifest import sha256_file
 from scripts import train_ortholoc_multiscene as legacy
 from scripts import train_ortholoc_multiscene_v3 as v3
-from scripts import train_ortholoc_multiscene_v4 as v4
 
 ROOT = Path(__file__).resolve().parents[1]
 V4_CHECKPOINT = (
@@ -44,11 +43,11 @@ def _load_v4_model(device: torch.device) -> tuple[DepthWizardHeightModel, dict[s
         )
     checkpoint = torch.load(V4_CHECKPOINT, map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, dict):
-        raise RuntimeError("V4 checkpoint payload is not a dictionary")
+        raise TypeError("V4 checkpoint payload is not a dictionary")
     config_payload = checkpoint.get("config")
     state_dict = checkpoint.get("state_dict")
     if not isinstance(config_payload, dict) or not isinstance(state_dict, dict):
-        raise RuntimeError("V4 checkpoint is missing config/state_dict")
+        raise TypeError("V4 checkpoint is missing config/state_dict dictionaries")
     config = HeightModelConfig(**config_payload)
     if config.architecture_version != "confidence-gated-v2":
         raise RuntimeError(
@@ -178,6 +177,16 @@ def _aggregate(
     }
 
 
+def _nested_metric(mapping: dict[str, object], section: str, metric: str) -> float:
+    value = mapping.get(section)
+    if not isinstance(value, dict):
+        raise TypeError(f"report section {section!r} is not a dictionary")
+    metric_value = value.get(metric)
+    if not isinstance(metric_value, (int, float)):
+        raise TypeError(f"report metric {section}.{metric} is not numeric")
+    return float(metric_value)
+
+
 def main() -> None:
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     os.environ.setdefault("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", "1")
@@ -236,11 +245,17 @@ def main() -> None:
             baseline_values.append(baseline)
             adaptive_values.append(adaptive)
             reference_values.append(reference)
-            da3_rmse = float(scene_report["da3"]["rmse_m"])  # type: ignore[index]
-            model_rmse = float(scene_report["v4_model_only"]["rmse_m"])  # type: ignore[index]
-            adaptive_rmse = float(scene_report["adaptive"]["rmse_m"])  # type: ignore[index]
-            selected = float(scene_report["selected_refinement_weight"])
-            cv_gain = 100.0 * float(scene_report["anchor_cv_relative_improvement"])
+            da3_rmse = _nested_metric(scene_report, "da3", "rmse_m")
+            model_rmse = _nested_metric(scene_report, "v4_model_only", "rmse_m")
+            adaptive_rmse = _nested_metric(scene_report, "adaptive", "rmse_m")
+            selected_raw = scene_report.get("selected_refinement_weight")
+            cv_gain_raw = scene_report.get("anchor_cv_relative_improvement")
+            if not isinstance(selected_raw, (int, float)) or not isinstance(
+                cv_gain_raw, (int, float)
+            ):
+                raise TypeError("adaptive scene report contains non-numeric policy diagnostics")
+            selected = float(selected_raw)
+            cv_gain = 100.0 * float(cv_gain_raw)
             print(
                 f"{role} {scene.scene_id}: DA3 {da3_rmse:.3f} m | "
                 f"V4 {model_rmse:.3f} m | adaptive {adaptive_rmse:.3f} m | "
@@ -255,9 +270,18 @@ def main() -> None:
 
     validation = role_outputs["fixed_validation"]
     development = role_outputs["development_outPlace"]
-    validation_improvement = float(validation["rmse_improvement_fraction"])
-    development_improvement = float(development["rmse_improvement_fraction"])
-    development_non_degrading = bool(development["all_scenes_non_degrading"])
+    validation_improvement_raw = validation.get("rmse_improvement_fraction")
+    development_improvement_raw = development.get("rmse_improvement_fraction")
+    development_non_degrading_raw = development.get("all_scenes_non_degrading")
+    if not isinstance(validation_improvement_raw, (int, float)) or not isinstance(
+        development_improvement_raw, (int, float)
+    ):
+        raise TypeError("aggregate improvement diagnostics are not numeric")
+    if not isinstance(development_non_degrading_raw, bool):
+        raise TypeError("aggregate non-degradation diagnostic is not boolean")
+    validation_improvement = float(validation_improvement_raw)
+    development_improvement = float(development_improvement_raw)
+    development_non_degrading = development_non_degrading_raw
     operationally_promoted = bool(
         validation_improvement > 0.0
         and development_improvement > 0.0
@@ -296,10 +320,10 @@ def main() -> None:
     }
     REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    validation_da3 = float(validation["aggregate_da3"]["rmse_m"])  # type: ignore[index]
-    validation_adaptive = float(validation["aggregate_adaptive"]["rmse_m"])  # type: ignore[index]
-    development_da3 = float(development["aggregate_da3"]["rmse_m"])  # type: ignore[index]
-    development_adaptive = float(development["aggregate_adaptive"]["rmse_m"])  # type: ignore[index]
+    validation_da3 = _nested_metric(validation, "aggregate_da3", "rmse_m")
+    validation_adaptive = _nested_metric(validation, "aggregate_adaptive", "rmse_m")
+    development_da3 = _nested_metric(development, "aggregate_da3", "rmse_m")
+    development_adaptive = _nested_metric(development, "aggregate_adaptive", "rmse_m")
     print("DepthWizard evidence-adaptive refinement acceptance: PASS")
     print(
         f"Fixed validation aggregate: DA3 {validation_da3:.3f} m | "
