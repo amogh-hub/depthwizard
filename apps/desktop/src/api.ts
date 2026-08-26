@@ -212,6 +212,39 @@ export type ProjectProfileResult = {
   semantics: string;
 };
 
+export type TerrainLodArtifact = {
+  level: number;
+  stride: number;
+  path: string;
+  sha256: string;
+  vertices: number;
+  faces: number;
+  width_samples: number;
+  height_samples: number;
+};
+
+export type ProjectMeshReport = {
+  schema_version: number;
+  project_id: string;
+  surface_product: "dsm" | "rdsm";
+  surface_sha256: string;
+  texture_sha256: string;
+  build_config_sha256: string;
+  horizontal_units: "m" | "px";
+  vertical_units: "m" | "relative";
+  gsd_x: number;
+  gsd_y: number;
+  raster_width: number;
+  raster_height: number;
+  valid_pixels: number;
+  minimum_elevation: number;
+  maximum_elevation: number;
+  relief: number;
+  lods: TerrainLodArtifact[];
+  mesh_manifest_path: string;
+  semantics: string;
+};
+
 export type ProjectPreviewLayer =
   | "optical"
   | "rdsm"
@@ -324,6 +357,32 @@ export function sampleProjectProfile(
     method: "POST",
     body: JSON.stringify({ project_dir: projectDir, start, end, samples }),
   });
+}
+
+export function buildProjectMesh(
+  projectDir: string,
+  maxFinestSamples = 512,
+  lodLevels = 4,
+): Promise<ProjectMeshReport> {
+  return coreFetch<ProjectMeshReport>("/v1/projects/mesh", {
+    method: "POST",
+    body: JSON.stringify({
+      project_dir: projectDir,
+      max_finest_samples: maxFinestSamples,
+      lod_levels: lodLevels,
+    }),
+  });
+}
+
+export function getProjectMesh(projectDir: string): Promise<ProjectMeshReport> {
+  const query = new URLSearchParams({ project_dir: projectDir });
+  return coreFetch<ProjectMeshReport>(`/v1/projects/mesh?${query.toString()}`);
+}
+
+export async function getProjectMeshUrl(projectDir: string, level = 0): Promise<string> {
+  const query = new URLSearchParams({ project_dir: projectDir });
+  const response = await checkedResponse(`/v1/projects/mesh/lod/${level}?${query.toString()}`);
+  return URL.createObjectURL(await response.blob());
 }
 
 export async function getProjectPreviewUrl(
