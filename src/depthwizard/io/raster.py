@@ -7,6 +7,7 @@ import numpy as np
 import rasterio
 from pyproj import Geod, Transformer
 from rasterio.enums import Resampling
+from rasterio.io import DatasetReader
 from rasterio.warp import reproject
 
 from depthwizard.contracts import RasterMetadata
@@ -115,8 +116,8 @@ def read_single_band(path: str | Path, band: int = 1) -> tuple[np.ndarray, dict]
 
 
 def _direct_read_exact_grid(
-    src: rasterio.io.DatasetReader,
-    dst_ref: rasterio.io.DatasetReader,
+    src: DatasetReader,
+    dst_ref: DatasetReader,
     *,
     source_band: int,
     dst_nodata: float,
