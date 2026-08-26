@@ -139,6 +139,116 @@ def inspect_potsdam_rgb_contract(path: str | Path) -> dict[str, object]:
         }
 
 
+def validate_trailing_edge_reference_shape(
+    rgb_shape: tuple[int, int],
+    reference_shape: tuple[int, int],
+    *,
+    max_trailing_edge_deficit_px: int = 1,
+) -> tuple[int, int]:
+    """Validate a metadata-only trailing-edge shape defect.
+
+    Shape tuples use ``(height, width)``. The reference may be smaller only on its trailing
+    bottom/right edges because an identical affine transform fixes the same upper-left origin.
+    """
+    if max_trailing_edge_deficit_px < 0:
+        raise ValueError("max_trailing_edge_deficit_px must be non-negative")
+    rgb_height, rgb_width = rgb_shape
+    reference_height, reference_width = reference_shape
+    missing_rows = rgb_height - reference_height
+    missing_cols = rgb_width - reference_width
+    if missing_rows < 0 or missing_cols < 0:
+        raise ValueError("Potsdam reference DSM may not extend beyond the RGB native shape")
+    if missing_rows > max_trailing_edge_deficit_px or missing_cols > max_trailing_edge_deficit_px:
+        raise ValueError(
+            "Potsdam reference DSM trailing-edge deficit exceeds the sealed metadata tolerance: "
+            f"missing_rows={missing_rows}, missing_cols={missing_cols}, "
+            f"allowed={max_trailing_edge_deficit_px}"
+        )
+    return missing_rows, missing_cols
+
+
+def inspect_potsdam_reference_contract(
+    rgb_path: str | Path,
+    reference_path: str | Path,
+    *,
+    max_trailing_edge_deficit_px: int = 1,
+) -> dict[str, object]:
+    """Inspect RGB/reference metadata only; never decode reference DSM pixel values.
+
+    External-v2 permits at most one missing native 5 cm row/column at a trailing edge when the
+    affine transform, CRS, and upper-left origin are otherwise identical. This formalizes the
+    metadata discrepancy observed after external-v1 aborted on tile 3_13 without consulting DSM
+    values or changing model/promotion decisions.
+    """
+    rgb_path = Path(rgb_path)
+    reference_path = Path(reference_path)
+    inspect_potsdam_rgb_contract(rgb_path)
+    with rasterio.open(rgb_path) as rgb, rasterio.open(reference_path) as reference:
+        if reference.count < 1:
+            raise ValueError(f"Potsdam reference DSM has no raster band: {reference_path}")
+        if not reference.transform.almost_equals(rgb.transform):
+            raise ValueError(
+                "Potsdam RGB/reference affine mismatch; external-v2 only permits a trailing-edge "
+                f"shape deficit with identical affine metadata: {reference_path}"
+            )
+        reference_crs = reference.crs or POTSDAM_CRS
+        rgb_crs = rgb.crs or POTSDAM_CRS
+        if reference_crs != POTSDAM_CRS or rgb_crs != POTSDAM_CRS:
+            raise ValueError(
+                "Potsdam RGB/reference CRS must resolve to WGS84 / UTM zone 33N (EPSG:32633)"
+            )
+        missing_rows, missing_cols = validate_trailing_edge_reference_shape(
+            (rgb.height, rgb.width),
+            (reference.height, reference.width),
+            max_trailing_edge_deficit_px=max_trailing_edge_deficit_px,
+        )
+        coverage_fraction = (reference.height * reference.width) / (rgb.height * rgb.width)
+        return {
+            "rgb_shape": [rgb.height, rgb.width],
+            "reference_shape": [reference.height, reference.width],
+            "missing_trailing_rows": missing_rows,
+            "missing_trailing_columns": missing_cols,
+            "native_coverage_fraction": float(coverage_fraction),
+            "max_trailing_edge_deficit_px": max_trailing_edge_deficit_px,
+            "reference_dtype": reference.dtypes[0],
+            "effective_crs": POTSDAM_CRS.to_string(),
+            "transform": [
+                float(reference.transform.a),
+                float(reference.transform.b),
+                float(reference.transform.c),
+                float(reference.transform.d),
+                float(reference.transform.e),
+                float(reference.transform.f),
+            ],
+            "rgb_bounds": [float(value) for value in rgb.bounds],
+            "reference_bounds": [float(value) for value in reference.bounds],
+        }
+
+
+def benchmark_full_coverage_mask(
+    *,
+    target_height: int,
+    target_width: int,
+    target_transform: tuple[float, float, float, float, float, float],
+    reference_bounds: tuple[float, float, float, float],
+    atol: float = 1e-9,
+) -> np.ndarray:
+    """Mask benchmark cells whose entire footprint lies inside reference DSM coverage."""
+    a, b, c, d, e, f = target_transform
+    if target_height <= 0 or target_width <= 0:
+        raise ValueError("target benchmark dimensions must be positive")
+    if abs(b) > atol or abs(d) > atol or a <= 0.0 or e >= 0.0:
+        raise ValueError("full-coverage masking requires a north-up affine transform")
+    left, bottom, right, top = reference_bounds
+    col_left = c + np.arange(target_width, dtype=np.float64) * a
+    col_right = col_left + a
+    row_top = f + np.arange(target_height, dtype=np.float64) * e
+    row_bottom = row_top + e
+    covered_cols = (col_left >= left - atol) & (col_right <= right + atol)
+    covered_rows = (row_top <= top + atol) & (row_bottom >= bottom - atol)
+    return covered_rows[:, None] & covered_cols[None, :]
+
+
 def canonical_json_bytes(payload: object) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
         "utf-8"
