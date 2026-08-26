@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { inspectRaster, type RasterMetadata } from "./api";
+import {
+  getProjectJob,
+  getProjectManifest,
+  inspectRaster,
+  submitProject,
+  type ProjectJobState,
+  type ProjectManifest,
+  type RasterMetadata,
+} from "./api";
 import { Inspector, type ValidationEvidence } from "./components/Inspector";
 import { ToolRail } from "./components/ToolRail";
 import { UploadIcon } from "./components/icons";
@@ -14,6 +22,8 @@ const cameraModes: { id: CameraMode; label: string }[] = [
   { id: "firstPerson", label: "First person" },
   { id: "topDown", label: "Top down" },
 ];
+
+const terminalJobStates = new Set(["waiting_for_calibration", "complete", "failed"]);
 
 type AbsoluteDemoReport = {
   status: string;
@@ -56,6 +66,16 @@ type BenchmarkReport = {
   }>;
 };
 
+function stageNumber(manifest: ProjectManifest | null, stage: string, key: string): number | undefined {
+  const value = manifest?.stages[stage]?.details[key];
+  return typeof value === "number" ? value : undefined;
+}
+
+function estimatorModel(manifest: ProjectManifest | null): string | undefined {
+  const value = manifest?.estimator.selected_model_id;
+  return typeof value === "string" ? value : undefined;
+}
+
 export function App() {
   const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
   const [activeTool, setActiveTool] = useState("Project");
@@ -65,10 +85,13 @@ export function App() {
   const [metadata, setMetadata] = useState<RasterMetadata | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [projectDir, setProjectDir] = useState<string | null>(null);
+  const [projectJob, setProjectJob] = useState<ProjectJobState | null>(null);
+  const [projectManifest, setProjectManifest] = useState<ProjectManifest | null>(null);
+  const [submittingProject, setSubmittingProject] = useState(false);
   const [demoReport, setDemoReport] = useState<AbsoluteDemoReport | null>(null);
   const [validationEvidence, setValidationEvidence] = useState<ValidationEvidence | null>(null);
   const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : undefined;
-  const geometryReady = Boolean(meshUrl);
 
   useEffect(() => {
     if (!demoMode) return;
@@ -122,8 +145,49 @@ export function App() {
     };
   }, [demoMode]);
 
+  useEffect(() => {
+    if (!projectJob || terminalJobStates.has(projectJob.status)) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getProjectJob(projectJob.job_id)
+        .then(async (next) => {
+          if (cancelled) return;
+          setProjectJob(next);
+          if (terminalJobStates.has(next.status)) {
+            window.clearInterval(timer);
+            const manifest = await getProjectManifest(next.project_dir);
+            if (!cancelled) setProjectManifest(manifest);
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            window.clearInterval(timer);
+            setImportError(error instanceof Error ? error.message : "Unable to read project status");
+          }
+        });
+    }, 750);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [projectJob]);
+
+  const geometryReady = demoMode
+    ? Boolean(meshUrl)
+    : Boolean(projectManifest?.artifacts.rdsm);
+  const calibrationReady = demoMode
+    ? Boolean(meshUrl)
+    : Boolean(projectManifest?.artifacts.dsm);
+  const meshReady = Boolean(meshUrl);
+  const processing = projectJob?.status === "queued" || projectJob?.status === "running";
+  const waitingForCalibration = projectJob?.status === "waiting_for_calibration";
+
   const projectName = useMemo(
-    () => (demoMode ? "Joshimath absolute DSM" : metadata?.path.split(/[\\/]/).pop() ?? "Untitled reconstruction"),
+    () => (
+      demoMode
+        ? "Joshimath absolute DSM"
+        : metadata?.path.split(/[\\/]/).pop() ?? "Untitled reconstruction"
+    ),
     [demoMode, metadata],
   );
 
@@ -137,13 +201,80 @@ export function App() {
     if (!selected || Array.isArray(selected)) return;
     try {
       setImporting(true);
-      setMetadata(await inspectRaster(selected));
+      const nextMetadata = await inspectRaster(selected);
+      setMetadata(nextMetadata);
+      setProjectDir(null);
+      setProjectJob(null);
+      setProjectManifest(null);
+      setValidationEvidence(null);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Unable to inspect imagery");
     } finally {
       setImporting(false);
     }
   };
+
+  const reconstruct = async () => {
+    if (!metadata) return;
+    setImportError(null);
+    const selectedDir = await open({ multiple: false, directory: true });
+    if (!selectedDir || Array.isArray(selectedDir)) return;
+    try {
+      setSubmittingProject(true);
+      const next = await submitProject({
+        source: metadata.path,
+        output_dir: selectedDir,
+        requested_output: metadata.crs ? null : "rdsm",
+      });
+      setProjectDir(selectedDir);
+      setProjectManifest(null);
+      setProjectJob(next);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to start reconstruction");
+    } finally {
+      setSubmittingProject(false);
+    }
+  };
+
+  const addDemEvidence = async () => {
+    if (!metadata || !projectDir) return;
+    setImportError(null);
+    const dem = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Metric DEM", extensions: ["tif", "tiff"] }],
+    });
+    if (!dem || Array.isArray(dem)) return;
+    try {
+      setSubmittingProject(true);
+      const next = await submitProject({
+        source: metadata.path,
+        output_dir: projectDir,
+        dem_path: dem,
+        requested_output: "dsm",
+      });
+      setProjectJob(next);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to start metric calibration");
+    } finally {
+      setSubmittingProject(false);
+    }
+  };
+
+  const normalStatus = projectJob?.error
+    ?? (projectJob?.status === "waiting_for_calibration"
+      ? "Geometry ready · metric evidence required"
+      : projectJob?.status === "complete"
+        ? "Production products ready"
+        : projectJob?.status === "failed"
+          ? "Processing failed"
+          : processing
+            ? "Production processing…"
+            : geometryReady
+              ? "Reconstruction loaded · local processing"
+              : metadata
+                ? "Input ready · local processing"
+                : "Ready · local processing");
 
   return (
     <main className="dw-app">
@@ -157,8 +288,20 @@ export function App() {
           <span>ISRO · SIH26175</span>
         </div>
         <div className="dw-top-actions">
-          <button className="dw-btn" onClick={importImagery} disabled={importing}><UploadIcon /> {importing ? "Inspecting…" : "Import imagery"}</button>
-          <button className="dw-btn dw-btn--primary" disabled={!metadata}>Export</button>
+          <button className="dw-btn" onClick={importImagery} disabled={importing || processing}>
+            <UploadIcon /> {importing ? "Inspecting…" : "Import imagery"}
+          </button>
+          {!demoMode && metadata && !projectDir && (
+            <button className="dw-btn dw-btn--primary" onClick={reconstruct} disabled={submittingProject}>
+              {submittingProject ? "Starting…" : "Reconstruct"}
+            </button>
+          )}
+          {!demoMode && waitingForCalibration && (
+            <button className="dw-btn dw-btn--primary" onClick={addDemEvidence} disabled={submittingProject}>
+              {submittingProject ? "Starting…" : "Add DEM evidence"}
+            </button>
+          )}
+          <button className="dw-btn dw-btn--primary" disabled>Export</button>
         </div>
       </header>
 
@@ -168,13 +311,13 @@ export function App() {
         <div className="dw-workspace-bar">
           <div className="dw-segmented" role="tablist" aria-label="Data view">
             {views.map((view) => {
-              const available = view === "3D Terrain";
+              const available = view === "3D Terrain" && meshReady;
               return (
                 <button
                   key={view}
                   data-active={activeView === view}
                   disabled={!available}
-                  title={available ? undefined : "Available when the corresponding analysis raster is loaded"}
+                  title={available ? undefined : "Enabled only when its real analysis artifact is available"}
                   onClick={() => available && setActiveView(view)}
                 >
                   {view}
@@ -184,18 +327,26 @@ export function App() {
           </div>
           <div className="dw-toolbar-group">
             {activeView === "3D Terrain" && cameraModes.map((mode) => (
-              <button className="dw-chip" key={mode.id} data-active={cameraMode === mode.id} onClick={() => setCameraMode(mode.id)}>{mode.label}</button>
+              <button
+                className="dw-chip"
+                key={mode.id}
+                data-active={cameraMode === mode.id}
+                disabled={!meshReady}
+                onClick={() => meshReady && setCameraMode(mode.id)}
+              >
+                {mode.label}
+              </button>
             ))}
             <span className="dw-toolbar-divider" aria-hidden="true" />
             {layers.map((layer) => {
-              const available = layer === "Texture";
+              const available = layer === "Texture" && meshReady;
               return (
                 <button
                   className="dw-chip"
                   key={layer}
                   data-active={activeLayer === layer}
                   disabled={!available}
-                  title={available ? undefined : "Layer not generated in this reconstruction yet"}
+                  title={available ? undefined : "Layer is enabled only after its real product is loaded"}
                   onClick={() => available && setActiveLayer(layer)}
                 >
                   {layer}
@@ -206,7 +357,9 @@ export function App() {
         </div>
 
         <div className="dw-canvas">
-          {activeView === "3D Terrain" && <TerrainViewport meshUrl={meshUrl} cameraMode={cameraMode} />}
+          {activeView === "3D Terrain" && meshReady && (
+            <TerrainViewport meshUrl={meshUrl} cameraMode={cameraMode} />
+          )}
           {meshUrl && (
             <>
               <div className="dw-canvas-context">
@@ -231,13 +384,31 @@ export function App() {
           {!meshUrl && (
             <div className="dw-empty-canvas">
               <div className="dw-empty-card">
-                <h2>{metadata ? "Source accepted" : "Load a reconstruction project"}</h2>
+                <h2>
+                  {processing
+                    ? "Reconstructing scene"
+                    : waitingForCalibration
+                      ? "Relative geometry complete"
+                      : calibrationReady
+                        ? "Metric DSM products ready"
+                        : geometryReady
+                          ? "Relative DSM ready"
+                          : metadata
+                            ? "Source accepted"
+                            : "Load a reconstruction project"}
+                </h2>
                 <p>
                   {importError
                     ? importError
-                    : metadata
-                      ? `${metadata.crs ? "Georeferenced input detected. Metric calibration requires DEM/GCP evidence before DepthWizard will claim absolute height." : "No usable CRS detected. DepthWizard will preserve this as relative elevation and will not claim metric height."}`
-                      : "Import a single-view RGB remote-sensing image. DepthWizard inspects geospatial metadata before any metric elevation claim is made."}
+                    : waitingForCalibration
+                      ? "This georeferenced project is intentionally paused before any metric-height claim. Add a DEM now; sparse GCP workflow will be exposed by the calibration workspace."
+                      : calibrationReady
+                        ? "DepthWizard completed evidence-calibrated metric elevation. Analytical raster and 3D views remain disabled until the corresponding real artifacts are integrated."
+                        : geometryReady
+                          ? "DepthWizard completed a truthful dimensionless relative surface model. No metric elevation has been invented."
+                          : metadata
+                            ? `${metadata.crs ? "Georeferenced input detected. Reconstruct once, then DepthWizard will require DEM/GCP evidence before claiming absolute height." : "No usable CRS detected. DepthWizard will preserve this as relative elevation and will not claim metric height."}`
+                            : "Import a single-view RGB remote-sensing image. DepthWizard inspects geospatial metadata before any metric elevation claim is made."}
                 </p>
               </div>
             </div>
@@ -245,9 +416,9 @@ export function App() {
         </div>
 
         <footer className="dw-workspace-status">
-          <span>{geometryReady ? "Reconstruction loaded · local processing" : metadata ? "Input ready · local processing" : "Ready · local processing"}</span>
+          <span>{demoMode ? "Reconstruction loaded · local processing" : normalStatus}</span>
           <span>
-            {metadata?.crs ?? "Projection —"} · GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} m · {demoMode && geometryReady ? "DSM metres" : geometryReady ? "rDSM" : "Elevation —"}
+            {metadata?.crs ?? "Projection —"} · GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} m · {calibrationReady ? "DSM metres" : geometryReady ? "rDSM" : "Elevation —"}
           </span>
         </footer>
       </section>
@@ -255,12 +426,12 @@ export function App() {
       <Inspector
         metadata={metadata}
         geometryReady={geometryReady}
-        meshReady={geometryReady}
-        calibrationReady={demoMode && geometryReady}
-        elevationMode={demoMode && geometryReady ? "Absolute DSM (m)" : geometryReady ? "Relative DSM" : undefined}
-        modelId={demoReport?.model}
-        tileCount={demoReport?.tile_count}
-        harmonizedTiles={demoReport?.harmonized_tiles}
+        meshReady={meshReady}
+        calibrationReady={calibrationReady}
+        elevationMode={calibrationReady ? "Absolute DSM (m)" : geometryReady ? "Relative DSM" : undefined}
+        modelId={demoReport?.model ?? estimatorModel(projectManifest)}
+        tileCount={demoReport?.tile_count ?? stageNumber(projectManifest, "geometry", "tile_count")}
+        harmonizedTiles={demoReport?.harmonized_tiles ?? stageNumber(projectManifest, "geometry", "harmonized_tiles")}
         validationEvidence={validationEvidence}
       />
     </main>
