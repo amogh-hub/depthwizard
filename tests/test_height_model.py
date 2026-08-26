@@ -12,7 +12,9 @@ from depthwizard.height_model.model import (
 )
 
 
-def small_model() -> DepthWizardHeightModel:
+def small_model(
+    architecture_version: str = "bidirectional-cross-scale-v1",
+) -> DepthWizardHeightModel:
     return DepthWizardHeightModel(
         HeightModelConfig(
             rgb_channels=(16, 24, 32, 48),
@@ -20,6 +22,7 @@ def small_model() -> DepthWizardHeightModel:
             semantic_classes=5,
             height_bins=8,
             dropout=0.0,
+            architecture_version=architecture_version,
         )
     )
 
@@ -36,6 +39,10 @@ def test_height_model_emits_all_dense_heads() -> None:
 
     assert output.relative_height.shape == (2, 1, 64, 80)
     assert output.relative_correction.shape == (2, 1, 64, 80)
+    assert output.raw_relative_correction is not None
+    assert output.raw_relative_correction.shape == (2, 1, 64, 80)
+    assert output.correction_gate is not None
+    assert output.correction_gate.shape == (2, 1, 64, 80)
     assert output.uncertainty.shape == (2, 1, 64, 80)
     assert output.semantic_logits.shape == (2, 5, 64, 80)
     assert output.height_bin_logits.shape == (2, 8, 64, 80)
@@ -59,6 +66,53 @@ def test_untrained_height_refiner_is_exact_identity_on_geometry_prior() -> None:
 
     assert torch.count_nonzero(output.relative_correction) == 0
     assert torch.equal(output.relative_height, geometry)
+    assert output.correction_gate is not None
+    assert torch.equal(output.correction_gate, torch.ones_like(output.correction_gate))
+
+
+def test_confidence_gated_v2_is_identity_with_conservative_initial_gate() -> None:
+    torch.manual_seed(26175)
+    model = small_model("confidence-gated-v2").eval()
+    rgb = torch.rand(1, 3, 48, 64)
+    geometry = torch.rand(1, 1, 48, 64)
+
+    with torch.inference_mode():
+        output = model(rgb, geometry, gsd_m=torch.tensor([0.5]))
+
+    assert output.raw_relative_correction is not None
+    assert output.correction_gate is not None
+    assert torch.count_nonzero(output.raw_relative_correction) == 0
+    assert torch.count_nonzero(output.relative_correction) == 0
+    assert torch.equal(output.relative_height, geometry)
+    assert torch.allclose(
+        output.correction_gate,
+        torch.full_like(output.correction_gate, 0.10),
+        atol=1e-6,
+    )
+
+
+def test_confidence_gate_bounds_applied_correction_and_receives_gradients() -> None:
+    torch.manual_seed(26175)
+    model = small_model("confidence-gated-v2").train()
+    rgb = torch.rand(1, 3, 32, 40)
+    geometry = torch.rand(1, 1, 32, 40)
+    output = model(rgb, geometry, gsd_m=torch.tensor([0.8]))
+
+    assert output.raw_relative_correction is not None
+    assert output.correction_gate is not None
+    assert torch.all((output.correction_gate > 0) & (output.correction_gate < 1))
+    assert torch.all(
+        torch.abs(output.relative_correction)
+        <= torch.abs(output.raw_relative_correction) + 1e-8
+    )
+
+    loss = output.correction_gate.mean() + output.relative_height.mean()
+    loss.backward()
+    assert model.correction_gate_head is not None
+    gate_gradient = model.correction_gate_head.weight.grad
+    assert gate_gradient is not None
+    assert torch.isfinite(gate_gradient).all()
+    assert torch.count_nonzero(gate_gradient) > 0
 
 
 def test_bidirectional_fusion_propagates_gradients_into_both_evidence_streams() -> None:
@@ -114,6 +168,9 @@ def test_group_norm_is_valid_for_non_multiple_of_eight_channel_widths() -> None:
 
 def test_architecture_version_is_explicit_and_rejects_unknown_variants() -> None:
     assert HeightModelConfig().architecture_version == "bidirectional-cross-scale-v1"
+    assert HeightModelConfig(
+        architecture_version="confidence-gated-v2"
+    ).architecture_version == "confidence-gated-v2"
     try:
         HeightModelConfig(architecture_version="unknown")
     except ValueError as exc:
