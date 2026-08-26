@@ -7,7 +7,7 @@ reference data to leak back into reconstruction, calibration, or model promotion
 
 This train is a vertical product integration, not a benchmark-only side path. The same persisted
 project artifacts are consumed by the validation engine, local API, desktop raster workspace,
-inspector, and later 3D analytical tools.
+inspector, measurement/profile tools, comparison workspace, and later 3D analytical tools.
 
 ## Integrated scope
 
@@ -23,10 +23,16 @@ inspector, and later 3D analytical tools.
 - explicit unavailable state when confidence is absent; synthetic confidence is prohibited;
 - validation stage, hashes, semantics and warnings recorded in the durable project manifest;
 - authenticated local API for validation, validation reload and bounded raster previews;
+- normalized-coordinate point probing against persisted DSM/rDSM, slope, reference, residual and
+  confidence products;
+- deterministic analyst transects with physical distance where georeferencing permits;
+- point-to-point measurement with explicit horizontal and endpoint vertical deltas;
+- profile sampling with minimum/maximum elevation and cumulative gain/loss;
 - production desktop reference-selection workflow;
 - real Optical, DSM, Slope, Reference, Residual and Confidence raster preview plumbing;
-- project inspector populated from the current project's reference evidence rather than a separate
-  benchmark card;
+- prediction/reference swipe comparison with synchronized click sampling;
+- project inspector populated from the current project's reference and analytical evidence rather
+  than a separate benchmark card;
 - preservation of separate held-out benchmark evidence as a distinct scientific context.
 
 ## Scientific invariants
@@ -44,7 +50,32 @@ inspector, and later 3D analytical tools.
    presented as calibrated probability.
 8. Validation failure does not rewrite a successfully reconstructed DSM; it is recorded as a
    validation-stage failure with the production project evidence preserved.
-9. Preview rendering is bounded and read-only. It never alters the underlying geospatial products.
+9. Preview rendering and analyst sampling are bounded and read-only. They never alter underlying
+   geospatial products or scientific evidence.
+10. A measured endpoint elevation delta is reported as an analyst-selected surface difference. It is
+    not silently promoted to a building-height or object-classification claim.
+
+## Local integrated acceptance scene
+
+The final local RT2 smoke is intentionally separated from both the consumed Potsdam-v2 protocol and
+the Joshimath calibration-only engineering demonstration.
+
+`make release-train-2-validation-smoke` uses:
+
+- **optical source:** TUM OrthoLoC `urban_residential_DOP.tif`;
+- **metric calibration only:** AWS Terrain Tiles / Mapzen Terrarium at zoom 10;
+- **downstream evaluation only:** TUM OrthoLoC `urban_residential_DSM.tif`.
+
+The smoke downloads/caches the public OrthoLoC pair and only the Terrarium tiles required to cover
+the scene. The production runtime completes metric DSM generation before the OrthoLoC DSM is passed
+to the validation subsystem. Calibration DEM and evaluation DSM SHA-256 values are checked for
+separation and are recorded in `release-train-2-acceptance.json` together with the final project
+artifacts and metrics.
+
+This is an **integrated product acceptance**, not new model-promotion evidence. The
+`urban_residential` OrthoLoC scene has prior DepthWizard research use, so its result must not be
+presented as unseen Gate B evidence. No threshold, estimator policy or model selection may be tuned
+from this smoke.
 
 ## Acceptance before merge
 
@@ -56,10 +87,14 @@ inspector, and later 3D analytical tools.
 - calibration-DEM reuse is rejected;
 - second-reference overwrite is rejected;
 - raster preview tests emit valid PNGs and reject absent layers;
+- point probes and deterministic profile/transect sampling are covered by automated tests;
 - local service API validates a generated metric project and reloads the same report;
-- one real project validation smoke is run only against a genuinely separate reference surface;
-- generated `metrics.json`, residual/reference GeoTIFFs, manifest stage and human report are reviewed;
-- no result from the Joshimath calibration DEM itself is misrepresented as independent validation.
+- `make release-train-2-validation-smoke` completes with Terrarium calibration evidence and the
+  OrthoLoC DSM held strictly downstream for evaluation;
+- generated `release-train-2-acceptance.json`, `metrics.json`, residual/reference GeoTIFFs, manifest
+  stage and human report are reviewed;
+- no result from the Joshimath calibration DEM itself is misrepresented as independent validation;
+- no RT2 acceptance result is used to reopen or tune the consumed Potsdam-v2 protocol.
 
 ## Train boundary
 
