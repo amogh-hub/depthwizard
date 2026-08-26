@@ -36,6 +36,7 @@ if __name__ == "__main__":
         "scripts/production_runtime_smoke.py",
         "scripts/release_train_2_validation_smoke.py",
         "scripts/release_train_3_mesh_smoke.py",
+        "scripts/release_train_3_export_smoke.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_height_model.py",
