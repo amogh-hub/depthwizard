@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -20,6 +20,9 @@ da3-smoke:
 
 height-model-smoke:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/smoke_height_model.py
+
+height-train-acceptance:
+	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_ortholoc_height_acceptance.py
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py
