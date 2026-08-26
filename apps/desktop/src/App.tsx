@@ -145,19 +145,23 @@ export function App() {
     };
   }, [demoMode]);
 
+  const projectJobId = projectJob?.job_id;
   useEffect(() => {
-    if (!projectJob || terminalJobStates.has(projectJob.status)) return;
+    if (!projectJobId || (projectJob && terminalJobStates.has(projectJob.status))) return;
     let cancelled = false;
     const timer = window.setInterval(() => {
-      void getProjectJob(projectJob.job_id)
+      void getProjectJob(projectJobId)
         .then(async (next) => {
           if (cancelled) return;
-          setProjectJob(next);
           if (terminalJobStates.has(next.status)) {
             window.clearInterval(timer);
             const manifest = await getProjectManifest(next.project_dir);
-            if (!cancelled) setProjectManifest(manifest);
+            if (cancelled) return;
+            setProjectManifest(manifest);
+            setProjectJob(next);
+            return;
           }
+          setProjectJob(next);
         })
         .catch((error: unknown) => {
           if (!cancelled) {
@@ -170,7 +174,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [projectJob]);
+  }, [projectJobId]);
 
   const geometryReady = demoMode
     ? Boolean(meshUrl)
