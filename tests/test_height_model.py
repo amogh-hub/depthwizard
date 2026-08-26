@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from depthwizard.height_model.losses import compute_height_losses
+from depthwizard.height_model.losses import align_scale_shift, compute_height_losses
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
 
 
@@ -69,6 +69,17 @@ def test_group_norm_is_valid_for_non_multiple_of_eight_channel_widths() -> None:
     group_norms = [module for module in model.modules() if isinstance(module, nn.GroupNorm)]
     assert group_norms
     assert all(module.num_channels % module.num_groups == 0 for module in group_norms)
+
+
+def test_affine_alignment_removes_relative_scale_and_offset_ambiguity() -> None:
+    prediction = torch.linspace(0.05, 0.95, steps=64, dtype=torch.float32).reshape(1, 1, 8, 8)
+    target = 2.75 * prediction + 1.4
+    valid = torch.ones_like(prediction, dtype=torch.bool)
+    valid[..., :2, :2] = False
+
+    aligned = align_scale_shift(prediction, target, valid)
+
+    assert torch.allclose(aligned[valid], target[valid], atol=2e-5, rtol=2e-5)
 
 
 def test_height_losses_are_finite_and_differentiable() -> None:
