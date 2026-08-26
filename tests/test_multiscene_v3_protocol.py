@@ -5,7 +5,10 @@ from collections import Counter
 import pytest
 
 from depthwizard.data.ortholoc import OrthoLoCRemoteScene
-from scripts.train_ortholoc_multiscene_v3 import select_diversity_split
+from scripts.train_ortholoc_multiscene_v3 import (
+    select_diversity_split,
+    training_candidate_groups,
+)
 
 
 def _scene(location: str, index: int, split: str) -> OrthoLoCRemoteScene:
@@ -51,3 +54,35 @@ def test_diversity_split_rejects_training_location_without_two_same_domain_scene
 
     with pytest.raises(RuntimeError, match="exactly two scenes per training location"):
         select_diversity_split(train, outplace)
+
+
+def test_training_candidate_groups_keep_location_fixed_and_append_fallbacks() -> None:
+    discovered = [
+        _scene(location, index, "train")
+        for location in ("L01", "L02")
+        for index in range(4)
+    ]
+    selected = [
+        _scene("L01", 0, "train"),
+        _scene("L01", 1, "train"),
+        _scene("L02", 0, "train"),
+        _scene("L02", 1, "train"),
+    ]
+
+    groups = training_candidate_groups(selected, discovered)
+
+    assert list(groups) == ["L01", "L02"]
+    assert [scene.scene_id for scene in groups["L01"]] == [
+        "L01_R0000",
+        "L01_R0001",
+        "L01_R0002",
+        "L01_R0003",
+    ]
+    assert [scene.scene_id for scene in groups["L02"]] == [
+        "L02_R0000",
+        "L02_R0001",
+        "L02_R0002",
+        "L02_R0003",
+    ]
+    assert all(scene.location_id == "L01" for scene in groups["L01"])
+    assert all(scene.location_id == "L02" for scene in groups["L02"])
