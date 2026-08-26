@@ -102,6 +102,13 @@ def _load_v4_model(device: torch.device) -> tuple[DepthWizardHeightModel, dict[s
     return model, checkpoint
 
 
+def _number(mapping: dict[str, object], key: str) -> float:
+    value = mapping.get(key)
+    if not isinstance(value, (int, float)):
+        raise TypeError(f"external benchmark field {key!r} is not numeric")
+    return float(value)
+
+
 def _download_atomic(url: str, destination: Path) -> Path:
     if destination.is_file() and destination.stat().st_size > 0:
         return destination
@@ -643,17 +650,17 @@ def main() -> None:
         if not isinstance(da3_section, dict) or not isinstance(v4_section, dict):
             raise TypeError("external scene metric sections are not dictionaries")
         print(
-            f"potsdam_external {tile.tile_id}: DA3 {float(da3_section['rmse_m']):.3f} m | "
-            f"V4 {float(v4_section['rmse_m']):.3f} m | "
-            f"delta {float(scene_report['v4_rmse_delta_m']):+.3f} m"
+            f"potsdam_external {tile.tile_id}: DA3 {_number(da3_section, 'rmse_m'):.3f} m | "
+            f"V4 {_number(v4_section, 'rmse_m'):.3f} m | "
+            f"delta {_number(scene_report, 'v4_rmse_delta_m'):+.3f} m"
         )
     del prior
 
     all_tiles_evaluated = len(da3_values) == len(FROZEN_POTSDAM_TILE_IDS)
     aggregate_da3 = None
     aggregate_v4 = None
-    rmse_improvement_fraction = None
-    mae_improvement_fraction = None
+    rmse_improvement_fraction: float | None = None
+    mae_improvement_fraction: float | None = None
     every_tile_non_degrading = False
     frozen_refiner_promotion = False
     if da3_values:
@@ -669,7 +676,7 @@ def main() -> None:
             aggregate_da3.mae_m - aggregate_v4.mae_m
         ) / aggregate_da3.mae_m
         evaluated_deltas = [
-            float(report["v4_rmse_delta_m"])
+            _number(report, "v4_rmse_delta_m")
             for report in reports
             if report.get("status") == "EVALUATED"
         ]
@@ -705,16 +712,21 @@ def main() -> None:
 
     print("DepthWizard sealed Potsdam external evaluation: COMPLETE")
     print(f"All frozen tiles evaluated: {'YES' if all_tiles_evaluated else 'NO'}")
-    if aggregate_da3 is not None and aggregate_v4 is not None:
+    if (
+        aggregate_da3 is not None
+        and aggregate_v4 is not None
+        and rmse_improvement_fraction is not None
+        and mae_improvement_fraction is not None
+    ):
         print(
             f"External aggregate RMSE: DA3 {aggregate_da3.rmse_m:.3f} m | "
             f"V4 {aggregate_v4.rmse_m:.3f} m | "
-            f"improvement {100.0 * float(rmse_improvement_fraction):.2f}%"
+            f"improvement {100.0 * rmse_improvement_fraction:.2f}%"
         )
         print(
             f"External aggregate MAE: DA3 {aggregate_da3.mae_m:.3f} m | "
             f"V4 {aggregate_v4.mae_m:.3f} m | "
-            f"improvement {100.0 * float(mae_improvement_fraction):.2f}%"
+            f"improvement {100.0 * mae_improvement_fraction:.2f}%"
         )
     print(f"Every frozen tile RMSE non-degrading: {'YES' if every_tile_non_degrading else 'NO'}")
     print(f"Frozen external refiner promotion: {'YES' if frozen_refiner_promotion else 'NO'}")
