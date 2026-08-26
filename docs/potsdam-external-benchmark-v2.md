@@ -84,9 +84,28 @@ The final report is:
 
 The v2 seal hashes both the unchanged v1 core evaluator used for inference/calibration and the v2 metadata-contract adapter, plus the shared Potsdam, calibration and model implementation sources.
 
+The evaluator refuses to start a fresh v2 execution if a v2 seal already exists. If a sealed v2 run aborts, that run remains consumed evidence and any code-changing correction must use a later protocol version rather than deleting the seal.
+
+## Non-consuming preflight
+
+Before external-v2 is sealed, run a preflight that validates the historical v1 seal, the frozen tile files, RGB contracts, reference metadata contracts, Copernicus calibration file, and frozen V4 checkpoint. It computes the candidate v2 protocol digest but **does not** create the v2 seal and **does not** decode Potsdam DSM values:
+
+```bash
+make potsdam-external-v2-preflight
+```
+
+A successful preflight must explicitly report:
+
+- historical v1 seal verified;
+- v2 seal does not already exist;
+- all four frozen reference metadata contracts accepted;
+- candidate v2 protocol SHA-256;
+- Potsdam DSM pixel values read: `NO`;
+- v2 protocol seal created: `NO`.
+
 ## Commands
 
-First verify the branch:
+Run the repository quality gate first:
 
 ```bash
 make verify
@@ -98,7 +117,13 @@ The read-only metadata audit can be repeated without decoding DSM pixels:
 make potsdam-contract-audit
 ```
 
-Run the corrected sealed external benchmark once with:
+Then run the non-consuming v2 preflight:
+
+```bash
+make potsdam-external-v2-preflight
+```
+
+Only after both verification and preflight pass, run the corrected sealed external benchmark once:
 
 ```bash
 make potsdam-external-acceptance
