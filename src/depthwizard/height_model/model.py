@@ -190,6 +190,12 @@ class DepthWizardHeightModel(nn.Module):
     than replacing the prior outright. The correction head is initialized to zero, therefore an
     untrained model is an identity refinement of DA3. Metric elevation remains the responsibility
     of the DEM/GCP evidence-calibration subsystem.
+
+    The corrected relative field is intentionally not hard-clipped to [0, 1]. DA3's canonical
+    prior is normalized, but a learned structural correction can legitimately push local values
+    slightly outside that interval. The correction itself remains bounded, and the downstream
+    scene-level calibration is affine, so avoiding a clamp prevents dead gradients and edge
+    saturation while keeping the relative representation numerically controlled.
     """
 
     def __init__(self, config: HeightModelConfig | None = None) -> None:
@@ -278,7 +284,7 @@ class DepthWizardHeightModel(nn.Module):
         relative_correction = (
             torch.tanh(self.height_residual_head(x)) * self.config.max_relative_correction
         )
-        relative_height = torch.clamp(geometry_prior + relative_correction, 0.0, 1.0)
+        relative_height = geometry_prior + relative_correction
         log_variance = torch.clamp(self.log_variance_head(x), min=-7.0, max=5.0)
         uncertainty = torch.exp(0.5 * log_variance)
         semantic_logits = self.semantic_head(x)
