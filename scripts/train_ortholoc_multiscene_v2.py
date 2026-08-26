@@ -5,7 +5,6 @@ import os
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import torch
@@ -122,8 +121,13 @@ def _balanced_epoch_indices(
 
 
 def _dict_metric(report: dict[str, object], key: str, metric: str) -> float:
-    section = cast(dict[str, object], report[key])
-    return float(section[metric])
+    section_value = report[key]
+    if not isinstance(section_value, dict):
+        raise TypeError(f"report section {key!r} is not a metric mapping")
+    value = section_value[metric]
+    if not isinstance(value, (int, float)):
+        raise TypeError(f"report metric {key}.{metric} is not numeric")
+    return float(value)
 
 
 def main() -> None:
