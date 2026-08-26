@@ -7,7 +7,6 @@ from typing import Literal
 import numpy as np
 import rasterio
 from pyproj import Geod, Transformer
-from rasterio.windows import Window
 
 from depthwizard.contracts import (
     NormalizedPoint,
@@ -47,7 +46,7 @@ def _pixel_index(point: NormalizedPoint, *, width: int, height: int) -> tuple[in
 def _read_cell(path: Path, point: NormalizedPoint) -> float | None:
     with rasterio.open(path) as src:
         col, row = _pixel_index(point, width=src.width, height=src.height)
-        window = Window(col_off=col, row_off=row, width=1, height=1)
+        window = ((row, row + 1), (col, col + 1))
         value = src.read(1, window=window, masked=True)
         if value.size != 1 or bool(np.ma.getmaskarray(value)[0, 0]):
             return None
