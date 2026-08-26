@@ -153,6 +153,15 @@ export type ReferenceValidationReport = {
   warnings: string[];
 };
 
+export type ProjectPreviewLayer =
+  | "optical"
+  | "rdsm"
+  | "dsm"
+  | "slope"
+  | "reference"
+  | "residual"
+  | "confidence";
+
 type RuntimeConfig = {
   apiBase?: string;
   sessionToken?: string;
@@ -166,7 +175,7 @@ declare global {
 
 const runtime = () => window.__DEPTHWIZARD_RUNTIME__ ?? {};
 
-async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
+function runtimeHeaders(init?: RequestInit): Headers {
   const config = runtime();
   const headers = new Headers(init?.headers);
   if (init?.body !== undefined && !headers.has("content-type")) {
@@ -175,14 +184,24 @@ async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (config.sessionToken) {
     headers.set("x-depthwizard-token", config.sessionToken);
   }
+  return headers;
+}
+
+async function checkedResponse(path: string, init?: RequestInit): Promise<Response> {
+  const config = runtime();
   const response = await fetch(`${config.apiBase ?? "http://127.0.0.1:8765"}${path}`, {
     ...init,
-    headers,
+    headers: runtimeHeaders(init),
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { detail?: string };
     throw new Error(body.detail ?? `DepthWizard core returned HTTP ${response.status}`);
   }
+  return response;
+}
+
+async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await checkedResponse(path, init);
   return response.json() as Promise<T>;
 }
 
@@ -227,4 +246,18 @@ export function validateProjectReference(
 export function getProjectValidation(projectDir: string): Promise<ReferenceValidationReport> {
   const query = new URLSearchParams({ project_dir: projectDir });
   return coreFetch<ReferenceValidationReport>(`/v1/projects/validation?${query.toString()}`);
+}
+
+export async function getProjectPreviewUrl(
+  projectDir: string,
+  layer: ProjectPreviewLayer,
+  maxSide = 1600,
+): Promise<string> {
+  const query = new URLSearchParams({
+    project_dir: projectDir,
+    layer,
+    max_side: String(maxSide),
+  });
+  const response = await checkedResponse(`/v1/projects/preview?${query.toString()}`);
+  return URL.createObjectURL(await response.blob());
 }
