@@ -30,10 +30,11 @@ MAX_TRAILING_EDGE_DEFICIT_PX = 1
 V1_PROTOCOL_SHA256 = "6452480ae7cc55d63eff5cab9bf6b449bfb00222591e79070854c57dc6e35923"
 
 # External-v2 is intentionally a thin adapter over the frozen v1 inference/calibration core.
-# getattr/setattr keep that reuse explicit without pretending the v1 helpers are public API.
-_CORE_PROTOCOL_PAYLOAD = getattr(v1, "_protocol_payload")
-_CORE_EVALUATE_TILE = getattr(v1, "_evaluate_tile")
-_CORE_LOAD_V4_MODEL = getattr(v1, "_load_v4_model")
+# Direct module references and assignments make the compatibility seam explicit and statically
+# checkable while preserving the historical v1 implementation unchanged.
+_CORE_PROTOCOL_PAYLOAD = v1._protocol_payload
+_CORE_EVALUATE_TILE = v1._evaluate_tile
+_CORE_LOAD_V4_MODEL = v1._load_v4_model
 _SEALED_REFERENCE_CONTRACTS: dict[str, dict[str, object]] = {}
 _REFERENCE_RUNTIME: dict[str, dict[str, object]] = {}
 
@@ -219,9 +220,9 @@ def _configure_v2() -> None:
     v1.OUT_DIR = OUT_DIR
     v1.PROTOCOL_SEAL_PATH = PROTOCOL_SEAL_PATH
     v1.REPORT_PATH = REPORT_PATH
-    setattr(v1, "_protocol_payload", _protocol_payload_v2)
-    setattr(v1, "_load_reference_after_seal", _load_reference_after_seal_v2)
-    setattr(v1, "_evaluate_tile", _evaluate_tile_v2)
+    v1._protocol_payload = _protocol_payload_v2
+    v1._load_reference_after_seal = _load_reference_after_seal_v2
+    v1._evaluate_tile = _evaluate_tile_v2
 
 
 def preflight() -> None:
