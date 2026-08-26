@@ -29,6 +29,7 @@ class HeightModelConfig:
     height_bins: int = 16
     dropout: float = 0.05
     max_relative_correction: float = 0.35
+    architecture_version: str = "bidirectional-cross-scale-v1"
 
     def __post_init__(self) -> None:
         if len(self.rgb_channels) != 4 or len(self.geometry_channels) != 4:
@@ -43,6 +44,8 @@ class HeightModelConfig:
             raise ValueError("dropout must be in [0, 1)")
         if not 0.0 < self.max_relative_correction <= 1.0:
             raise ValueError("max_relative_correction must be in (0, 1]")
+        if self.architecture_version != "bidirectional-cross-scale-v1":
+            raise ValueError("unsupported height-model architecture_version")
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,15 @@ class HeightModelOutput:
     height_bin_logits: torch.Tensor
     normals: torch.Tensor
     boundary_probability: torch.Tensor
+
+
+@dataclass(frozen=True)
+class FusionOutput:
+    """Bidirectionally updated branch features plus their joint evidence representation."""
+
+    rgb: torch.Tensor
+    geometry: torch.Tensor
+    joint: torch.Tensor
 
 
 class ConvNormAct(nn.Module):
@@ -120,22 +132,77 @@ class Encoder(nn.Module):
         return features
 
 
-class GatedFusion(nn.Module):
-    """Fuse overhead RGB appearance with monocular geometry evidence at one scale."""
+class BidirectionalGatedFusion(nn.Module):
+    """Exchange RGB and geometry evidence in both directions at one encoder scale.
+
+    The previous refiner injected geometry into RGB only after both encoders had already produced
+    their independent feature pyramids. That made RGB a consumer of geometry but never allowed
+    overhead appearance evidence to refine the geometry stream before the next scale. Here each
+    branch receives a gated projection from the other branch and the updated branch states are fed
+    into the next encoder stage. The joint feature remains RGB-width so the decoder contract stays
+    compact and stable.
+    """
 
     def __init__(self, rgb_channels: int, geometry_channels: int, dropout: float) -> None:
         super().__init__()
-        self.geometry_projection = nn.Conv2d(geometry_channels, rgb_channels, kernel_size=1)
-        self.gate = nn.Sequential(
+        self.geometry_to_rgb = nn.Conv2d(
+            geometry_channels,
+            rgb_channels,
+            kernel_size=1,
+            bias=False,
+        )
+        self.rgb_to_geometry = nn.Conv2d(
+            rgb_channels,
+            geometry_channels,
+            kernel_size=1,
+            bias=False,
+        )
+        self.rgb_gate = nn.Sequential(
             nn.Conv2d(rgb_channels * 2, rgb_channels, kernel_size=1),
             nn.Sigmoid(),
         )
-        self.refine = ResidualBlock(rgb_channels, dropout=dropout)
+        self.geometry_gate = nn.Sequential(
+            nn.Conv2d(geometry_channels * 2, geometry_channels, kernel_size=1),
+            nn.Sigmoid(),
+        )
+        self.rgb_refine = ResidualBlock(rgb_channels, dropout=dropout)
+        self.geometry_refine = ResidualBlock(geometry_channels, dropout=dropout)
+        self.joint_projection = ConvNormAct(rgb_channels + geometry_channels, rgb_channels)
+        self.joint_refine = ResidualBlock(rgb_channels, dropout=dropout)
 
-    def forward(self, rgb: torch.Tensor, geometry: torch.Tensor) -> torch.Tensor:
-        projected = self.geometry_projection(geometry)
-        gate = self.gate(torch.cat([rgb, projected], dim=1))
-        return self.refine(rgb + gate * projected)
+    def forward(self, rgb: torch.Tensor, geometry: torch.Tensor) -> FusionOutput:
+        geometry_for_rgb = self.geometry_to_rgb(geometry)
+        rgb_for_geometry = self.rgb_to_geometry(rgb)
+
+        rgb_gate = self.rgb_gate(torch.cat([rgb, geometry_for_rgb], dim=1))
+        geometry_gate = self.geometry_gate(torch.cat([geometry, rgb_for_geometry], dim=1))
+
+        rgb_updated = self.rgb_refine(rgb + rgb_gate * geometry_for_rgb)
+        geometry_updated = self.geometry_refine(
+            geometry + geometry_gate * rgb_for_geometry
+        )
+        joint = self.joint_projection(torch.cat([rgb_updated, geometry_updated], dim=1))
+        joint = self.joint_refine(joint)
+        return FusionOutput(rgb=rgb_updated, geometry=geometry_updated, joint=joint)
+
+
+class CrossScaleContext(nn.Module):
+    """Inject deeper scene context into a shallower fused feature using a learned gate."""
+
+    def __init__(self, shallow_channels: int, deep_channels: int, dropout: float) -> None:
+        super().__init__()
+        self.deep_projection = nn.Conv2d(deep_channels, shallow_channels, kernel_size=1, bias=False)
+        self.gate = nn.Sequential(
+            nn.Conv2d(shallow_channels * 2, shallow_channels, kernel_size=1),
+            nn.Sigmoid(),
+        )
+        self.refine = ResidualBlock(shallow_channels, dropout=dropout)
+
+    def forward(self, shallow: torch.Tensor, deep: torch.Tensor) -> torch.Tensor:
+        deep = F.interpolate(deep, size=shallow.shape[-2:], mode="bilinear", align_corners=False)
+        projected = self.deep_projection(deep)
+        gate = self.gate(torch.cat([shallow, projected], dim=1))
+        return self.refine(shallow + gate * projected)
 
 
 class MetadataConditioner(nn.Module):
@@ -184,12 +251,14 @@ class DecoderBlock(nn.Module):
 
 
 class DepthWizardHeightModel(nn.Module):
-    """Dual-evidence remote-sensing height refinement model.
+    """Bidirectional dual-evidence remote-sensing height refinement model.
 
-    DA3 geometry is an explicit prior. The trainable network predicts a bounded correction rather
-    than replacing the prior outright. The correction head is initialized to zero, therefore an
-    untrained model is an identity refinement of DA3. Metric elevation remains the responsibility
-    of the DEM/GCP evidence-calibration subsystem.
+    DA3 geometry is an explicit prior. RGB and geometry exchange information at every encoder scale,
+    and deeper fused context is gated back into shallower structural features before decoding. The
+    trainable network still predicts only a bounded correction rather than replacing DA3 outright.
+    The correction head is initialized to zero, therefore an untrained model is an exact identity
+    refinement of DA3 despite the richer internal architecture. Metric elevation remains the
+    responsibility of the DEM/GCP evidence-calibration subsystem.
 
     The corrected relative field is intentionally not hard-clipped to [0, 1]. DA3's canonical
     prior is normalized, but a learned structural correction can legitimately push local values
@@ -208,9 +277,18 @@ class DepthWizardHeightModel(nn.Module):
         self.geometry_encoder = Encoder(1, geometry_channels, self.config.dropout)
         self.fusions = nn.ModuleList(
             [
-                GatedFusion(rgb_c, geo_c, self.config.dropout)
+                BidirectionalGatedFusion(rgb_c, geo_c, self.config.dropout)
                 for rgb_c, geo_c in zip(rgb_channels, geometry_channels, strict=True)
             ]
+        )
+        self.cross_scale_2 = CrossScaleContext(
+            rgb_channels[2], rgb_channels[3], self.config.dropout
+        )
+        self.cross_scale_1 = CrossScaleContext(
+            rgb_channels[1], rgb_channels[2], self.config.dropout
+        )
+        self.cross_scale_0 = CrossScaleContext(
+            rgb_channels[0], rgb_channels[1], self.config.dropout
         )
         self.metadata = MetadataConditioner(rgb_channels[-1])
 
@@ -262,17 +340,26 @@ class DepthWizardHeightModel(nn.Module):
         self._validate_inputs(rgb, geometry_prior)
         input_size = rgb.shape[-2:]
 
-        rgb_features = self.rgb_encoder(rgb)
-        geometry_features = self.geometry_encoder(geometry_prior)
-        fused = [
-            fusion(rgb_feature, geometry_feature)
-            for fusion, rgb_feature, geometry_feature in zip(
-                self.fusions,
-                rgb_features,
-                geometry_features,
-                strict=True,
-            )
-        ]
+        rgb_state = rgb
+        geometry_state = geometry_prior
+        fused: list[torch.Tensor] = []
+        for rgb_stage, geometry_stage, fusion in zip(
+            self.rgb_encoder.stages,
+            self.geometry_encoder.stages,
+            self.fusions,
+            strict=True,
+        ):
+            rgb_state = rgb_stage(rgb_state)
+            geometry_state = geometry_stage(geometry_state)
+            fusion_output = fusion(rgb_state, geometry_state)
+            rgb_state = fusion_output.rgb
+            geometry_state = fusion_output.geometry
+            fused.append(fusion_output.joint)
+
+        # Top-down context makes shallow edge/roof evidence aware of the broader scene geometry.
+        fused[2] = self.cross_scale_2(fused[2], fused[3])
+        fused[1] = self.cross_scale_1(fused[1], fused[2])
+        fused[0] = self.cross_scale_0(fused[0], fused[1])
 
         x = self.metadata(fused[3], gsd_m)
         x = self.decode3(x, fused[2])
