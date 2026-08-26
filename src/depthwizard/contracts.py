@@ -224,6 +224,37 @@ class ProjectMeshReport(BaseModel):
     semantics: str
 
 
+class ProjectExportRequest(BaseModel):
+    project_dir: Path
+    include_source: bool = False
+    include_mesh: bool = True
+    include_validation: bool = True
+
+
+class ProjectExportFile(BaseModel):
+    arcname: str
+    source_path: Path
+    sha256: str
+    bytes: int = Field(ge=0)
+    semantics: str
+    units: str | None = None
+
+
+class ProjectExportReport(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    bundle_path: Path
+    bundle_sha256: str
+    bundle_bytes: int = Field(ge=1)
+    project_manifest_sha256: str
+    export_manifest_path: Path
+    include_source: bool
+    include_mesh: bool
+    include_validation: bool
+    files: list[ProjectExportFile] = Field(min_length=1)
+    semantics: str
+
+
 class CalibrationResult(BaseModel):
     scale: float
     offset: float
