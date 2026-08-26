@@ -1,4 +1,5 @@
 import type {
+  ProjectExportReport,
   ProjectProbeResult,
   ProjectProfileResult,
   RasterMetadata,
@@ -12,6 +13,12 @@ function gsdLabel(meta: RasterMetadata | null): string {
   return `${meta.ground_sample_distance_x.toFixed(3)} × ${meta.ground_sample_distance_y.toFixed(3)} m`;
 }
 
+function byteLabel(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} B`;
+}
+
 export type ValidationEvidence = {
   dataset: string;
   protocol: string;
@@ -20,6 +27,12 @@ export type ValidationEvidence = {
   rmseM: number;
   maeM: number;
   pearsonR: number | null;
+};
+
+type RendererTelemetry = {
+  fps: number;
+  triangles: number;
+  drawCalls: number;
 };
 
 type InspectorProps = {
@@ -38,6 +51,10 @@ type InspectorProps = {
   measurement?: ProjectProfileResult | null;
   profile?: ProjectProfileResult | null;
   analysisBusy?: boolean;
+  projectExport?: ProjectExportReport | null;
+  meshLod?: number;
+  autoLod?: boolean;
+  terrainPerformance?: RendererTelemetry | null;
 };
 
 export function Inspector({
@@ -56,12 +73,17 @@ export function Inspector({
   measurement,
   profile,
   analysisBusy = false,
+  projectExport,
+  meshLod = 0,
+  autoLod = false,
+  terrainPerformance,
 }: InspectorProps) {
   const hasInput = metadata !== null;
   const georeferenced = Boolean(metadata?.crs);
   const mode = elevationMode ?? (hasInput ? (georeferenced ? "Calibration eligible" : "Relative DSM") : "—");
   const benchmarkDataset = validationEvidence?.dataset.split("/")[0]?.trim() ?? "—";
   const referenceName = projectValidation?.reference_path.split(/[\\/]/).pop() ?? "—";
+  const exportName = projectExport?.bundle_path.split(/[\\/]/).pop() ?? "—";
 
   return (
     <aside className="dw-inspector" aria-label="Analysis inspector">
@@ -78,7 +100,8 @@ export function Inspector({
           { label: "Calibration", state: calibrationReady ? "complete" : "pending", detail: calibrationReady ? "metric evidence" : georeferenced ? "DEM/GCP" : "relative" },
           { label: "DSM", state: geometryReady ? "complete" : "pending", detail: geometryReady ? (calibrationReady ? "absolute" : "relative") : "" },
           { label: "Validation", state: projectValidation ? "complete" : "pending", detail: projectValidation ? `${projectValidation.valid_pixels.toLocaleString()} px` : "scene reference" },
-          { label: "3D export", state: meshReady ? "complete" : "pending", detail: meshReady ? "GLB LOD" : "" },
+          { label: "3D terrain", state: meshReady ? "complete" : "pending", detail: meshReady ? "persistent GLB LODs" : "" },
+          { label: "Export", state: projectExport ? "complete" : "pending", detail: projectExport ? byteLabel(projectExport.bundle_bytes) : "hash-audited ZIP" },
         ]} />
       </section>
 
@@ -94,6 +117,23 @@ export function Inspector({
           <div className="dw-property"><dt>Tiling</dt><dd>{tileCount === undefined ? "—" : `${tileCount} tiles · ${harmonizedTiles ?? 0} harmonized`}</dd></div>
         </dl>
       </section>
+
+      {meshReady && (
+        <section className="dw-section">
+          <div className="dw-section-title">3D renderer</div>
+          <dl className="dw-property-list">
+            <div className="dw-property"><dt>Active LOD</dt><dd>LOD {meshLod}</dd></div>
+            <div className="dw-property"><dt>LOD policy</dt><dd>{autoLod ? "adaptive" : "manual"}</dd></div>
+            <div className="dw-property"><dt>Frame rate</dt><dd>{terrainPerformance ? `${terrainPerformance.fps.toFixed(1)} fps` : "measuring…"}</dd></div>
+            <div className="dw-property"><dt>Triangles</dt><dd>{terrainPerformance ? terrainPerformance.triangles.toLocaleString() : "—"}</dd></div>
+            <div className="dw-property"><dt>Draw calls</dt><dd>{terrainPerformance ? terrainPerformance.drawCalls.toLocaleString() : "—"}</dd></div>
+          </dl>
+          <div className="dw-validation-empty">
+            <strong>Visualization is not the measurement source</strong>
+            <p>LOD, analytical overlays, camera motion and vertical exaggeration change only the rendered workstation view. Probe and profile values continue to come from persisted project rasters.</p>
+          </div>
+        </section>
+      )}
 
       <AnalysisInspector
         activeTool={activeTool}
@@ -131,6 +171,25 @@ export function Inspector({
           </div>
         )}
       </section>
+
+      {projectExport && (
+        <section className="dw-section">
+          <div className="dw-section-title">Scientific export</div>
+          <dl className="dw-property-list">
+            <div className="dw-property"><dt>Bundle</dt><dd title={projectExport.bundle_path}>{exportName}</dd></div>
+            <div className="dw-property"><dt>Size</dt><dd>{byteLabel(projectExport.bundle_bytes)}</dd></div>
+            <div className="dw-property"><dt>Artifacts</dt><dd>{projectExport.files.length}</dd></div>
+            <div className="dw-property"><dt>Source bytes</dt><dd>{projectExport.include_source ? "included" : "excluded"}</dd></div>
+            <div className="dw-property"><dt>Mesh</dt><dd>{projectExport.include_mesh ? "included" : "excluded"}</dd></div>
+            <div className="dw-property"><dt>Validation</dt><dd>{projectExport.include_validation ? "included" : "excluded"}</dd></div>
+            <div className="dw-property"><dt>SHA-256</dt><dd title={projectExport.bundle_sha256}>{projectExport.bundle_sha256.slice(0, 16)}…</dd></div>
+          </dl>
+          <div className="dw-validation-empty">
+            <strong>Transport derivative only</strong>
+            <p>The ZIP re-hashes persisted products before packaging. Export does not rerun reconstruction, calibration, validation, or alter model evidence.</p>
+          </div>
+        </section>
+      )}
 
       {validationEvidence && (
         <section className="dw-section">
