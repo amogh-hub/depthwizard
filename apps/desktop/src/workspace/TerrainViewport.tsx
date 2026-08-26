@@ -8,12 +8,23 @@ import type { NormalizedPoint } from "../api";
 
 export type CameraMode = "orbit" | "fly" | "firstPerson" | "topDown";
 
+export type TerrainPerformance = {
+  fps: number;
+  triangles: number;
+  drawCalls: number;
+};
+
 type TerrainViewportProps = {
   meshUrl?: string;
   cameraMode: CameraMode;
   verticalExaggeration?: number;
   cursorPoint?: NormalizedPoint | null;
+  analysisPath?: NormalizedPoint[];
+  overlayUrl?: string | null;
+  autoFlythrough?: boolean;
+  resetToken?: number;
   onSelectPoint?: (point: NormalizedPoint) => void;
+  onPerformance?: (metrics: TerrainPerformance) => void;
 };
 
 export function TerrainViewport({
@@ -21,17 +32,32 @@ export function TerrainViewport({
   cameraMode,
   verticalExaggeration = 1,
   cursorPoint,
+  analysisPath = [],
+  overlayUrl,
+  autoFlythrough = false,
+  resetToken = 0,
   onSelectPoint,
+  onPerformance,
 }: TerrainViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modeRef = useRef(cameraMode);
   const exaggerationRef = useRef(verticalExaggeration);
   const cursorRef = useRef<NormalizedPoint | null | undefined>(cursorPoint);
+  const analysisPathRef = useRef<NormalizedPoint[]>(analysisPath);
+  const overlayRef = useRef<string | null | undefined>(overlayUrl);
+  const autoFlythroughRef = useRef(autoFlythrough);
+  const resetRef = useRef(resetToken);
   const selectRef = useRef(onSelectPoint);
+  const performanceRef = useRef(onPerformance);
   modeRef.current = cameraMode;
   exaggerationRef.current = verticalExaggeration;
   cursorRef.current = cursorPoint;
+  analysisPathRef.current = analysisPath;
+  overlayRef.current = overlayUrl;
+  autoFlythroughRef.current = autoFlythrough;
+  resetRef.current = resetToken;
   selectRef.current = onSelectPoint;
+  performanceRef.current = onPerformance;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -77,13 +103,41 @@ export function TerrainViewport({
     marker.renderOrder = 10;
     scene.add(marker);
 
+    const pathLine = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0x1f5fae, transparent: true, opacity: 0.96 }),
+    );
+    pathLine.visible = false;
+    pathLine.renderOrder = 11;
+    scene.add(pathLine);
+
+    const startMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    );
+    const endMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0x1f5fae }),
+    );
+    startMarker.visible = false;
+    endMarker.visible = false;
+    startMarker.renderOrder = 12;
+    endMarker.renderOrder = 12;
+    scene.add(startMarker, endMarker);
+
     const loader = new GLTFLoader();
+    const textureLoader = new THREE.TextureLoader();
     let loaded: THREE.Object3D | undefined;
     let sceneCenter = new THREE.Vector3();
     let sceneSize = new THREE.Vector3(100, 100, 100);
     let elevationCenter = 0;
     let appliedExaggeration = 1;
     let terrainMeshes: THREE.Mesh[] = [];
+    const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+    let overlayTexture: THREE.Texture | null = null;
+    let overlayMaterial: THREE.MeshBasicMaterial | null = null;
+    let appliedOverlayUrl: string | null = null;
+    let overlayLoadGeneration = 0;
 
     const refreshBounds = () => {
       if (!loaded) return;
@@ -92,58 +146,17 @@ export function TerrainViewport({
       sceneSize = bounds.getSize(new THREE.Vector3());
     };
 
-    const applyExaggeration = () => {
+    const footprint = () => Math.max(sceneSize.x, sceneSize.z, 1);
+
+    const fitView = () => {
       if (!loaded) return;
-      const exaggeration = Math.max(exaggerationRef.current, 0.1);
-      if (Math.abs(exaggeration - appliedExaggeration) < 1e-6) return;
-      loaded.scale.y = exaggeration;
-      loaded.position.y = elevationCenter * (1 - exaggeration);
-      appliedExaggeration = exaggeration;
-      loaded.updateMatrixWorld(true);
       refreshBounds();
-    };
-
-    const positionMarker = (point: NormalizedPoint | null | undefined) => {
-      if (!loaded || !point || terrainMeshes.length === 0) {
-        marker.visible = false;
-        return;
-      }
-      const bounds = new THREE.Box3().setFromObject(loaded);
-      const size = bounds.getSize(new THREE.Vector3());
-      const x = bounds.min.x + point.x * size.x;
-      const z = bounds.max.z - point.y * size.z;
-      const origin = new THREE.Vector3(x, bounds.max.y + Math.max(size.y, 10) + 10, z);
-      raycaster.set(origin, new THREE.Vector3(0, -1, 0));
-      const hit = raycaster.intersectObjects(terrainMeshes, false)[0];
-      if (!hit) {
-        marker.visible = false;
-        return;
-      }
-      marker.position.copy(hit.point);
-      marker.position.y += Math.max(Math.max(size.x, size.z) * 0.0025, 0.5);
-      const radius = Math.max(Math.max(size.x, size.z) * 0.004, 0.7);
-      marker.scale.setScalar(radius);
-      marker.visible = true;
-    };
-
-    loader.load(meshUrl, (gltf) => {
-      loaded = gltf.scene;
-      terrainMeshes = [];
-      loaded.traverse((object) => {
-        if (object instanceof THREE.Mesh) terrainMeshes.push(object);
-      });
-      scene.add(loaded);
-      const unscaledBounds = new THREE.Box3().setFromObject(loaded);
-      elevationCenter = unscaledBounds.getCenter(new THREE.Vector3()).y;
-      appliedExaggeration = 1;
-      applyExaggeration();
-      refreshBounds();
-
-      const footprint = Math.max(sceneSize.x, sceneSize.z);
-      const distance = Math.max(footprint, sceneSize.y * 2) * 0.82;
+      const width = footprint();
+      const distance = Math.max(width, sceneSize.y * 2) * 0.82;
       const viewTarget = sceneCenter.clone();
-      viewTarget.y -= Math.max(sceneSize.y, footprint * 0.08) * 0.20;
+      viewTarget.y -= Math.max(sceneSize.y, width * 0.08) * 0.20;
       orbit.target.copy(viewTarget);
+      camera.up.set(0, 1, 0);
       camera.position.set(
         sceneCenter.x + distance * 0.52,
         sceneCenter.y + distance * 0.48,
@@ -152,8 +165,144 @@ export function TerrainViewport({
       camera.near = Math.max(distance / 10000, 0.01);
       camera.far = Math.max(distance * 20, 1000);
       camera.updateProjectionMatrix();
+      camera.lookAt(viewTarget);
       orbit.update();
+    };
+
+    const surfacePoint = (point: NormalizedPoint): THREE.Vector3 | null => {
+      if (!loaded || terrainMeshes.length === 0) return null;
+      const bounds = new THREE.Box3().setFromObject(loaded);
+      const size = bounds.getSize(new THREE.Vector3());
+      const x = bounds.min.x + point.x * size.x;
+      const z = bounds.max.z - point.y * size.z;
+      const origin = new THREE.Vector3(x, bounds.max.y + Math.max(size.y, 10) + 10, z);
+      raycaster.set(origin, new THREE.Vector3(0, -1, 0));
+      const hit = raycaster.intersectObjects(terrainMeshes, false)[0];
+      return hit?.point.clone() ?? null;
+    };
+
+    const positionMarker = (point: NormalizedPoint | null | undefined) => {
+      if (!point) {
+        marker.visible = false;
+        return;
+      }
+      const hit = surfacePoint(point);
+      if (!hit) {
+        marker.visible = false;
+        return;
+      }
+      const offset = Math.max(footprint() * 0.0025, 0.5);
+      marker.position.copy(hit);
+      marker.position.y += offset;
+      const radius = Math.max(footprint() * 0.004, 0.7);
+      marker.scale.setScalar(radius);
+      marker.visible = true;
+    };
+
+    const refreshAnalysisPath = () => {
+      const points = analysisPathRef.current;
+      if (!loaded || points.length < 2) {
+        pathLine.visible = false;
+        startMarker.visible = false;
+        endMarker.visible = false;
+        return;
+      }
+      const offset = Math.max(footprint() * 0.0012, 0.25);
+      const surfacePoints = points
+        .map((point) => surfacePoint(point))
+        .filter((point): point is THREE.Vector3 => point !== null)
+        .map((point) => point.add(new THREE.Vector3(0, offset, 0)));
+      if (surfacePoints.length < 2) {
+        pathLine.visible = false;
+        startMarker.visible = false;
+        endMarker.visible = false;
+        return;
+      }
+      pathLine.geometry.dispose();
+      pathLine.geometry = new THREE.BufferGeometry().setFromPoints(surfacePoints);
+      pathLine.visible = true;
+      const endpointRadius = Math.max(footprint() * 0.0032, 0.55);
+      startMarker.position.copy(surfacePoints[0]);
+      endMarker.position.copy(surfacePoints[surfacePoints.length - 1]);
+      startMarker.scale.setScalar(endpointRadius);
+      endMarker.scale.setScalar(endpointRadius);
+      startMarker.visible = true;
+      endMarker.visible = true;
+    };
+
+    const applyExaggeration = () => {
+      if (!loaded) return false;
+      const exaggeration = Math.max(exaggerationRef.current, 0.1);
+      if (Math.abs(exaggeration - appliedExaggeration) < 1e-6) return false;
+      loaded.scale.y = exaggeration;
+      loaded.position.y = elevationCenter * (1 - exaggeration);
+      appliedExaggeration = exaggeration;
+      loaded.updateMatrixWorld(true);
+      refreshBounds();
       positionMarker(cursorRef.current);
+      refreshAnalysisPath();
+      return true;
+    };
+
+    const restoreOriginalMaterials = () => {
+      for (const mesh of terrainMeshes) {
+        const material = originalMaterials.get(mesh);
+        if (material) mesh.material = material;
+      }
+      overlayMaterial?.dispose();
+      overlayTexture?.dispose();
+      overlayMaterial = null;
+      overlayTexture = null;
+    };
+
+    const applyOverlay = (nextUrl: string | null | undefined) => {
+      const normalizedUrl = nextUrl ?? null;
+      if (normalizedUrl === appliedOverlayUrl) return;
+      appliedOverlayUrl = normalizedUrl;
+      overlayLoadGeneration += 1;
+      const generation = overlayLoadGeneration;
+      restoreOriginalMaterials();
+      if (!normalizedUrl || terrainMeshes.length === 0) return;
+      textureLoader.load(
+        normalizedUrl,
+        (texture) => {
+          if (generation !== overlayLoadGeneration || overlayRef.current !== normalizedUrl) {
+            texture.dispose();
+            return;
+          }
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.flipY = false;
+          texture.needsUpdate = true;
+          overlayTexture = texture;
+          overlayMaterial = new THREE.MeshBasicMaterial({ map: texture });
+          for (const mesh of terrainMeshes) mesh.material = overlayMaterial;
+        },
+        undefined,
+        () => {
+          if (generation === overlayLoadGeneration) restoreOriginalMaterials();
+        },
+      );
+    };
+
+    loader.load(meshUrl, (gltf) => {
+      loaded = gltf.scene;
+      terrainMeshes = [];
+      loaded.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          terrainMeshes.push(object);
+          originalMaterials.set(object, object.material);
+        }
+      });
+      scene.add(loaded);
+      const unscaledBounds = new THREE.Box3().setFromObject(loaded);
+      elevationCenter = unscaledBounds.getCenter(new THREE.Vector3()).y;
+      appliedExaggeration = 1;
+      applyExaggeration();
+      refreshBounds();
+      fitView();
+      positionMarker(cursorRef.current);
+      refreshAnalysisPath();
+      applyOverlay(overlayRef.current);
     });
 
     const resize = () => {
@@ -200,13 +349,21 @@ export function TerrainViewport({
     const clock = new THREE.Clock();
     let previousMode: CameraMode | null = null;
     let previousCursorKey = "";
+    let previousPathKey = "";
+    let previousOverlay = "";
+    let previousReset = resetRef.current;
+    let flythroughStartedAt = 0;
+    let wasAutoFlythrough = false;
+    let performanceSeconds = 0;
+    let performanceFrames = 0;
     let frame = 0;
     const animate = () => {
       const mode = modeRef.current;
       const dt = Math.min(clock.getDelta(), 0.05);
-      orbit.enabled = mode === "orbit" || mode === "topDown";
-      fly.enabled = mode === "fly";
-      firstPerson.enabled = mode === "firstPerson";
+      const touring = autoFlythroughRef.current && Boolean(loaded);
+      orbit.enabled = !touring && (mode === "orbit" || mode === "topDown");
+      fly.enabled = !touring && mode === "fly";
+      firstPerson.enabled = !touring && mode === "firstPerson";
 
       applyExaggeration();
       const currentCursor = cursorRef.current;
@@ -215,9 +372,39 @@ export function TerrainViewport({
         positionMarker(currentCursor);
         previousCursorKey = cursorKey;
       }
+      const pathKey = analysisPathRef.current
+        .map((point) => `${point.x.toFixed(5)}:${point.y.toFixed(5)}`)
+        .join("|");
+      if (pathKey !== previousPathKey) {
+        refreshAnalysisPath();
+        previousPathKey = pathKey;
+      }
+      const overlayKey = overlayRef.current ?? "";
+      if (overlayKey !== previousOverlay) {
+        applyOverlay(overlayRef.current);
+        previousOverlay = overlayKey;
+      }
+      if (resetRef.current !== previousReset) {
+        fitView();
+        previousReset = resetRef.current;
+      }
 
-      if (mode !== previousMode && mode === "topDown" && loaded) {
-        const distance = Math.max(sceneSize.x, sceneSize.z) * 1.05;
+      if (touring && loaded) {
+        if (!wasAutoFlythrough) flythroughStartedAt = performance.now() / 1000;
+        const elapsed = performance.now() / 1000 - flythroughStartedAt;
+        const phase = (elapsed / 18) * Math.PI * 2;
+        const radius = footprint() * 0.92;
+        const height = Math.max(sceneSize.y * 3.5, footprint() * (0.32 + 0.07 * Math.sin(phase * 2)));
+        camera.up.set(0, 1, 0);
+        camera.position.set(
+          sceneCenter.x + Math.cos(phase) * radius,
+          sceneCenter.y + height,
+          sceneCenter.z + Math.sin(phase) * radius,
+        );
+        camera.lookAt(sceneCenter);
+        orbit.target.copy(sceneCenter);
+      } else if (mode !== previousMode && mode === "topDown" && loaded) {
+        const distance = footprint() * 1.05;
         camera.up.set(0, 0, -1);
         camera.position.set(sceneCenter.x, sceneCenter.y + distance, sceneCenter.z + 0.001);
         camera.lookAt(sceneCenter);
@@ -225,12 +412,25 @@ export function TerrainViewport({
       } else if (mode !== "topDown") {
         camera.up.set(0, 1, 0);
       }
+      wasAutoFlythrough = touring;
       previousMode = mode;
 
       if (orbit.enabled) orbit.update();
       if (fly.enabled) fly.update(dt);
       if (firstPerson.enabled) firstPerson.update(dt);
       renderer.render(scene, camera);
+
+      performanceSeconds += dt;
+      performanceFrames += 1;
+      if (performanceSeconds >= 1) {
+        performanceRef.current?.({
+          fps: performanceFrames / performanceSeconds,
+          triangles: renderer.info.render.triangles,
+          drawCalls: renderer.info.render.calls,
+        });
+        performanceSeconds = 0;
+        performanceFrames = 0;
+      }
       frame = requestAnimationFrame(animate);
     };
     animate();
@@ -243,6 +443,7 @@ export function TerrainViewport({
       orbit.dispose();
       fly.dispose();
       firstPerson.dispose();
+      restoreOriginalMaterials();
       renderer.dispose();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
@@ -251,6 +452,8 @@ export function TerrainViewport({
           materials.forEach((material) => material.dispose());
         }
       });
+      pathLine.geometry.dispose();
+      (pathLine.material as THREE.Material).dispose();
       renderer.domElement.remove();
     };
   }, [meshUrl]);
