@@ -25,7 +25,7 @@ height-train-acceptance:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_ortholoc_height_acceptance.py
 
 height-multiscene-acceptance:
-	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_ortholoc_multiscene.py
+	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.train_ortholoc_multiscene_v2
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py
