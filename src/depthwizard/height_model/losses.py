@@ -11,8 +11,9 @@ from depthwizard.height_model.model import HeightModelOutput
 @dataclass(frozen=True)
 class HeightLossWeights:
     regression: float = 1.0
-    heteroscedastic: float = 0.35
-    gradient: float = 0.35
+    heteroscedastic: float = 0.25
+    gradient: float = 0.45
+    correlation: float = 0.35
     normals: float = 0.20
     ordinal: float = 0.20
     semantics: float = 0.15
@@ -25,6 +26,7 @@ class HeightLossResult:
     regression: torch.Tensor
     heteroscedastic: torch.Tensor
     gradient: torch.Tensor
+    correlation: torch.Tensor
     normals: torch.Tensor
     ordinal: torch.Tensor
     semantics: torch.Tensor
@@ -47,14 +49,12 @@ def align_scale_shift(
     max_scale: float = 20.0,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    """Align relative geometry to the target with a differentiable positive affine fit.
+    """Align relative geometry to a target with a differentiable positive affine fit.
 
-    DepthWizard deliberately separates relative shape estimation from metric calibration. The
-    monocular prior and the supervised DSM target can therefore differ by an arbitrary global
-    scale and offset even when their geometry is identical. Penalising those nuisance parameters
-    in the learned refinement wastes model capacity and conflicts with the later DEM/GCP
-    calibration stage. This helper removes that ambiguity per sample while preserving gradients
-    through the fitted scale and shift.
+    This remains useful for diagnostics and explicitly scale-invariant comparisons. It is not used
+    patch-by-patch by the permanent training loss because independently aligning every patch can
+    teach incompatible local scales. Training instead canonicalizes each reference scene once into
+    the DA3 prior coordinate system using training pixels only.
     """
     if prediction.shape != target.shape or prediction.shape != valid.shape:
         raise ValueError("prediction, target and valid must have identical shapes")
@@ -95,8 +95,6 @@ def boundary_target_from_height(height: torch.Tensor) -> torch.Tensor:
     dx = F.pad(torch.abs(height[..., :, 1:] - height[..., :, :-1]), (0, 1, 0, 0))
     dy = F.pad(torch.abs(height[..., 1:, :] - height[..., :-1, :]), (0, 0, 0, 1))
     magnitude = torch.sqrt(dx.square() + dy.square() + 1e-12)
-    # Use an amax-based per-image normalization rather than quantile so the permanent training
-    # objective remains reproducible on CUDA, CPU and Apple MPS without backend-specific fallbacks.
     scale = magnitude.flatten(1).amax(dim=1).clamp_min(1e-4).view(-1, 1, 1, 1)
     return torch.clamp(magnitude / scale, 0.0, 1.0)
 
@@ -119,6 +117,35 @@ def _gradient_loss(
     return 0.5 * (loss_x + loss_y)
 
 
+def _correlation_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    valid: torch.Tensor,
+    *,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Mean 1-Pearson-r over valid pixels, preserving gradients through the prediction."""
+    mask = valid.to(dtype=prediction.dtype)
+    count = mask.sum(dim=(-2, -1), keepdim=True)
+    safe_count = count.clamp_min(1.0)
+    prediction_mean = (prediction * mask).sum(dim=(-2, -1), keepdim=True) / safe_count
+    target_mean = (target * mask).sum(dim=(-2, -1), keepdim=True) / safe_count
+
+    prediction_centered = (prediction - prediction_mean) * mask
+    target_centered = (target - target_mean) * mask
+    covariance = (prediction_centered * target_centered).sum(dim=(-2, -1), keepdim=True)
+    prediction_energy = prediction_centered.square().sum(dim=(-2, -1), keepdim=True)
+    target_energy = target_centered.square().sum(dim=(-2, -1), keepdim=True)
+    denominator = torch.sqrt(prediction_energy * target_energy + eps)
+    correlation = covariance / denominator
+
+    usable = (count >= 2.0) & (prediction_energy > eps) & (target_energy > eps)
+    selected = correlation[usable]
+    if selected.numel() == 0:
+        return prediction.sum() * 0.0
+    return (1.0 - torch.clamp(selected, -1.0, 1.0)).mean()
+
+
 def compute_height_losses(
     output: HeightModelOutput,
     target_relative_height: torch.Tensor,
@@ -127,12 +154,13 @@ def compute_height_losses(
     semantic_target: torch.Tensor | None = None,
     weights: HeightLossWeights | None = None,
 ) -> HeightLossResult:
-    """Compute the permanent multi-task objective for DepthWizard height refinement.
+    """Compute DepthWizard's scene-consistent multi-task relative-height objective.
 
-    The primary target is a normalized remote-sensing relative surface-height field. Global scale
-    and offset are nuisance parameters at this stage, so geometry losses use an affine-aligned
-    prediction. Metric elevation supervision remains the responsibility of the geodetic
-    calibration/evidence lane.
+    ``target_relative_height`` must already be expressed in the same scene-level relative
+    coordinate system as the DA3 prior. For paired metric DSM training data this is produced by a
+    single robust affine canonicalization fitted on training pixels only. Avoiding per-patch
+    scale/shift fitting is critical: final DEM/GCP calibration estimates one scene-level mapping,
+    so the learned refiner must preserve globally coherent relative geometry across tiles.
     """
     w = weights or HeightLossWeights()
     target = target_relative_height
@@ -144,14 +172,14 @@ def compute_height_losses(
     if output.relative_height.shape != target.shape:
         raise ValueError("model output and target relative height must have identical shapes")
 
-    aligned_prediction = align_scale_shift(output.relative_height, target, valid)
-    residual = aligned_prediction - target
-    regression_map = F.smooth_l1_loss(aligned_prediction, target, reduction="none")
+    residual = output.relative_height - target
+    regression_map = F.smooth_l1_loss(output.relative_height, target, reduction="none")
     regression = _masked_mean(regression_map, valid)
 
     nll_map = 0.5 * (torch.exp(-output.log_variance) * residual.square() + output.log_variance)
     heteroscedastic = _masked_mean(nll_map, valid)
-    gradient = _gradient_loss(aligned_prediction, target, valid)
+    gradient = _gradient_loss(output.relative_height, target, valid)
+    correlation = _correlation_loss(output.relative_height, target, valid)
 
     target_normals = surface_normals_from_height(target)
     cosine = 1.0 - torch.sum(output.normals * target_normals, dim=1, keepdim=True)
@@ -188,6 +216,7 @@ def compute_height_losses(
         w.regression * regression
         + w.heteroscedastic * heteroscedastic
         + w.gradient * gradient
+        + w.correlation * correlation
         + w.normals * normals
         + w.ordinal * ordinal
         + w.semantics * semantics
@@ -198,6 +227,7 @@ def compute_height_losses(
         regression=regression,
         heteroscedastic=heteroscedastic,
         gradient=gradient,
+        correlation=correlation,
         normals=normals,
         ordinal=ordinal,
         semantics=semantics,
