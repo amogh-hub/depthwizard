@@ -122,10 +122,16 @@ def test_coarse_dem_frequency_contract_requires_both_resolutions() -> None:
     relative = np.arange(64, dtype=np.float32).reshape(8, 8)
     dem = 2.0 * relative + 10.0
 
-    for kwargs in ({"target_gsd_m": 1.0}, {"dem_effective_gsd_m": 30.0}):
-        try:
-            calibrate_relative_height_with_dem(relative, dem, **kwargs)
-        except ValueError as exc:
-            assert "must either both be supplied or both be omitted" in str(exc)
-        else:
-            raise AssertionError("partial coarse-DEM resolution metadata must be rejected")
+    try:
+        calibrate_relative_height_with_dem(relative, dem, target_gsd_m=1.0)
+    except ValueError as exc:
+        assert "must either both be supplied or both be omitted" in str(exc)
+    else:
+        raise AssertionError("missing DEM effective GSD must be rejected")
+
+    try:
+        calibrate_relative_height_with_dem(relative, dem, dem_effective_gsd_m=30.0)
+    except ValueError as exc:
+        assert "must either both be supplied or both be omitted" in str(exc)
+    else:
+        raise AssertionError("missing target GSD must be rejected")
