@@ -38,6 +38,47 @@ def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return selected.mean()
 
 
+def align_scale_shift(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    valid: torch.Tensor,
+    *,
+    min_scale: float = 0.05,
+    max_scale: float = 20.0,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Align relative geometry to the target with a differentiable positive affine fit.
+
+    DepthWizard deliberately separates relative shape estimation from metric calibration. The
+    monocular prior and the supervised DSM target can therefore differ by an arbitrary global
+    scale and offset even when their geometry is identical. Penalising those nuisance parameters
+    in the learned refinement wastes model capacity and conflicts with the later DEM/GCP
+    calibration stage. This helper removes that ambiguity per sample while preserving gradients
+    through the fitted scale and shift.
+    """
+    if prediction.shape != target.shape or prediction.shape != valid.shape:
+        raise ValueError("prediction, target and valid must have identical shapes")
+    if prediction.ndim != 4 or prediction.shape[1] != 1:
+        raise ValueError("affine alignment expects N x 1 x H x W tensors")
+    if not 0.0 < min_scale <= max_scale:
+        raise ValueError("invalid positive alignment scale bounds")
+
+    mask = valid.to(dtype=prediction.dtype)
+    count = mask.sum(dim=(-2, -1), keepdim=True).clamp_min(1.0)
+    prediction_mean = (prediction * mask).sum(dim=(-2, -1), keepdim=True) / count
+    target_mean = (target * mask).sum(dim=(-2, -1), keepdim=True) / count
+
+    prediction_centered = prediction - prediction_mean
+    target_centered = target - target_mean
+    covariance = (prediction_centered * target_centered * mask).sum(
+        dim=(-2, -1), keepdim=True
+    ) / count
+    variance = (prediction_centered.square() * mask).sum(dim=(-2, -1), keepdim=True) / count
+    scale = torch.clamp(covariance / (variance + eps), min=min_scale, max=max_scale)
+    shift = target_mean - scale * prediction_mean
+    return scale * prediction + shift
+
+
 def surface_normals_from_height(height: torch.Tensor) -> torch.Tensor:
     """Construct normalized pseudo-surface normals from a dense relative-height field."""
     if height.ndim != 4 or height.shape[1] != 1:
@@ -88,8 +129,10 @@ def compute_height_losses(
 ) -> HeightLossResult:
     """Compute the permanent multi-task objective for DepthWizard height refinement.
 
-    The primary target is a normalized remote-sensing relative surface-height field. Metric
-    elevation supervision is introduced separately through the geodetic calibration/evidence lane.
+    The primary target is a normalized remote-sensing relative surface-height field. Global scale
+    and offset are nuisance parameters at this stage, so geometry losses use an affine-aligned
+    prediction. Metric elevation supervision remains the responsibility of the geodetic
+    calibration/evidence lane.
     """
     w = weights or HeightLossWeights()
     target = target_relative_height
@@ -101,16 +144,18 @@ def compute_height_losses(
     if output.relative_height.shape != target.shape:
         raise ValueError("model output and target relative height must have identical shapes")
 
-    residual = output.relative_height - target
-    regression_map = F.smooth_l1_loss(output.relative_height, target, reduction="none")
+    aligned_prediction = align_scale_shift(output.relative_height, target, valid)
+    residual = aligned_prediction - target
+    regression_map = F.smooth_l1_loss(aligned_prediction, target, reduction="none")
     regression = _masked_mean(regression_map, valid)
 
     nll_map = 0.5 * (torch.exp(-output.log_variance) * residual.square() + output.log_variance)
     heteroscedastic = _masked_mean(nll_map, valid)
-    gradient = _gradient_loss(output.relative_height, target, valid)
+    gradient = _gradient_loss(aligned_prediction, target, valid)
 
     target_normals = surface_normals_from_height(target)
-    cosine = 1.0 - torch.sum(output.normals * target_normals, dim=1, keepdim=True)
+    aligned_normals = surface_normals_from_height(aligned_prediction)
+    cosine = 1.0 - torch.sum(aligned_normals * target_normals, dim=1, keepdim=True)
     normals = _masked_mean(cosine, valid)
 
     bins = output.height_bin_logits.shape[1]
