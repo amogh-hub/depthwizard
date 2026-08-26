@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -24,7 +25,7 @@ class FakePrior(GeometryPrior):
 
     def infer(self, rgb_normalized: np.ndarray) -> GeometryPriorOutput:
         self.calls += 1
-        shape = rgb_normalized.shape[:2]
+        shape = (int(rgb_normalized.shape[0]), int(rgb_normalized.shape[1]))
         return GeometryPriorOutput(
             relative_height=_relative(shape),
             confidence=np.full(shape, 0.8, dtype=np.float32),
@@ -39,7 +40,7 @@ def _write_rgb(path: Path, *, georeferenced: bool) -> None:
     data[0] = (40 + x).astype(np.uint8)
     data[1] = (60 + y).astype(np.uint8)
     data[2] = (80 + (x + y) // 2).astype(np.uint8)
-    profile: dict[str, object] = {
+    profile: dict[str, Any] = {
         "driver": "GTiff",
         "height": 32,
         "width": 32,
