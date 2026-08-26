@@ -6,10 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -26,6 +26,7 @@ from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import inspect_raster
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.runtime import ProductionElevationRuntime
+from depthwizard.visualization.raster_preview import PreviewLayer, render_project_layer_preview
 
 
 class InspectRequest(BaseModel):
@@ -215,3 +216,31 @@ def validation_report(project_dir: Path) -> ReferenceValidationReport:
         return ReferenceValidationReport.model_validate(payload)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"unable to read validation metrics: {exc}") from exc
+
+
+@app.get("/v1/projects/preview", dependencies=[Depends(_session_guard)])
+def project_preview(
+    project_dir: Path,
+    layer: str,
+    max_side: Annotated[int, Query(ge=64, le=4096)] = 1600,
+) -> Response:
+    allowed = {"optical", "rdsm", "dsm", "slope", "reference", "residual", "confidence"}
+    if layer not in allowed:
+        raise HTTPException(status_code=422, detail=f"unsupported project preview layer: {layer}")
+    if not (project_dir / "project-manifest.json").is_file():
+        raise HTTPException(status_code=404, detail="project manifest does not exist")
+    try:
+        payload = render_project_layer_preview(
+            project_dir,
+            cast(PreviewLayer, layer),
+            max_side=max_side,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"unable to render project layer: {exc}") from exc
+    return Response(
+        content=payload,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
