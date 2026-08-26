@@ -4,7 +4,12 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from depthwizard.io.raster import reproject_to_match, write_float_geotiff
+from depthwizard.io.raster import (
+    ground_sample_distance_m,
+    inspect_raster,
+    reproject_to_match,
+    write_float_geotiff,
+)
 
 
 def _write(path: Path, data: np.ndarray, *, transform, crs="EPSG:32643") -> None:
@@ -40,3 +45,32 @@ def test_reproject_to_match_and_export(tmp_path: Path) -> None:
         assert src.transform == from_origin(0, 4, 0.5, 0.5)
         assert src.dtypes[0] == "float32"
         assert src.descriptions[0] == "test"
+
+
+def test_ground_sample_distance_is_metric_for_projected_crs(tmp_path: Path) -> None:
+    path = tmp_path / "projected.tif"
+    _write(path, np.ones((8, 8)), transform=from_origin(500000, 1500000, 10, 10))
+
+    gsd = ground_sample_distance_m(path)
+    assert gsd is not None
+    assert abs(gsd[0] - 10.0) < 0.05
+    assert abs(gsd[1] - 10.0) < 0.05
+
+    metadata = inspect_raster(path)
+    assert metadata.ground_sample_distance_x is not None
+    assert abs(metadata.ground_sample_distance_x - 10.0) < 0.05
+
+
+def test_ground_sample_distance_converts_geographic_degrees_to_metres(tmp_path: Path) -> None:
+    path = tmp_path / "geographic.tif"
+    _write(
+        path,
+        np.ones((8, 8)),
+        transform=from_origin(77.0, 13.0, 0.0001, 0.0001),
+        crs="EPSG:4326",
+    )
+
+    gsd = ground_sample_distance_m(path)
+    assert gsd is not None
+    assert 10.0 < gsd[0] < 11.5
+    assert 10.5 < gsd[1] < 11.5
