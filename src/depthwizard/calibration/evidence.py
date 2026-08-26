@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
-
 from depthwizard.calibration.robust import robust_affine_calibration
 from depthwizard.contracts import CalibrationResult
+from scipy.ndimage import gaussian_filter
 
 
 _GAUSSIAN_FWHM_TO_SIGMA = 1.0 / 2.3548200450309493
@@ -118,7 +117,7 @@ def _frequency_match_parameters(
     if ratio <= 1.0:
         return 0.0, 1
     sigma_px = ratio * _GAUSSIAN_FWHM_TO_SIGMA
-    anchor_stride_px = max(1, int(round(ratio)))
+    anchor_stride_px = max(1, round(ratio))
     return float(sigma_px), anchor_stride_px
 
 
