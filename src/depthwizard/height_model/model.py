@@ -8,13 +8,7 @@ from torch.nn import functional as F
 
 
 def _group_count(channels: int, *, max_groups: int = 8) -> int:
-    """Choose the largest valid GroupNorm divisor up to ``max_groups``.
-
-    Height-model channel widths are configurable for experiments and tests. GroupNorm requires
-    ``num_channels % num_groups == 0``; selecting a fixed group count makes otherwise valid channel
-    configurations fail at construction time. This helper preserves eight groups when possible and
-    deterministically falls back to the next largest divisor.
-    """
+    """Choose the largest valid GroupNorm divisor up to ``max_groups``."""
     if channels <= 0:
         raise ValueError("channels must be positive")
     if max_groups <= 0:
@@ -34,6 +28,7 @@ class HeightModelConfig:
     semantic_classes: int = 5
     height_bins: int = 16
     dropout: float = 0.05
+    max_relative_correction: float = 0.35
 
     def __post_init__(self) -> None:
         if len(self.rgb_channels) != 4 or len(self.geometry_channels) != 4:
@@ -46,6 +41,8 @@ class HeightModelConfig:
             raise ValueError("height_bins must be at least 2")
         if not 0.0 <= self.dropout < 1.0:
             raise ValueError("dropout must be in [0, 1)")
+        if not 0.0 < self.max_relative_correction <= 1.0:
+            raise ValueError("max_relative_correction must be in (0, 1]")
 
 
 @dataclass(frozen=True)
@@ -53,6 +50,7 @@ class HeightModelOutput:
     """Dense outputs produced by the final remote-sensing refinement model."""
 
     relative_height: torch.Tensor
+    relative_correction: torch.Tensor
     log_variance: torch.Tensor
     uncertainty: torch.Tensor
     semantic_logits: torch.Tensor
@@ -188,8 +186,10 @@ class DecoderBlock(nn.Module):
 class DepthWizardHeightModel(nn.Module):
     """Dual-evidence remote-sensing height refinement model.
 
-    The model intentionally predicts *relative* surface height. Metric elevation remains the
-    responsibility of DepthWizard's DEM/GCP evidence-calibration subsystem.
+    DA3 geometry is an explicit prior. The trainable network predicts a bounded correction rather
+    than replacing the prior outright. The correction head is initialized to zero, therefore an
+    untrained model is an identity refinement of DA3. Metric elevation remains the responsibility
+    of the DEM/GCP evidence-calibration subsystem.
     """
 
     def __init__(self, config: HeightModelConfig | None = None) -> None:
@@ -223,7 +223,9 @@ class DepthWizardHeightModel(nn.Module):
         )
 
         head_channels = rgb_channels[0]
-        self.height_head = nn.Conv2d(head_channels, 1, kernel_size=1)
+        self.height_residual_head = nn.Conv2d(head_channels, 1, kernel_size=1)
+        nn.init.zeros_(self.height_residual_head.weight)
+        nn.init.zeros_(self.height_residual_head.bias)
         self.log_variance_head = nn.Conv2d(head_channels, 1, kernel_size=1)
         self.semantic_head = nn.Conv2d(
             head_channels,
@@ -272,7 +274,10 @@ class DepthWizardHeightModel(nn.Module):
         x = F.interpolate(x, size=input_size, mode="bilinear", align_corners=False)
         x = self.full_resolution(x)
 
-        relative_height = torch.sigmoid(self.height_head(x))
+        relative_correction = (
+            torch.tanh(self.height_residual_head(x)) * self.config.max_relative_correction
+        )
+        relative_height = torch.clamp(geometry_prior + relative_correction, 0.0, 1.0)
         log_variance = torch.clamp(self.log_variance_head(x), min=-7.0, max=5.0)
         uncertainty = torch.exp(0.5 * log_variance)
         semantic_logits = self.semantic_head(x)
@@ -282,6 +287,7 @@ class DepthWizardHeightModel(nn.Module):
 
         return HeightModelOutput(
             relative_height=relative_height,
+            relative_correction=relative_correction,
             log_variance=log_variance,
             uncertainty=uncertainty,
             semantic_logits=semantic_logits,
