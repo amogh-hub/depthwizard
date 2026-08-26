@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import rasterio
@@ -20,7 +21,7 @@ def write_unreferenced_float_tiff(
     arr = np.asarray(array, dtype=np.float32)
     if arr.ndim != 2:
         raise ValueError("unreferenced float product must be a 2D raster")
-    profile: dict[str, object] = {
+    profile: dict[str, Any] = {
         "driver": "GTiff",
         "height": arr.shape[0],
         "width": arr.shape[1],
