@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -44,13 +45,19 @@ class HeightModelConfig:
             raise ValueError("dropout must be in [0, 1)")
         if not 0.0 < self.max_relative_correction <= 1.0:
             raise ValueError("max_relative_correction must be in (0, 1]")
-        if self.architecture_version != "bidirectional-cross-scale-v1":
+        supported = {"bidirectional-cross-scale-v1", "confidence-gated-v2"}
+        if self.architecture_version not in supported:
             raise ValueError("unsupported height-model architecture_version")
 
 
 @dataclass(frozen=True)
 class HeightModelOutput:
-    """Dense outputs produced by the final remote-sensing refinement model."""
+    """Dense outputs produced by the final remote-sensing refinement model.
+
+    ``raw_relative_correction`` and ``correction_gate`` are populated by the production model. They
+    remain optional so historical synthetic/unit-test outputs and V1 checkpoints stay source-level
+    compatible. V1 emits a gate of ones; V2 learns an explicit confidence gate.
+    """
 
     relative_height: torch.Tensor
     relative_correction: torch.Tensor
@@ -60,6 +67,8 @@ class HeightModelOutput:
     height_bin_logits: torch.Tensor
     normals: torch.Tensor
     boundary_probability: torch.Tensor
+    raw_relative_correction: torch.Tensor | None = None
+    correction_gate: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -178,9 +187,7 @@ class BidirectionalGatedFusion(nn.Module):
         geometry_gate = self.geometry_gate(torch.cat([geometry, rgb_for_geometry], dim=1))
 
         rgb_updated = self.rgb_refine(rgb + rgb_gate * geometry_for_rgb)
-        geometry_updated = self.geometry_refine(
-            geometry + geometry_gate * rgb_for_geometry
-        )
+        geometry_updated = self.geometry_refine(geometry + geometry_gate * rgb_for_geometry)
         joint = self.joint_projection(torch.cat([rgb_updated, geometry_updated], dim=1))
         joint = self.joint_refine(joint)
         return FusionOutput(rgb=rgb_updated, geometry=geometry_updated, joint=joint)
@@ -255,16 +262,16 @@ class DepthWizardHeightModel(nn.Module):
 
     DA3 geometry is an explicit prior. RGB and geometry exchange information at every encoder scale,
     and deeper fused context is gated back into shallower structural features before decoding. The
-    trainable network still predicts only a bounded correction rather than replacing DA3 outright.
-    The correction head is initialized to zero, therefore an untrained model is an exact identity
-    refinement of DA3 despite the richer internal architecture. Metric elevation remains the
-    responsibility of the DEM/GCP evidence-calibration subsystem.
+    trainable network predicts only a bounded correction rather than replacing DA3 outright.
 
-    The corrected relative field is intentionally not hard-clipped to [0, 1]. DA3's canonical
-    prior is normalized, but a learned structural correction can legitimately push local values
-    slightly outside that interval. The correction itself remains bounded, and the downstream
-    scene-level calibration is affine, so avoiding a clamp prevents dead gradients and edge
-    saturation while keeping the relative representation numerically controlled.
+    ``bidirectional-cross-scale-v1`` applies that candidate correction directly. The production
+    ``confidence-gated-v2`` variant additionally predicts where the candidate correction is safe to
+    apply. Its gate starts at 0.10 while the correction head starts at exactly zero, preserving the
+    exact DA3 identity invariant at initialization and making early optimization conservative.
+
+    Metric elevation remains the responsibility of the DEM/GCP evidence-calibration subsystem.
+    The corrected relative field is intentionally not hard-clipped to [0, 1], because local
+    structural refinements may legitimately move beyond DA3's normalized nominal range.
     """
 
     def __init__(self, config: HeightModelConfig | None = None) -> None:
@@ -311,6 +318,17 @@ class DepthWizardHeightModel(nn.Module):
         nn.init.zeros_(self.height_residual_head.weight)
         if self.height_residual_head.bias is not None:
             nn.init.zeros_(self.height_residual_head.bias)
+
+        self.correction_gate_head: nn.Conv2d | None = None
+        if self.config.architecture_version == "confidence-gated-v2":
+            self.correction_gate_head = nn.Conv2d(head_channels, 1, kernel_size=1)
+            nn.init.zeros_(self.correction_gate_head.weight)
+            if self.correction_gate_head.bias is not None:
+                initial_gate_probability = 0.10
+                self.correction_gate_head.bias.data.fill_(
+                    math.log(initial_gate_probability / (1.0 - initial_gate_probability))
+                )
+
         self.log_variance_head = nn.Conv2d(head_channels, 1, kernel_size=1)
         self.semantic_head = nn.Conv2d(
             head_channels,
@@ -368,10 +386,16 @@ class DepthWizardHeightModel(nn.Module):
         x = F.interpolate(x, size=input_size, mode="bilinear", align_corners=False)
         x = self.full_resolution(x)
 
-        relative_correction = (
+        raw_relative_correction = (
             torch.tanh(self.height_residual_head(x)) * self.config.max_relative_correction
         )
+        if self.correction_gate_head is None:
+            correction_gate = torch.ones_like(raw_relative_correction)
+        else:
+            correction_gate = torch.sigmoid(self.correction_gate_head(x))
+        relative_correction = raw_relative_correction * correction_gate
         relative_height = geometry_prior + relative_correction
+
         log_variance = torch.clamp(self.log_variance_head(x), min=-7.0, max=5.0)
         uncertainty = torch.exp(0.5 * log_variance)
         semantic_logits = self.semantic_head(x)
@@ -388,4 +412,6 @@ class DepthWizardHeightModel(nn.Module):
             height_bin_logits=height_bin_logits,
             normals=normals,
             boundary_probability=boundary_probability,
+            raw_relative_correction=raw_relative_correction,
+            correction_gate=correction_gate,
         )
