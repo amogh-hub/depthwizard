@@ -7,6 +7,15 @@ import numpy as np
 from depthwizard.calibration.robust import robust_affine_calibration
 
 
+class PriorReferenceCalibrationError(ValueError):
+    """Raised when a training scene cannot support the positive-height prior convention.
+
+    This is intentionally distinct from generic input/IO errors. A caller may reject a *training*
+    sample and try another sample from the same pre-declared geographic group, while alignment,
+    CRS, shape, and other engineering failures must still stop the run.
+    """
+
+
 @dataclass(frozen=True)
 class RobustRange:
     lower: float
@@ -104,13 +113,32 @@ def fit_reference_to_prior(
     if int(valid.sum()) < 16:
         raise ValueError("insufficient finite training pixels for prior/reference canonicalization")
 
-    calibration = robust_affine_calibration(
-        geometry[valid],
-        reference[valid],
-        require_positive_scale=True,
-    )
+    geometry_valid = geometry[valid]
+    reference_valid = reference[valid]
+    geometry_std = float(np.std(geometry_valid))
+    reference_std = float(np.std(reference_valid))
+    if geometry_std > 1e-12 and reference_std > 1e-12:
+        pearson_r = float(np.corrcoef(geometry_valid, reference_valid)[0, 1])
+    else:
+        pearson_r = float("nan")
+
+    try:
+        calibration = robust_affine_calibration(
+            geometry_valid,
+            reference_valid,
+            require_positive_scale=True,
+        )
+    except ValueError as exc:
+        correlation_text = f"{pearson_r:.4f}" if np.isfinite(pearson_r) else "undefined"
+        raise PriorReferenceCalibrationError(
+            "training prior/reference canonicalization rejected the scene under the required "
+            f"positive-height convention (Pearson r={correlation_text}): {exc}"
+        ) from exc
+
     if not np.isfinite(calibration.scale) or calibration.scale <= 1e-8:
-        raise ValueError("training prior/reference fit produced an invalid positive scale")
+        raise PriorReferenceCalibrationError(
+            "training prior/reference fit produced an invalid positive scale"
+        )
     return PriorReferenceFit(
         scale_m_per_prior_unit=float(calibration.scale),
         offset_m=float(calibration.offset),
