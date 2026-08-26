@@ -11,6 +11,7 @@ ORTHOLOC_BASE_URL = "https://cvg.cit.tum.de/webshare/g/papers/Dhaouadi/OrthoLoC"
 USER_AGENT = "DepthWizard-SIH26175/0.3"
 
 _LOCATION_RE = re.compile(r"^(L\d+)_.*\.tif$", re.IGNORECASE)
+_SAME_DOMAIN_RE = re.compile(r"^L\d+_R\d+\.tiff?$", re.IGNORECASE)
 
 
 class _HrefParser(HTMLParser):
@@ -33,6 +34,14 @@ class OrthoLoCRemoteScene:
     location_id: str
     dop_url: str
     dsm_url: str
+
+    @property
+    def filename(self) -> str:
+        return Path(urllib.parse.unquote(urllib.parse.urlparse(self.dop_url).path)).name
+
+    @property
+    def same_domain(self) -> bool:
+        return is_same_domain_filename(self.filename)
 
 
 def parse_apache_tif_listing(html: str) -> list[str]:
@@ -58,6 +67,10 @@ def location_id_from_filename(filename: str) -> str:
     if match is None:
         raise ValueError(f"unrecognized OrthoLoC scene filename: {filename}")
     return match.group(1).upper()
+
+
+def is_same_domain_filename(filename: str) -> bool:
+    return _SAME_DOMAIN_RE.fullmatch(Path(filename).name) is not None
 
 
 def pair_scene_names(dop_names: list[str], dsm_names: list[str]) -> list[str]:
@@ -86,10 +99,11 @@ def select_geographic_scenes(
     selected: list[str] = []
     for location in sorted(grouped)[:max_locations]:
         selected.extend(grouped[location][:samples_per_location])
-    if len({location_id_from_filename(name) for name in selected}) < max_locations:
+    selected_locations = {location_id_from_filename(name) for name in selected}
+    if len(selected_locations) < max_locations:
         raise ValueError(
             f"requested {max_locations} geographic groups but only "
-            f"{len({location_id_from_filename(name) for name in selected})} were available"
+            f"{len(selected_locations)} were available"
         )
     return selected
 
