@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from depthwizard.calibration.robust import robust_affine_calibration
+
 
 @dataclass(frozen=True)
 class RobustRange:
@@ -13,6 +15,17 @@ class RobustRange:
     @property
     def span(self) -> float:
         return self.upper - self.lower
+
+
+@dataclass(frozen=True)
+class PriorReferenceFit:
+    """Training-only affine relation between DA3 relative height and metric reference DSM."""
+
+    scale_m_per_prior_unit: float
+    offset_m: float
+    rmse_m: float
+    median_abs_residual_m: float
+    samples: int
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,65 @@ def normalize_relative_target(values: np.ndarray, scale: RobustRange) -> np.ndar
     normalized = np.clip(normalized, 0.0, 1.0)
     normalized[~np.isfinite(array)] = np.nan
     return normalized.astype(np.float32, copy=False)
+
+
+def fit_reference_to_prior(
+    geometry_prior: np.ndarray,
+    reference_dsm_m: np.ndarray,
+    fit_mask: np.ndarray,
+) -> PriorReferenceFit:
+    """Fit one robust scene-level affine relation using training pixels only.
+
+    The final network predicts a refinement in the native DA3 relative-height coordinate system.
+    Dense reference DSMs are metric, so directly normalizing each patch or fitting scale/shift per
+    patch lets neighbouring patches learn mutually inconsistent coordinate systems. Instead we fit
+    one robust positive affine relation for the declared training region and invert that relation
+    to express every reference pixel in the same DA3-relative coordinates.
+
+    This fit is a supervision canonicalization step, not an inference-time calibration. Final
+    metric elevation is still recovered from DEM/GCP evidence after height inference.
+    """
+    geometry = np.asarray(geometry_prior, dtype=np.float64)
+    reference = np.asarray(reference_dsm_m, dtype=np.float64)
+    mask = np.asarray(fit_mask, dtype=bool)
+    if geometry.ndim != 2 or reference.ndim != 2 or geometry.shape != reference.shape:
+        raise ValueError("geometry_prior and reference_dsm_m must be matching 2D arrays")
+    if mask.shape != geometry.shape:
+        raise ValueError("fit_mask must match geometry_prior")
+
+    valid = mask & np.isfinite(geometry) & np.isfinite(reference)
+    if int(valid.sum()) < 16:
+        raise ValueError("insufficient finite training pixels for prior/reference canonicalization")
+
+    calibration = robust_affine_calibration(
+        geometry[valid],
+        reference[valid],
+        require_positive_scale=True,
+    )
+    if not np.isfinite(calibration.scale) or calibration.scale <= 1e-8:
+        raise ValueError("training prior/reference fit produced an invalid positive scale")
+    return PriorReferenceFit(
+        scale_m_per_prior_unit=float(calibration.scale),
+        offset_m=float(calibration.offset),
+        rmse_m=float(calibration.rmse_anchor),
+        median_abs_residual_m=float(calibration.median_abs_residual),
+        samples=int(calibration.anchors_used),
+    )
+
+
+def canonicalize_reference_to_prior(
+    reference_dsm_m: np.ndarray,
+    fit: PriorReferenceFit,
+) -> np.ndarray:
+    """Express a metric DSM in the DA3-relative coordinate system defined by ``fit``."""
+    if not np.isfinite(fit.scale_m_per_prior_unit) or fit.scale_m_per_prior_unit <= 1e-8:
+        raise ValueError("fit must contain a finite positive scale")
+    reference = np.asarray(reference_dsm_m, dtype=np.float32)
+    canonical = (
+        reference - np.float32(fit.offset_m)
+    ) / np.float32(fit.scale_m_per_prior_unit)
+    canonical[~np.isfinite(reference)] = np.nan
+    return canonical.astype(np.float32, copy=False)
 
 
 def fit_rgb_ranges(
