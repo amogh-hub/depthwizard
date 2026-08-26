@@ -1,5 +1,14 @@
 # Potsdam External Benchmark v1
 
+> **Historical sealed run — aborted, never rewritten.** External-v1 sealed protocol SHA-256
+> `6452480ae7cc55d63eff5cab9bf6b449bfb00222591e79070854c57dc6e35923`. Tile `2_10`
+> completed with DA3 RMSE `4.077 m` and V4 RMSE `4.080 m` (`+0.003 m`) before the run aborted
+> on tile `3_13`: the official reference DSM metadata is height `6000`, width `5999`, while its RGB
+> tile is `6000 x 6000`. A subsequent read-only audit confirmed identical affine/world-file metadata
+> and a one-native-column trailing east-edge coverage deficit; no DSM pixel values were read by that
+> audit. External-v1 remains evidence of the original strict contract and is not modified to force a
+> pass. The metadata-only correction is specified in `potsdam-external-benchmark-v2.md`.
+
 This protocol is DepthWizard's first frozen external cross-dataset DSM evaluation after OrthoLoC development was exhausted.
 
 ## Scientific separation
@@ -16,9 +25,11 @@ This separation prevents the calibration source from being reused as the claimed
 
 ## Public dataset contracts
 
-ISPRS describes Potsdam as 38 true-orthophoto/DSM patches. RGB imagery is available as R-G-B TIFF, the DSM is 32-bit float, both are on the same WGS84 UTM grid, the native ground sampling distance is 5 cm, and every tile is 6000 x 6000 pixels. The official page is:
+ISPRS describes Potsdam as 38 true-orthophoto/DSM patches. RGB imagery is available as R-G-B TIFF, the DSM is 32-bit float, both are on the same WGS84 UTM grid, the native ground sampling distance is 5 cm, and every tile is described as 6000 x 6000 pixels. The official page is:
 
 `https://isprs.org/resources/datasets/benchmarks/UrbanSemLab/2d-sem-label-potsdam.aspx`
+
+The official downloaded raw DSM member for frozen tile `3_13` is an observed metadata exception: `6000 x 5999` in `(height, width)` order. External-v1 treated the published `6000 x 6000` size as a hard requirement and therefore aborted rather than silently accepting the discrepancy.
 
 The independent calibration raster is the public Copernicus GLO-30 COG covering Potsdam:
 
@@ -101,22 +112,19 @@ or set:
 
 The resolver accepts the standard RGB names such as `top_potsdam_2_10_RGB.tif` and standard DSM names such as `dsm_potsdam_02_10.tif`.
 
-## Command
+## Historical command
 
-After the dataset files are present:
+External-v1 is retained explicitly and is no longer the default acceptance target:
 
 ```bash
-make verify
-make potsdam-external-acceptance
+make potsdam-external-v1
 ```
 
-The first successful preflight creates:
+Its immutable seal is:
 
 `artifacts/evaluation/potsdam-external-v1/protocol_seal.json`
 
-before any selected Potsdam reference DSM is loaded. The final report is:
-
-`artifacts/evaluation/potsdam-external-v1/potsdam_external_report.json`
+Because the run aborted on the strict shape contract, it did not produce a complete four-tile aggregate report.
 
 ## Gate-B interpretation
 
