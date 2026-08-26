@@ -13,7 +13,13 @@ from depthwizard.io.raster import (
 )
 
 
-def _write(path: Path, data: np.ndarray, *, transform, crs="EPSG:32643") -> None:
+def _write(
+    path: Path,
+    data: np.ndarray,
+    *,
+    transform,
+    crs: str | None = "EPSG:32643",
+) -> None:
     with rasterio.open(
         path,
         "w",
