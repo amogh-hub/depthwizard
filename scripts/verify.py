@@ -29,6 +29,7 @@ if __name__ == "__main__":
         "scripts/evaluate_ortholoc_adaptive_refinement.py",
         "scripts/evaluate_ortholoc_frozen_holdout.py",
         "scripts/evaluate_ortholoc_frozen_location_v2.py",
+        "scripts/evaluate_potsdam_external.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_height_model.py",
