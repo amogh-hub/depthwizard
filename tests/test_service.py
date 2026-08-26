@@ -5,7 +5,10 @@ import rasterio
 from fastapi.testclient import TestClient
 from rasterio.transform import from_origin
 
+from depthwizard.contracts import ProjectRunStatus
 from depthwizard.pipeline.project import ProjectManifest
+from depthwizard.pipeline.stages import ProcessingStage
+from depthwizard.provenance.manifest import sha256_file
 from depthwizard.service import app
 
 
@@ -72,3 +75,89 @@ def test_unknown_project_job_returns_404() -> None:
     response = client.get("/v1/jobs/does-not-exist")
     assert response.status_code == 404
     assert response.json()["detail"] == "unknown DepthWizard job id"
+
+
+def _write_rgb(path: Path) -> None:
+    data = np.zeros((3, 32, 32), dtype=np.uint8)
+    y, x = np.mgrid[:32, :32]
+    data[0] = (20 + x).astype(np.uint8)
+    data[1] = (40 + y).astype(np.uint8)
+    data[2] = (60 + (x + y) // 2).astype(np.uint8)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=32,
+        width=32,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:32643",
+        transform=from_origin(500000, 1400000, 1.0, 1.0),
+    ) as dst:
+        dst.write(data)
+
+
+def _write_surface(path: Path, values: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=values.shape[0],
+        width=values.shape[1],
+        count=1,
+        dtype="float32",
+        crs="EPSG:32643",
+        transform=from_origin(500000, 1400000, 1.0, 1.0),
+        nodata=-9999.0,
+    ) as dst:
+        dst.write(values.astype(np.float32), 1)
+
+
+def test_validation_and_preview_endpoints_use_persisted_project_artifacts(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    project = tmp_path / "project"
+    dsm = project / "products" / "dsm.tif"
+    reference = tmp_path / "reference.tif"
+    _write_rgb(source)
+    y, x = np.mgrid[:32, :32]
+    truth = (120.0 + 0.5 * x + 0.25 * y).astype(np.float32)
+    _write_surface(dsm, truth + 1.5)
+    _write_surface(reference, truth)
+
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.mark_status(ProjectRunStatus.COMPLETE)
+    manifest.register_artifact(
+        "dsm",
+        dsm,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(dsm),
+    )
+    manifest.record_stage(
+        ProcessingStage.CALIBRATION,
+        status="completed",
+        details={"evidence": {"dem": {"sha256": "different-calibration-file"}}},
+    )
+
+    client = TestClient(app)
+    validated = client.post(
+        "/v1/projects/validate",
+        json={"project_dir": str(project), "reference_path": str(reference)},
+    )
+    assert validated.status_code == 200
+    payload = validated.json()
+    assert abs(payload["elevation"]["rmse_m"] - 1.5) < 1e-4
+    assert payload["independence_check"] == "different_sha_from_calibration_dem"
+
+    reloaded = client.get("/v1/projects/validation", params={"project_dir": str(project)})
+    assert reloaded.status_code == 200
+    assert reloaded.json()["reference_sha256"] == payload["reference_sha256"]
+
+    preview = client.get(
+        "/v1/projects/preview",
+        params={"project_dir": str(project), "layer": "residual", "max_side": 256},
+    )
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
