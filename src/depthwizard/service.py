@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -91,7 +92,11 @@ def _run_project_job(job_id: str, request: ProcessingRequest) -> None:
     _set_job(job_id, status=ProjectRunStatus.RUNNING)
     try:
         result = _production_runtime.run(request, job_id=job_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
+        # This is the outermost executor boundary. Scientific/runtime code already records its
+        # stage-specific failure in the durable manifest; the worker must additionally convert any
+        # ordinary unhandled exception into a terminal job state instead of leaving the UI polling
+        # a job that can never complete. BaseException subclasses are deliberately not intercepted.
         _set_job(job_id, status=ProjectRunStatus.FAILED, error=str(exc))
         return
     _set_job(job_id, status=result.status, error=None)
@@ -163,8 +168,6 @@ def project_manifest(project_dir: Path) -> dict[str, object]:
         raise HTTPException(status_code=422, detail=f"unable to read project manifest: {exc}") from exc
     # Reading the persisted JSON rather than re-serializing the dataclass guarantees the desktop
     # sees the exact durable state that would survive a sidecar restart.
-    import json
-
     payload = json.loads(manifest.path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="project manifest root must be an object")
