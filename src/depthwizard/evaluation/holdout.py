@@ -32,6 +32,36 @@ def _correlation(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.corrcoef(xv, yv)[0, 1])
 
 
+def select_sparse_anchor_mask(
+    valid_mask: np.ndarray,
+    *,
+    anchor_count: int,
+    seed: int,
+) -> np.ndarray:
+    """Select the deterministic calibration-anchor mask used by sparse holdout evaluation.
+
+    This helper exposes anchor selection without exposing any reference values. It lets downstream
+    calibration policies use exactly the same declared anchor budget while keeping the raster
+    evaluation pixels disjoint. The selection algorithm is intentionally the same as the original
+    ``sparse_anchor_holdout_benchmark`` implementation so existing benchmark semantics do not
+    change.
+    """
+    valid = np.asarray(valid_mask, dtype=bool)
+    if valid.ndim != 2:
+        raise ValueError("valid_mask must be 2D")
+    if anchor_count < 2:
+        raise ValueError("anchor_count must be at least 2")
+    valid_flat = np.flatnonzero(valid)
+    if valid_flat.size <= anchor_count:
+        raise ValueError("not enough valid pixels for disjoint calibration and evaluation")
+
+    rng = np.random.default_rng(seed)
+    chosen = rng.choice(valid_flat, size=anchor_count, replace=False)
+    anchor_mask = np.zeros(valid.shape, dtype=bool)
+    anchor_mask.flat[chosen] = True
+    return anchor_mask
+
+
 def sparse_anchor_holdout_benchmark(
     relative_height: np.ndarray,
     reference_dsm: np.ndarray,
@@ -70,14 +100,7 @@ def sparse_anchor_holdout_benchmark(
             raise ValueError("valid_mask must match relative_height")
         valid &= supplied
 
-    valid_flat = np.flatnonzero(valid)
-    if valid_flat.size <= anchor_count:
-        raise ValueError("not enough valid pixels for disjoint calibration and evaluation")
-
-    rng = np.random.default_rng(seed)
-    chosen = rng.choice(valid_flat, size=anchor_count, replace=False)
-    anchor_mask = np.zeros(rel.shape, dtype=bool)
-    anchor_mask.flat[chosen] = True
+    anchor_mask = select_sparse_anchor_mask(valid, anchor_count=anchor_count, seed=seed)
 
     correlation_before = _correlation(rel[anchor_mask], ref[anchor_mask])
     if not np.isfinite(correlation_before):
