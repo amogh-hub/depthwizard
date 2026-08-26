@@ -29,4 +29,6 @@ def test_inspect_endpoint_reports_georeferenced_raster(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["crs"] == "EPSG:32643"
-    assert payload["ground_sample_distance_x"] == 1.0
+    # Reported GSD is physical ground distance, so projected CRS scale factor can differ slightly
+    # from the affine coordinate-unit spacing.
+    assert abs(payload["ground_sample_distance_x"] - 1.0) < 0.01
