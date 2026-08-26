@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 
+import numpy as np
+import rasterio
+
+from depthwizard.io.raster import ground_sample_distance_m
+
 ORTHOLOC_BASE_URL = "https://cvg.cit.tum.de/webshare/g/papers/Dhaouadi/OrthoLoC"
 USER_AGENT = "DepthWizard-SIH26175/0.3"
 
@@ -106,6 +111,33 @@ def select_geographic_scenes(
             f"{len(selected_locations)} were available"
         )
     return selected
+
+
+def ortholoc_ground_sample_distance_m(path: str | Path) -> tuple[float, float]:
+    """Return OrthoLoC DOP/DSM pixel spacing in metres.
+
+    The public OrthoLoC dataset contract defines ``scale`` as metres per DOP/DSM pixel. Some
+    unpacked GeoTIFFs preserve that metric grid in their affine transform while omitting a formal
+    CRS. For ordinary georeferenced files we use DepthWizard's CRS-aware geodesic conversion. For
+    the CRS-free OrthoLoC unpacked representation only, the affine basis-vector lengths are thus
+    interpreted as the dataset-declared metric pixel scale. Identity/invalid transforms are
+    rejected instead of silently assuming one metre per pixel.
+    """
+    standard = ground_sample_distance_m(path)
+    if standard is not None:
+        return standard
+
+    with rasterio.open(path) as src:
+        if src.crs is not None:
+            raise ValueError("unexpected failure to derive GSD from a CRS-bearing OrthoLoC raster")
+        if src.transform.is_identity:
+            raise ValueError("CRS-free OrthoLoC raster has no usable affine metric grid")
+        gsd_x = float(np.hypot(src.transform.a, src.transform.d))
+        gsd_y = float(np.hypot(src.transform.b, src.transform.e))
+
+    if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
+        raise ValueError("OrthoLoC affine grid does not encode positive metric pixel spacing")
+    return gsd_x, gsd_y
 
 
 def _fetch_text(url: str, *, timeout_s: float = 60.0) -> str:
