@@ -1,4 +1,10 @@
-import type { RasterMetadata, ReferenceValidationReport } from "../api";
+import type {
+  ProjectProbeResult,
+  ProjectProfileResult,
+  RasterMetadata,
+  ReferenceValidationReport,
+} from "../api";
+import { AnalysisInspector } from "./AnalysisInspector";
 import { StatusPipeline } from "./StatusPipeline";
 
 function gsdLabel(meta: RasterMetadata | null): string {
@@ -27,6 +33,11 @@ type InspectorProps = {
   harmonizedTiles?: number;
   validationEvidence?: ValidationEvidence | null;
   projectValidation?: ReferenceValidationReport | null;
+  activeTool?: string;
+  probe?: ProjectProbeResult | null;
+  measurement?: ProjectProfileResult | null;
+  profile?: ProjectProfileResult | null;
+  analysisBusy?: boolean;
 };
 
 export function Inspector({
@@ -40,6 +51,11 @@ export function Inspector({
   harmonizedTiles,
   validationEvidence,
   projectValidation,
+  activeTool = "Project",
+  probe,
+  measurement,
+  profile,
+  analysisBusy = false,
 }: InspectorProps) {
   const hasInput = metadata !== null;
   const georeferenced = Boolean(metadata?.crs);
@@ -78,6 +94,14 @@ export function Inspector({
           <div className="dw-property"><dt>Tiling</dt><dd>{tileCount === undefined ? "—" : `${tileCount} tiles · ${harmonizedTiles ?? 0} harmonized`}</dd></div>
         </dl>
       </section>
+
+      <AnalysisInspector
+        activeTool={activeTool}
+        probe={probe}
+        measurement={measurement}
+        profile={profile}
+        analysisBusy={analysisBusy}
+      />
 
       <section className="dw-section">
         <div className="dw-section-title">Project reference validation</div>
