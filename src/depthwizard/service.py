@@ -16,11 +16,16 @@ from pydantic import BaseModel
 from depthwizard import __version__
 from depthwizard.contracts import (
     ProcessingRequest,
+    ProjectProbeRequest,
+    ProjectProbeResult,
+    ProjectProfileRequest,
+    ProjectProfileResult,
     ProjectRunStatus,
     RasterMetadata,
     ReferenceValidationReport,
     ReferenceValidationRequest,
 )
+from depthwizard.evaluation.project_analysis import probe_project, sample_project_profile
 from depthwizard.evaluation.project_validation import validate_project_reference
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import inspect_raster
@@ -198,7 +203,7 @@ def validate_reference(request: ReferenceValidationRequest) -> ReferenceValidati
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -216,6 +221,34 @@ def validation_report(project_dir: Path) -> ReferenceValidationReport:
         return ReferenceValidationReport.model_validate(payload)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"unable to read validation metrics: {exc}") from exc
+
+
+@app.post(
+    "/v1/projects/probe",
+    response_model=ProjectProbeResult,
+    dependencies=[Depends(_session_guard)],
+)
+def project_probe(request: ProjectProbeRequest) -> ProjectProbeResult:
+    try:
+        return probe_project(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/projects/profile",
+    response_model=ProjectProfileResult,
+    dependencies=[Depends(_session_guard)],
+)
+def project_profile(request: ProjectProfileRequest) -> ProjectProfileResult:
+    try:
+        return sample_project_profile(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/v1/projects/preview", dependencies=[Depends(_session_guard)])
