@@ -12,7 +12,7 @@ import rasterio
 from depthwizard.evaluation.holdout import sparse_anchor_holdout_benchmark
 from depthwizard.evaluation.metrics import compute_slope_metrics
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
-from depthwizard.io.raster import reproject_to_match, write_float_geotiff
+from depthwizard.io.raster import ground_sample_distance_m, reproject_to_match, write_float_geotiff
 from depthwizard.pipeline.geometry import infer_geometry_scene
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,10 +52,13 @@ def main() -> None:
             raise RuntimeError("OrthoLoC DOP must contain at least three optical bands")
         source_shape = (src.height, src.width)
         source_crs = src.crs.to_string() if src.crs is not None else None
-        gsd_x = abs(float(src.transform.a)) if not src.transform.is_identity else 1.0
-        gsd_y = abs(float(src.transform.e)) if not src.transform.is_identity else 1.0
+    metric_gsd = ground_sample_distance_m(dop_path)
+    if metric_gsd is None:
+        raise RuntimeError("OrthoLoC benchmark requires georeferenced imagery")
+    gsd_x, gsd_y = metric_gsd
 
     print(f"Scene: {source_shape[1]} x {source_shape[0]} | CRS: {source_crs or 'none'}")
+    print(f"Metric GSD: {gsd_x:.3f} x {gsd_y:.3f} m")
     print("Running DA3MONO-LARGE reconstruction once for all anchor budgets...")
     prior = DA3MonocularPrior(device="auto")
     started = time.perf_counter()
@@ -145,8 +148,8 @@ def main() -> None:
         "device": prior._resolved_device or "unknown",
         "shape": list(scene.relative_height.shape),
         "crs": source_crs,
-        "gsd_x": gsd_x,
-        "gsd_y": gsd_y,
+        "gsd_x_m": gsd_x,
+        "gsd_y_m": gsd_y,
         "tile_count": scene.tile_count,
         "harmonized_tiles": scene.harmonized_tiles,
         "inference_seconds": inference_seconds,
