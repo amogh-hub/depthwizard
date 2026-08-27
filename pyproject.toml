@@ -41,6 +41,9 @@ standalone = [
 depthwizard = "depthwizard.cli:app"
 depthwizard-core = "depthwizard.sidecar:main"
 
+[project.entry-points.pyinstaller40]
+hook-dirs = "depthwizard.__pyinstaller:get_hook_dirs"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/depthwizard"]
 
