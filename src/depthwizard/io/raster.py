@@ -14,6 +14,19 @@ from rasterio.warp import reproject
 from depthwizard.contracts import RasterMetadata
 
 
+def _crs_with_authority_metadata(crs: CRS) -> CRS:
+    """Recover registry metadata lost when GDAL/Rasterio exposes an authority CRS as WKT."""
+    if crs.area_of_use is not None:
+        return crs
+    authority = crs.to_authority()
+    if authority is None:
+        return crs
+    try:
+        return CRS.from_authority(authority[0], authority[1])
+    except CRSError:
+        return crs
+
+
 def _longitude_within_bounds(longitude: float, west: float, east: float) -> bool:
     tolerance = 1e-7
     if west <= east:
@@ -35,7 +48,8 @@ def _trusted_wgs84_coordinate(crs: CRS, x: float, y: float) -> tuple[float, floa
     if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
         return None
 
-    area = crs.area_of_use
+    metadata_crs = _crs_with_authority_metadata(crs)
+    area = metadata_crs.area_of_use
     if area is not None:
         if not _longitude_within_bounds(longitude, float(area.west), float(area.east)):
             return None
@@ -59,8 +73,9 @@ def _projected_axis_factors_m(crs: CRS) -> tuple[float, float] | None:
 
 
 def _projected_area_bounds(crs: CRS) -> tuple[float, float, float, float] | None:
-    """Project the CRS area-of-use envelope for direct map-coordinate plausibility checks."""
-    area = crs.area_of_use
+    """Project the registered CRS area-of-use envelope for map-coordinate plausibility checks."""
+    metadata_crs = _crs_with_authority_metadata(crs)
+    area = metadata_crs.area_of_use
     if area is None or area.west > area.east:
         return None
     try:
@@ -100,9 +115,9 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
     """Return trustworthy pixel ground spacing in metres when the raster supports it.
 
     Projected rasters use the affine pixel basis converted from declared CRS linear units, but only
-    when representative scene coordinates are consistent with the CRS area of use. Geographic
-    rasters use WGS84 geodesic neighbour distances. This prevents a syntactically present but
-    dataset-local or otherwise inconsistent CRS from manufacturing absurd metric scale.
+    when representative scene coordinates are consistent with the registered CRS area of use.
+    Geographic rasters use WGS84 geodesic neighbour distances. This prevents syntactically present
+    but dataset-local or otherwise inconsistent CRS metadata from manufacturing absurd metric scale.
 
     The OrthoLoC unpacked benchmark is a special, explicit exception: its public dataset contract
     defines the DOP/DSM pixel scale in metres even though some unpacked TIFFs omit a formal CRS.
@@ -130,6 +145,7 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
             return None
 
         crs = CRS.from_user_input(src.crs)
+        metadata_crs = _crs_with_authority_metadata(crs)
         transform = src.transform
         representative_pixels = {
             (0, 0),
@@ -144,7 +160,7 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
             if factors is None:
                 return None
             area_bounds = _projected_area_bounds(crs)
-            if crs.area_of_use is not None:
+            if metadata_crs.area_of_use is not None:
                 if area_bounds is None:
                     return None
                 for col, row in representative_pixels:
