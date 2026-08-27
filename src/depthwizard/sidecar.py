@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_DA3_PRODUCTION_RUNTIME_MODULES = (
+    "depth_anything_3.api",
+    "depth_anything_3.model.da3",
+    "depth_anything_3.model.dinov2.dinov2",
+    "depth_anything_3.model.dpt",
+)
 
 
 def _startup_trace(phase: str, **details: object) -> None:
@@ -64,11 +70,17 @@ def validate_launch_environment(*, host: str, port: int) -> None:
 
 
 def packaged_geospatial_self_check(*, require_da3: bool | None = None) -> dict[str, object]:
-    """Exercise frozen geospatial wiring and, in bundles, the DA3 geometry import path.
+    """Exercise frozen geospatial wiring and, in bundles, the complete DA3 import closure.
 
     Source-only CI intentionally does not install the vendored DA3 repository, so the DA3 probe is
     mandatory by default only when running under PyInstaller. The standalone builder executes this
     function from the frozen executable, where skipping the DA3 probe is therefore impossible.
+
+    The DA3 probe deliberately does not load model weights or contact the network. It imports the
+    public API plus every configuration-driven module required by the production DA3MONO-LARGE
+    architecture, then exercises the patched affine-inverse helper numerically. This catches both
+    PyInstaller hidden-import gaps and the TorchScript source-loader failure before an app bundle can
+    be accepted.
     """
     _startup_trace("self_check_import_start")
 
@@ -125,22 +137,43 @@ def packaged_geospatial_self_check(*, require_da3: bool | None = None) -> dict[s
     if require_da3 is None:
         require_da3 = bool(getattr(sys, "frozen", False))
 
+    da3_api_imported = False
+    da3_runtime_modules_imported: list[str] = []
     da3_geometry_imported = False
     da3_affine_inverse_probe = "SKIPPED_NON_FROZEN_SOURCE_ENVIRONMENT"
     torch_version: str | None = None
     if require_da3:
+        _startup_trace("self_check_da3_api_import_start")
+        try:
+            for module_name in _DA3_PRODUCTION_RUNTIME_MODULES:
+                importlib.import_module(module_name)
+                da3_runtime_modules_imported.append(module_name)
+            da3_api: Any = importlib.import_module("depth_anything_3.api")
+        except ImportError as exc:
+            missing = getattr(exc, "name", None)
+            raise RuntimeError(
+                "Frozen DA3 runtime import closure is incomplete: "
+                f"{type(exc).__name__}: {exc}; missing_module={missing!r}"
+            ) from exc
+        if getattr(da3_api, "DepthAnything3", None) is None:
+            raise RuntimeError("Frozen depth_anything_3.api does not expose DepthAnything3")
+        da3_api_imported = True
+        _startup_trace("self_check_da3_api_import_complete")
+        _startup_trace(
+            "self_check_da3_runtime_closure_complete",
+            module_count=len(da3_runtime_modules_imported),
+        )
+
         # The pinned DA3 source contains a geometry helper that upstream decorates with
         # torch.jit.script. Import-time scripting needs source access that PyInstaller's frozen
         # loader intentionally does not expose. The build applies an audited script_if_tracing
         # compatibility patch; exercise the exact helper here so this failure class is caught before
-        # an app is bundled. Resolve the vendored module dynamically so source-only CI does not need
-        # an installed DA3 package merely to type-check this frozen-runtime-only path.
+        # an app is bundled.
         _startup_trace("self_check_da3_geometry_import_start")
         import torch
 
         geometry_module: Any = importlib.import_module("depth_anything_3.utils.geometry")
         affine_inverse = geometry_module.affine_inverse
-
         _startup_trace("self_check_da3_geometry_import_complete")
         _startup_trace("self_check_da3_geometry_probe_start")
         transform = torch.eye(4, dtype=torch.float32)
@@ -157,7 +190,7 @@ def packaged_geospatial_self_check(*, require_da3: bool | None = None) -> dict[s
         torch_version = torch.__version__
 
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK",
         "rasterio_version": rasterio.__version__,
         "gdal_version": rasterio.__gdal_version__,
@@ -166,6 +199,9 @@ def packaged_geospatial_self_check(*, require_da3: bool | None = None) -> dict[s
         "rasterio_serde_imported": rasterio_serde.__name__ == "rasterio.serde",
         "epsg_roundtrip": 32643,
         "da3_probe_required": require_da3,
+        "da3_api_imported": da3_api_imported,
+        "da3_runtime_modules_required": list(_DA3_PRODUCTION_RUNTIME_MODULES),
+        "da3_runtime_modules_imported": da3_runtime_modules_imported,
         "da3_geometry_imported": da3_geometry_imported,
         "da3_affine_inverse_probe": da3_affine_inverse_probe,
         "network_used": False,
