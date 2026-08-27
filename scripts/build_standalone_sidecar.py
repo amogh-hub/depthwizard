@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os
 import platform
 import shutil
-import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+from scripts.standalone_integrity import sha256_file, tree_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 TAURI_DIR = ROOT / "apps" / "desktop" / "src-tauri"
@@ -18,10 +18,29 @@ RUNTIME_DIR = TAURI_DIR / "resources" / "depthwizard-core-runtime"
 BUILD_ROOT = ROOT / "artifacts" / "standalone" / "pyinstaller"
 ENTRY = ROOT / "scripts" / "depthwizard_sidecar_entry.py"
 DA3_VENDOR = ROOT / ".vendor" / "depth-anything-3" / "src"
+RUNTIME_MANIFEST_NAME = "runtime-manifest.json"
 # Frozen native scientific runtimes can incur a one-time macOS cold-start/dyld validation cost.
 # This watchdog is deliberately a correctness timeout, not a performance acceptance threshold.
-# Startup time is recorded as evidence and is evaluated separately by RT5/RT7 performance gates.
+# Startup time is recorded as evidence and is evaluated separately by RT7 performance gates.
 SELF_CHECK_TIMEOUT_SECONDS = 120.0
+
+
+def _source_git_sha() -> str:
+    override = os.environ.get("DEPTHWIZARD_BUILD_GIT_SHA", "").strip()
+    if override:
+        value = override
+    else:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        value = result.stdout.strip()
+    if len(value) != 40 or any(character not in "0123456789abcdefABCDEF" for character in value):
+        raise RuntimeError(f"invalid DepthWizard source Git SHA for standalone build: {value!r}")
+    return value.lower()
 
 
 def _host_triple() -> str:
@@ -43,40 +62,6 @@ def _host_triple() -> str:
         if line.startswith("host: "):
             return line.split(":", 1)[1].strip()
     raise RuntimeError("unable to resolve Rust host target triple")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _tree_identity(root: Path) -> tuple[str, int, int, int]:
-    """Return deterministic SHA, regular-file count, symlink count and logical bytes."""
-    digest = hashlib.sha256()
-    file_count = 0
-    symlink_count = 0
-    logical_bytes = 0
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        relative = path.relative_to(root).as_posix().encode("utf-8")
-        metadata = path.lstat()
-        mode = stat.S_IMODE(metadata.st_mode)
-        if path.is_symlink():
-            target = os.readlink(path).encode("utf-8")
-            digest.update(b"L\0" + relative + b"\0" + str(mode).encode() + b"\0" + target + b"\n")
-            symlink_count += 1
-            continue
-        if path.is_file():
-            digest.update(b"F\0" + relative + b"\0" + str(mode).encode() + b"\0")
-            with path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-                    logical_bytes += len(chunk)
-            digest.update(b"\n")
-            file_count += 1
-    return digest.hexdigest(), file_count, symlink_count, logical_bytes
 
 
 def _read_trace(path: Path) -> list[dict[str, object]]:
@@ -177,6 +162,7 @@ def main() -> None:
             "`python -m pip install -e '.[standalone]'`"
         )
 
+    source_git_sha = _source_git_sha()
     triple = _host_triple()
     extension = ".exe" if os.name == "nt" else ""
     dist_dir = BUILD_ROOT / "dist"
@@ -253,30 +239,43 @@ def main() -> None:
         staged_executable.chmod(staged_executable.stat().st_mode | 0o111)
 
     self_check, self_check_elapsed, startup_phases = _qualify_frozen_runtime(staged_executable)
-    executable_sha = _sha256(staged_executable)
+    executable_sha = sha256_file(staged_executable)
+    payload_sha, payload_files, payload_symlinks, payload_bytes = tree_identity(RUNTIME_DIR)
     runtime_manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
+        "source_git_sha": source_git_sha,
         "target_triple": triple,
         "packaging_mode": "pyinstaller_onedir",
         "executable": staged_executable.name,
         "executable_sha256": executable_sha,
+        "payload_tree_sha256": payload_sha,
+        "payload_regular_files": payload_files,
+        "payload_symlinks": payload_symlinks,
+        "payload_logical_bytes": payload_bytes,
         "frozen_self_check": self_check,
         "frozen_self_check_elapsed_seconds": round(self_check_elapsed, 3),
         "startup_phases": startup_phases,
         "model_loaded_during_packaging_check": False,
         "network_used_during_packaging_check": False,
     }
-    runtime_manifest_path = RUNTIME_DIR / "runtime-manifest.json"
+    runtime_manifest_path = RUNTIME_DIR / RUNTIME_MANIFEST_NAME
     runtime_manifest_path.write_text(
         json.dumps(runtime_manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
-    runtime_sha, file_count, symlink_count, logical_bytes = _tree_identity(RUNTIME_DIR)
+    runtime_sha, file_count, symlink_count, logical_bytes = tree_identity(RUNTIME_DIR)
+    verified_payload_sha, _, _, _ = tree_identity(
+        RUNTIME_DIR, excluded_relative_paths={RUNTIME_MANIFEST_NAME}
+    )
+    if verified_payload_sha != payload_sha:
+        raise RuntimeError("runtime payload identity changed while writing qualification manifest")
+
     report = {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": "PASS_QUALIFIED_SIDECAR_BUILD",
+        "source_git_sha": source_git_sha,
         "target_triple": triple,
         "platform": platform.platform(),
         "python": sys.version,
@@ -285,6 +284,7 @@ def main() -> None:
         "binary": str(staged_executable.resolve()),
         "binary_bytes": staged_executable.stat().st_size,
         "binary_sha256": executable_sha,
+        "runtime_payload_tree_sha256": payload_sha,
         "runtime_tree_sha256": runtime_sha,
         "runtime_regular_files": file_count,
         "runtime_symlinks": symlink_count,
@@ -313,12 +313,14 @@ def main() -> None:
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     print("DepthWizard packaged scientific runtime build + qualification: PASS")
+    print(f"Source Git SHA: {source_git_sha}")
     print(f"Target: {triple}")
     print("Packaging mode: PyInstaller onedir staged as a Tauri resource tree")
     print(f"Runtime: {RUNTIME_DIR}")
     print(f"Runtime logical size: {logical_bytes / (1024 * 1024):.2f} MiB")
     print(f"Runtime regular files: {file_count}; symlinks: {symlink_count}")
     print(f"Executable SHA-256: {executable_sha}")
+    print(f"Runtime payload SHA-256: {payload_sha}")
     print(f"Runtime tree SHA-256: {runtime_sha}")
     print(f"Frozen geospatial self-check: PASS in {self_check_elapsed:.3f} s")
     print(f"Report: {report_path}")
