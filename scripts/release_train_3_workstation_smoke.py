@@ -19,8 +19,10 @@ from depthwizard.provenance.manifest import sha256_file
 from depthwizard.visualization.raster_preview import PreviewLayer, render_project_layer_preview
 from scripts.release_train_3_spatial_foundation_smoke import (
     PROJECT_DIR,
-    REPORT_PATH as SPATIAL_FOUNDATION_REPORT,
     _direct_affine_spacing_m,
+)
+from scripts.release_train_3_spatial_foundation_smoke import (
+    REPORT_PATH as SPATIAL_FOUNDATION_REPORT,
 )
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

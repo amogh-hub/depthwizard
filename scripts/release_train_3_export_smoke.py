@@ -7,8 +7,8 @@ from depthwizard.contracts import ProjectExportRequest
 from depthwizard.export.project_package import build_project_export, load_project_export
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.provenance.manifest import sha256_file
+from scripts.release_train_3_spatial_foundation_smoke import PROJECT_DIR
 from scripts.release_train_3_spatial_foundation_smoke import (
-    PROJECT_DIR,
     REPORT_PATH as SPATIAL_FOUNDATION_REPORT,
 )
 

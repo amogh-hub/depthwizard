@@ -11,8 +11,10 @@ from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.provenance.manifest import sha256_file
 from scripts.release_train_3_spatial_foundation_smoke import (
     PROJECT_DIR,
-    REPORT_PATH as SPATIAL_FOUNDATION_REPORT,
     _direct_affine_spacing_m,
+)
+from scripts.release_train_3_spatial_foundation_smoke import (
+    REPORT_PATH as SPATIAL_FOUNDATION_REPORT,
 )
 
 
