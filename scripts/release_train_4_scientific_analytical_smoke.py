@@ -135,7 +135,7 @@ def _load_calibration(project_dir: Path) -> dict[str, object]:
         raise RuntimeError(f"calibration evidence is missing: {project_dir}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise RuntimeError("calibration evidence root must be an object")
+        raise TypeError("calibration evidence root must be an object")
     return payload
 
 
@@ -287,13 +287,13 @@ def _write_report(name: str, payload: dict[str, object]) -> Path:
 def _verified_gcp_source(calibration: dict[str, object]) -> dict[str, object]:
     evidence = calibration.get("evidence")
     if not isinstance(evidence, dict):
-        raise RuntimeError("GCP calibration evidence is not an object")
+        raise TypeError("GCP calibration evidence is not an object")
     gcp = evidence.get("gcp")
     if not isinstance(gcp, dict):
-        raise RuntimeError("GCP-only calibration evidence is missing its gcp record")
+        raise TypeError("GCP-only calibration evidence is missing its gcp record")
     source = gcp.get("source_evidence")
     if not isinstance(source, dict):
-        raise RuntimeError("GCP-only calibration evidence is missing source identity")
+        raise TypeError("GCP-only calibration evidence is missing source identity")
     return source
 
 
@@ -369,7 +369,7 @@ def main() -> None:
     structure = _structure_report(gcp_dir)
     structure_height = structure.get("structure_height_m")
     if not isinstance(structure_height, (int, float)):
-        raise RuntimeError("structure acceptance report is missing numeric structure_height_m")
+        raise TypeError("structure acceptance report is missing numeric structure_height_m")
     previews = _preview_report(gcp_dir)
 
     policy = current_production_estimator_decision()
