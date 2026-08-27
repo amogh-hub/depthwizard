@@ -40,21 +40,16 @@ type DragState = {
   startX: number;
   startY: number;
   panning: boolean;
+  suppressClick: boolean;
 };
 
-type PinchState = {
-  distance: number;
-  midpointX: number;
-  midpointY: number;
-};
+type PinchState = { distance: number };
 
 const FIT_MARGIN = 12;
 const CLICK_DRAG_THRESHOLD = 5;
 
 function fittedRect(host: HTMLDivElement, image: HTMLImageElement): RasterBaseRect | null {
-  if (!image.naturalWidth || !image.naturalHeight || !host.clientWidth || !host.clientHeight) {
-    return null;
-  }
+  if (!image.naturalWidth || !image.naturalHeight || !host.clientWidth || !host.clientHeight) return null;
   const availableWidth = Math.max(host.clientWidth - FIT_MARGIN * 2, 1);
   const availableHeight = Math.max(host.clientHeight - FIT_MARGIN * 2, 1);
   const imageAspect = image.naturalWidth / image.naturalHeight;
@@ -90,7 +85,8 @@ function formatScaleDistance(metres: number): string {
 
 function editableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.matches("input, textarea, select, [contenteditable='true']") || Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+  return target.matches("input, textarea, select, [contenteditable='true']")
+    || Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
 }
 
 export function RasterAnalysisViewport({
@@ -112,6 +108,7 @@ export function RasterAnalysisViewport({
 }: RasterAnalysisViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const viewStateRef = useRef(viewState);
   const pointersRef = useRef(new Map<number, PointerSample>());
   const dragRef = useRef<DragState | null>(null);
   const pinchRef = useRef<PinchState | null>(null);
@@ -120,6 +117,12 @@ export function RasterAnalysisViewport({
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [hoverPoint, setHoverPoint] = useState<NormalizedPoint | null>(null);
   const navigationEnabled = interactionMode === "navigate" || !interactive;
+  viewStateRef.current = viewState;
+
+  const commitViewState = (next: RasterViewState) => {
+    viewStateRef.current = next;
+    onViewStateChange(next);
+  };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -167,7 +170,7 @@ export function RasterAnalysisViewport({
     if (!host || !baseRect) return null;
     const local = eventLocalPoint(host, clientX, clientY);
     return normalizedRasterPoint(
-      viewState,
+      viewStateRef.current,
       local.x,
       local.y,
       host.clientWidth,
@@ -180,9 +183,9 @@ export function RasterAnalysisViewport({
     const host = hostRef.current;
     if (!host || !baseRect) return;
     const local = eventLocalPoint(host, clientX, clientY);
-    onViewStateChange(
+    commitViewState(
       zoomRasterViewAt(
-        viewState,
+        viewStateRef.current,
         nextScale,
         local.x,
         local.y,
@@ -196,8 +199,8 @@ export function RasterAnalysisViewport({
   const panBy = (dx: number, dy: number) => {
     const host = hostRef.current;
     if (!host || !baseRect) return;
-    onViewStateChange(
-      panRasterView(viewState, dx, dy, host.clientWidth, host.clientHeight, baseRect),
+    commitViewState(
+      panRasterView(viewStateRef.current, dx, dy, host.clientWidth, host.clientHeight, baseRect),
     );
   };
 
@@ -210,11 +213,7 @@ export function RasterAnalysisViewport({
 
     if (event.pointerType === "touch" && pointersRef.current.size >= 2) {
       const [a, b] = Array.from(pointersRef.current.values()).slice(0, 2);
-      pinchRef.current = {
-        distance: Math.max(pointerDistance(a, b), 1),
-        midpointX: (a.x + b.x) / 2,
-        midpointY: (a.y + b.y) / 2,
-      };
+      pinchRef.current = { distance: Math.max(pointerDistance(a, b), 1) };
       dragRef.current = null;
       return;
     }
@@ -227,6 +226,7 @@ export function RasterAnalysisViewport({
       startX: event.clientX,
       startY: event.clientY,
       panning,
+      suppressClick: event.button === 1 || spaceHeld,
     };
   };
 
@@ -243,11 +243,11 @@ export function RasterAnalysisViewport({
       const midpointY = (a.y + b.y) / 2;
       const previous = pinchRef.current;
       if (previous) {
-        const nextScale = viewState.scale * (currentDistance / Math.max(previous.distance, 1));
-        onViewStateChange(
+        const current = viewStateRef.current;
+        commitViewState(
           zoomRasterViewAt(
-            viewState,
-            nextScale,
+            current,
+            current.scale * (currentDistance / Math.max(previous.distance, 1)),
             midpointX,
             midpointY,
             host.clientWidth,
@@ -256,7 +256,7 @@ export function RasterAnalysisViewport({
           ),
         );
       }
-      pinchRef.current = { distance: currentDistance, midpointX, midpointY };
+      pinchRef.current = { distance: currentDistance };
       setHoverPoint(null);
       return;
     }
@@ -284,14 +284,14 @@ export function RasterAnalysisViewport({
     const movement = drag && drag.pointerId === event.pointerId
       ? Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY)
       : Number.POSITIVE_INFINITY;
-    const wasPanning = Boolean(drag?.panning);
+    const suppressClick = Boolean(drag?.suppressClick);
     pointersRef.current.delete(event.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
     if (drag?.pointerId === event.pointerId) dragRef.current = null;
 
     if (
       interactive
-      && !wasPanning
+      && !suppressClick
       && movement <= CLICK_DRAG_THRESHOLD
       && event.button === 0
       && onSelectPoint
@@ -310,21 +310,19 @@ export function RasterAnalysisViewport({
   const wheel = (event: React.WheelEvent<HTMLDivElement>) => {
     if (!baseRect) return;
     event.preventDefault();
-    const factor = Math.exp(-event.deltaY * 0.0015);
-    zoomAtClient(event.clientX, event.clientY, viewState.scale * factor);
+    zoomAtClient(event.clientX, event.clientY, viewStateRef.current.scale * Math.exp(-event.deltaY * 0.0015));
   };
 
   const doubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!navigationEnabled) return;
     event.preventDefault();
-    zoomAtClient(event.clientX, event.clientY, viewState.scale * 2);
+    zoomAtClient(event.clientX, event.clientY, viewStateRef.current.scale * 2);
   };
 
   const updateVertex = (index: number, clientX: number, clientY: number) => {
     const point = normalizedFromClient(clientX, clientY);
     if (!point || !onPolygonChange) return;
-    const next = polygonPoints.map((item, itemIndex) => itemIndex === index ? point : item);
-    onPolygonChange(next);
+    onPolygonChange(polygonPoints.map((item, itemIndex) => itemIndex === index ? point : item));
   };
 
   const scaleBar = useMemo(() => {
@@ -332,10 +330,7 @@ export function RasterAnalysisViewport({
     const metresPerCssPixel = (sourceWidth * groundSampleDistanceM) / Math.max(geometry.width, 1);
     const metres = niceScaleDistance(metresPerCssPixel * 120);
     if (metres <= 0) return null;
-    return {
-      metres,
-      width: Math.min(180, Math.max(36, metres / metresPerCssPixel)),
-    };
+    return { metres, width: Math.min(180, Math.max(36, metres / metresPerCssPixel)) };
   }, [geometry, groundSampleDistanceM, sourceWidth]);
 
   const previewEnd = lineEnd ?? hoverPoint;
@@ -359,19 +354,11 @@ export function RasterAnalysisViewport({
         src={src}
         alt={alt}
         draggable={false}
-        style={geometry ? {
-          left: geometry.left,
-          top: geometry.top,
-          width: geometry.width,
-          height: geometry.height,
-        } : undefined}
+        style={geometry ? { left: geometry.left, top: geometry.top, width: geometry.width, height: geometry.height } : undefined}
       />
 
       {geometry && (
-        <div
-          className="dw-raster-overlay"
-          style={{ left: geometry.left, top: geometry.top, width: geometry.width, height: geometry.height }}
-        >
+        <div className="dw-raster-overlay" style={{ left: geometry.left, top: geometry.top, width: geometry.width, height: geometry.height }}>
           {lineStart && previewEnd && (
             <svg className="dw-analysis-line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               <line
@@ -385,11 +372,9 @@ export function RasterAnalysisViewport({
           )}
           {polygonPoints.length > 1 && (
             <svg className="dw-structure-polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-              {polygonClosed && polygonPoints.length >= 3 ? (
-                <polygon points={svgPoints(polygonPoints)} />
-              ) : (
-                <polyline points={svgPoints(polygonPoints)} />
-              )}
+              {polygonClosed && polygonPoints.length >= 3
+                ? <polygon points={svgPoints(polygonPoints)} />
+                : <polyline points={svgPoints(polygonPoints)} />}
             </svg>
           )}
           {lineStart && <span className="dw-analysis-marker" data-kind="start" style={{ left: `${lineStart.x * 100}%`, top: `${lineStart.y * 100}%` }}>A</span>}
@@ -420,13 +405,8 @@ export function RasterAnalysisViewport({
             </button>
           ))}
           {cursorPoint && (
-            <span
-              className="dw-analysis-crosshair"
-              style={{ left: `${cursorPoint.x * 100}%`, top: `${cursorPoint.y * 100}%` }}
-              aria-hidden="true"
-            >
-              <i />
-              <b />
+            <span className="dw-analysis-crosshair" style={{ left: `${cursorPoint.x * 100}%`, top: `${cursorPoint.y * 100}%` }} aria-hidden="true">
+              <i /><b />
             </span>
           )}
         </div>
@@ -434,29 +414,26 @@ export function RasterAnalysisViewport({
 
       {baseRect && (
         <div className="dw-map-navigation" onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => onViewStateChange(DEFAULT_RASTER_VIEW_STATE)} title="Fit the full raster to the viewport">Fit</button>
-          <button
-            type="button"
-            onClick={() => {
-              const host = hostRef.current;
-              if (!host) return;
-              zoomAtClient(host.getBoundingClientRect().left + host.clientWidth / 2, host.getBoundingClientRect().top + host.clientHeight / 2, viewState.scale / 1.35);
-            }}
-            aria-label="Zoom out"
-          >−</button>
+          <button type="button" onClick={() => commitViewState(DEFAULT_RASTER_VIEW_STATE)} title="Fit the full raster to the viewport">Fit</button>
+          <button type="button" onClick={() => {
+            const host = hostRef.current;
+            if (!host) return;
+            const bounds = host.getBoundingClientRect();
+            zoomAtClient(bounds.left + host.clientWidth / 2, bounds.top + host.clientHeight / 2, viewStateRef.current.scale / 1.35);
+          }} aria-label="Zoom out">−</button>
           <span className="dw-map-zoom">{Math.round(viewState.scale * 100)}%</span>
+          <button type="button" onClick={() => {
+            const host = hostRef.current;
+            if (!host) return;
+            const bounds = host.getBoundingClientRect();
+            zoomAtClient(bounds.left + host.clientWidth / 2, bounds.top + host.clientHeight / 2, viewStateRef.current.scale * 1.35);
+          }} aria-label="Zoom in">+</button>
           <button
             type="button"
-            onClick={() => {
-              const host = hostRef.current;
-              if (!host) return;
-              zoomAtClient(host.getBoundingClientRect().left + host.clientWidth / 2, host.getBoundingClientRect().top + host.clientHeight / 2, viewState.scale * 1.35);
-            }}
-            aria-label="Zoom in"
-          >+</button>
-          <button
-            type="button"
-            onClick={() => onViewStateChange({ ...viewState, scale: oneToOneScale(sourceWidth ?? imageRef.current?.naturalWidth ?? 1, baseRect.width) })}
+            onClick={() => commitViewState({
+              ...viewStateRef.current,
+              scale: oneToOneScale(sourceWidth ?? imageRef.current?.naturalWidth ?? 1, baseRect.width),
+            })}
             title="Display one source raster pixel per CSS pixel"
           >1:1</button>
         </div>
@@ -470,7 +447,7 @@ export function RasterAnalysisViewport({
       )}
 
       <div className="dw-navigation-help" aria-hidden="true">
-        {navigationEnabled ? "Drag to pan · wheel/pinch to zoom · double-click to zoom" : "Space + drag to pan · wheel/pinch to zoom"}
+        {navigationEnabled ? "Drag to pan · wheel/pinch to zoom · click to inspect" : "Space + drag to pan · wheel/pinch to zoom"}
       </div>
     </div>
   );
