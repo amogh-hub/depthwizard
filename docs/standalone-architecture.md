@@ -48,22 +48,11 @@ The self-check must successfully:
 
 A build that times out, crashes, cannot resolve bundled geospatial data, or produces malformed evidence is rejected. Only a passing runtime receives `QUALIFIED_DEPTHWIZARD_CORE_RUNTIME` in its bundled `runtime-manifest.json` and `PASS_QUALIFIED_SIDECAR_BUILD` in the external build report.
 
-This closes the failure class where a frozen executable was previously reported as built even though its packaged geospatial runtime could not become healthy.
-
 ## Startup diagnostics
 
-When `DEPTHWIZARD_STARTUP_TRACE=<path>` is explicitly set for acceptance or diagnostics, the scientific core emits machine-readable JSONL startup phases such as:
+When `DEPTHWIZARD_STARTUP_TRACE=<path>` is explicitly set for acceptance or diagnostics, the scientific core emits machine-readable JSONL startup phases. The trace never records the session token. Normal launches do not write a trace. Acceptance failures include the last observed startup phase instead of returning an opaque connection-refused timeout.
 
-- `python_entry`
-- `arguments_parsed`
-- `launch_environment_validated`
-- `offline_network_guard_installed`
-- `uvicorn_import_complete`
-- `service_import_start`
-- `service_import_complete`
-- `server_start`
-
-The trace never records the session token. Normal launches do not write a trace. Acceptance failures include the last observed startup phase instead of returning an opaque connection-refused timeout.
+The qualified Apple Silicon runtime has demonstrated a cold packaged-core readiness time of roughly 41 seconds. Tauri therefore uses a 90-second liveness watchdog. This watchdog is a correctness bound, not a performance claim; finale-Mac FPS and responsiveness qualification remains RT7 evidence.
 
 ## Offline-after-install contract
 
@@ -72,35 +61,50 @@ Packaged launches set:
 - `DEPTHWIZARD_OFFLINE_CORE=1`
 - `HF_HUB_OFFLINE=1`
 - `TRANSFORMERS_OFFLINE=1`
+- `PROJ_NETWORK=OFF`
 
 When `DEPTHWIZARD_OFFLINE_CORE=1`, the sidecar also installs a process-wide Python INET connection guard. IPv4/IPv6 connections are permitted only to explicit loopback destinations (`127.0.0.0/8`, `::1`, or `localhost`). Other hostnames are not DNS-resolved and are rejected before connection. This is an application-layer egress barrier in addition to the Hugging Face/Transformers offline flags; it is not presented as an operating-system firewall.
 
-The final core uses model assets already installed/cached on the machine. It must not silently download model weights during an offline judging run. Dedicated RT5 acceptance must still prove that DA3 inference succeeds in this mode on the finale Mac with the required assets present.
+The final core uses model assets already installed/cached on the machine. It must not silently download model weights during an offline judging run. The consolidated RT5 acceptance proves that real DA3 reconstruction succeeds while this packaged offline policy is active.
 
-## Acceptance hooks
+## Acceptance-only control hooks
 
-Normal production launches do not write the session token anywhere. For deterministic bundle-lifecycle acceptance only, the Tauri shell honors two environment variables:
+Normal production launches do not write the session token to disk. Deterministic acceptance has three explicit opt-in hooks, all disabled unless their environment variables are supplied by the acceptance runner:
 
-- `DEPTHWIZARD_ACCEPTANCE_BOOT_REPORT=<path>` writes a non-secret boot report after the sidecar is healthy. The report records the loopback endpoint, sidecar PID, offline state and token bit length, but never the token value.
-- `DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS=<500..60000>` requests a graceful app exit after the specified delay so the acceptance runner can prove that the owned sidecar terminates with the desktop process.
+- `DEPTHWIZARD_ACCEPTANCE_BOOT_REPORT=<path>` writes a non-secret boot report after the sidecar is healthy. It records endpoint, PID, offline state and token bit length, never the token value.
+- `DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS=<500..60000>` supports the short bundle-lifecycle smoke.
+- `DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH=<path>` creates a mode-0600 ephemeral control file containing the loopback endpoint, token and sidecar PID so the external RT5 acceptance runner can drive the already-running Tauri-owned sidecar through the same authenticated API used by the desktop. The runner deletes this file immediately after reading it, and Tauri removes it again on shutdown if necessary.
+- `DEPTHWIZARD_ACCEPTANCE_EXIT_SIGNAL=<path>` lets the RT5 runner request a normal Tauri exit after the full scientific workflow, so Rust shutdown still kills and reaps the owned sidecar.
 
-These variables are unused during ordinary application launches.
+The ephemeral control channel is test-only and is never used by normal production launches. Its token is never copied into final evidence artifacts.
 
-## Evidence boundaries
+## RT5 acceptance
 
-`make release-train-5-sidecar-smoke` validates the **already-qualified** frozen runtime's process/security contract. It refuses to run if the staged executable no longer matches the qualified build report. It checks loopback readiness, startup phases, missing-token rejection, wrong-token rejection, authorized raster inspection, forced offline environment, strict Python non-loopback egress policy and clean process termination.
+`make release-train-5-sidecar-smoke` validates the already-qualified frozen runtime's process/security contract: loopback readiness, startup phases, missing/wrong-token rejection, authorized raster inspection, offline policy and clean process termination.
 
-`make release-train-5-app-smoke` is macOS-only and validates the real packaged `.app`: bundle/executable presence, the exact qualified onedir runtime resource, the carried frozen self-check manifest, Tauri-owned startup, loopback readiness, non-export of the session token, offline/egress policy, no user-visible terminal requirement, and sidecar termination on graceful desktop exit.
+`make release-train-5-app-smoke` validates the real packaged `.app`: qualified runtime resource integrity, Tauri-owned startup, loopback readiness, non-export of the token to evidence, offline policy, no user-visible terminal and child termination on graceful desktop exit.
 
-`make release-train-5-standalone-acceptance` runs both RT5 lifecycle/security smokes after `make standalone-build`.
+`make release-train-5-full-smoke` launches the real packaged `DepthWizard.app` and then, through the authenticated loopback sidecar owned by that same Tauri process, proves:
 
-Those smokes are **not** sufficient to close standalone Gate G. Final RT5 closure additionally requires evidence for:
+- a corrupt raster is rejected without losing the service;
+- a deliberately failing runtime job reaches terminal `failed` state instead of wedging the queue;
+- the service remains healthy after that runtime failure;
+- a subsequent fresh OrthoLoC optical project completes through the packaged DA3 path with offline policy active;
+- DSM/rDSM/slope artifacts are present and hash-consistent with the project manifest;
+- downstream reference validation succeeds;
+- packaged terrain mesh/LOD generation succeeds;
+- packaged project export succeeds and the ZIP passes integrity verification;
+- the application exits normally and its Rust-owned sidecar is terminated and reaped.
 
-- offline DA3 reconstruction after model assets have been installed;
-- fresh-image process → validate → export from clean application launch;
-- malformed-input and runtime-failure recovery behavior;
-- final-laptop performance evidence;
-- long-running stability/soak evidence;
-- a clean-machine installation/reproducibility run.
+`make release-train-5-standalone-acceptance` runs all three RT5 acceptance layers in one command.
 
-No standalone acceptance may be presented as DSM-accuracy, terrain-generalization, cross-sensor, or learned-model-promotion evidence.
+## Frozen release-train boundary
+
+A passing consolidated RT5 acceptance closes **RT5 — Standalone Production Suite engineering scope**: packaged scientific runtime, real no-terminal Tauri application lifecycle, secure loopback/session model, offline DA3 execution, fresh process→validate→mesh→export flow, and recoverable malformed/runtime failures.
+
+It does **not** consume or replace the already-frozen later release trains:
+
+- **RT6 — Final Scientific Evidence Campaign** owns the four-terrain geographically disjoint benchmark, cross-sensor holdout, same-input baselines, ablations, seam diagnostics, confidence reliability, structural-height/slope/projection validation and final claim matrix.
+- **RT7 — Finale Qualification & Submission** owns finale-Mac FPS evidence, the two-hour stability soak, clean-machine installation/reproducibility, final documentation/evidence audit, real screenshots, six-slide SIH PDF, demo video and judge Q&A package.
+
+Therefore RT5 engineering acceptance must never be presented as DSM-accuracy, terrain-generalization, cross-sensor or learned-model-promotion evidence, and it must not be used to pre-claim the RT7 performance/soak/clean-machine gates.
