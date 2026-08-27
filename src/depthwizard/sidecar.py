@@ -63,19 +63,37 @@ def validate_launch_environment(*, host: str, port: int) -> None:
 def packaged_geospatial_self_check() -> dict[str, object]:
     """Exercise frozen Rasterio/GDAL/PROJ wiring without touching model or network state."""
     _startup_trace("self_check_import_start")
+
+    _startup_trace("self_check_numpy_import_start")
     import numpy as np
+
+    _startup_trace("self_check_numpy_import_complete")
+    _startup_trace("self_check_pyproj_import_start")
     import pyproj
+
+    _startup_trace("self_check_pyproj_import_complete")
+    _startup_trace("self_check_rasterio_import_start")
     import rasterio
+
+    _startup_trace("self_check_rasterio_import_complete")
+    _startup_trace("self_check_rasterio_serde_import_start")
     import rasterio.serde as rasterio_serde
+
+    _startup_trace("self_check_rasterio_serde_import_complete")
+    _startup_trace("self_check_rasterio_io_import_start")
     from rasterio.io import MemoryFile
     from rasterio.transform import from_origin
 
+    _startup_trace("self_check_rasterio_io_import_complete")
     _startup_trace("self_check_import_complete")
 
+    _startup_trace("self_check_pyproj_epsg_start")
     pyproj_crs = pyproj.CRS.from_epsg(32643)
     if pyproj_crs.to_epsg() != 32643:
         raise RuntimeError("PyProj failed to resolve EPSG:32643 from bundled PROJ data")
+    _startup_trace("self_check_pyproj_epsg_complete")
 
+    _startup_trace("self_check_rasterio_roundtrip_start")
     data = np.zeros((1, 2, 2), dtype=np.uint8)
     with MemoryFile() as memory_file:
         with memory_file.open(
@@ -94,6 +112,7 @@ def packaged_geospatial_self_check() -> dict[str, object]:
                 raise RuntimeError(
                     "Rasterio/GDAL failed to round-trip EPSG:32643 from bundled geospatial data"
                 )
+    _startup_trace("self_check_rasterio_roundtrip_complete")
 
     report = {
         "schema_version": 1,
@@ -134,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if os.environ.get("DEPTHWIZARD_OFFLINE_CORE") == "1":
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        os.environ.setdefault("PROJ_NETWORK", "OFF")
         from depthwizard.network_guard import install_strict_offline_network_guard
 
         install_strict_offline_network_guard()
