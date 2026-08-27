@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -131,10 +133,13 @@ def packaged_geospatial_self_check(*, require_da3: bool | None = None) -> dict[s
         # torch.jit.script. Import-time scripting needs source access that PyInstaller's frozen
         # loader intentionally does not expose. The build applies an audited script_if_tracing
         # compatibility patch; exercise the exact helper here so this failure class is caught before
-        # an app is bundled.
+        # an app is bundled. Resolve the vendored module dynamically so source-only CI does not need
+        # an installed DA3 package merely to type-check this frozen-runtime-only path.
         _startup_trace("self_check_da3_geometry_import_start")
         import torch
-        from depth_anything_3.utils.geometry import affine_inverse
+
+        geometry_module: Any = importlib.import_module("depth_anything_3.utils.geometry")
+        affine_inverse = geometry_module.affine_inverse
 
         _startup_trace("self_check_da3_geometry_import_complete")
         _startup_trace("self_check_da3_geometry_probe_start")
