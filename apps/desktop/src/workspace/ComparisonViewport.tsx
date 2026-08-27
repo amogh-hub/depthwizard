@@ -23,6 +23,7 @@ type ComparisonViewportProps = {
   onSelectPoint?: (point: NormalizedPoint) => void;
 };
 
+type PointerSample = { x: number; y: number };
 type DragState = {
   pointerId: number;
   lastX: number;
@@ -51,7 +52,13 @@ function fittedRect(host: HTMLDivElement, image: HTMLImageElement): RasterBaseRe
 }
 
 function formatScaleDistance(metres: number): string {
-  return metres >= 1000 ? `${(metres / 1000).toFixed(metres >= 10000 ? 0 : 1)} km` : `${metres.toFixed(metres >= 10 ? 0 : 1)} m`;
+  return metres >= 1000
+    ? `${(metres / 1000).toFixed(metres >= 10000 ? 0 : 1)} km`
+    : `${metres.toFixed(metres >= 10 ? 0 : 1)} m`;
+}
+
+function distance(a: PointerSample, b: PointerSample): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 export function ComparisonViewport({
@@ -66,9 +73,18 @@ export function ComparisonViewport({
 }: ComparisonViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const predictionRef = useRef<HTMLImageElement>(null);
+  const viewStateRef = useRef(viewState);
   const dragRef = useRef<DragState | null>(null);
+  const pointersRef = useRef(new Map<number, PointerSample>());
+  const pinchDistanceRef = useRef<number | null>(null);
   const [split, setSplit] = useState(50);
   const [baseRect, setBaseRect] = useState<RasterBaseRect | null>(null);
+  viewStateRef.current = viewState;
+
+  const commitViewState = (next: RasterViewState) => {
+    viewStateRef.current = next;
+    onViewStateChange(next);
+  };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -91,22 +107,46 @@ export function ComparisonViewport({
     return rasterViewportGeometry(viewState, host.clientWidth, host.clientHeight, baseRect);
   }, [baseRect, viewState]);
 
-  const localPoint = (clientX: number, clientY: number) => {
+  const localPoint = (clientX: number, clientY: number): PointerSample | null => {
     const host = hostRef.current;
     if (!host) return null;
     const bounds = host.getBoundingClientRect();
     return { x: clientX - bounds.left, y: clientY - bounds.top };
   };
 
-  const zoomAt = (clientX: number, clientY: number, scale: number) => {
+  const zoomAtLocal = (local: PointerSample, scale: number) => {
     const host = hostRef.current;
+    if (!host || !baseRect) return;
+    commitViewState(
+      zoomRasterViewAt(
+        viewStateRef.current,
+        scale,
+        local.x,
+        local.y,
+        host.clientWidth,
+        host.clientHeight,
+        baseRect,
+      ),
+    );
+  };
+
+  const zoomAt = (clientX: number, clientY: number, scale: number) => {
     const local = localPoint(clientX, clientY);
-    if (!host || !baseRect || !local) return;
-    onViewStateChange(zoomRasterViewAt(viewState, scale, local.x, local.y, host.clientWidth, host.clientHeight, baseRect));
+    if (local) zoomAtLocal(local, scale);
   };
 
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
+    const local = localPoint(event.clientX, event.clientY);
+    if (!local) return;
+    pointersRef.current.set(event.pointerId, local);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.pointerType === "touch" && pointersRef.current.size >= 2) {
+      const [a, b] = Array.from(pointersRef.current.values()).slice(0, 2);
+      pinchDistanceRef.current = Math.max(distance(a, b), 1);
+      dragRef.current = null;
+      return;
+    }
     dragRef.current = {
       pointerId: event.pointerId,
       lastX: event.clientX,
@@ -114,33 +154,67 @@ export function ComparisonViewport({
       startX: event.clientX,
       startY: event.clientY,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const pointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
     const host = hostRef.current;
-    if (!drag || drag.pointerId !== event.pointerId || !host || !baseRect) return;
+    const local = localPoint(event.clientX, event.clientY);
+    if (!host || !baseRect || !local) return;
+    if (pointersRef.current.has(event.pointerId)) pointersRef.current.set(event.pointerId, local);
+
+    if (pointersRef.current.size >= 2) {
+      const [a, b] = Array.from(pointersRef.current.values()).slice(0, 2);
+      const currentDistance = Math.max(distance(a, b), 1);
+      const previousDistance = pinchDistanceRef.current;
+      if (previousDistance) {
+        zoomAtLocal(
+          { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+          viewStateRef.current.scale * (currentDistance / previousDistance),
+        );
+      }
+      pinchDistanceRef.current = currentDistance;
+      return;
+    }
+
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
     const dx = event.clientX - drag.lastX;
     const dy = event.clientY - drag.lastY;
     drag.lastX = event.clientX;
     drag.lastY = event.clientY;
     if (dx !== 0 || dy !== 0) {
-      onViewStateChange(panRasterView(viewState, dx, dy, host.clientWidth, host.clientHeight, baseRect));
+      commitViewState(
+        panRasterView(viewStateRef.current, dx, dy, host.clientWidth, host.clientHeight, baseRect),
+      );
     }
   };
 
   const pointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
-    dragRef.current = null;
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchDistanceRef.current = null;
+    if (drag?.pointerId === event.pointerId) dragRef.current = null;
     if (!drag || drag.pointerId !== event.pointerId || !onSelectPoint || !baseRect) return;
     const movement = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-    if (movement > CLICK_DRAG_THRESHOLD) return;
+    if (movement > CLICK_DRAG_THRESHOLD || event.button !== 0) return;
     const host = hostRef.current;
     const local = localPoint(event.clientX, event.clientY);
     if (!host || !local) return;
-    const point = normalizedRasterPoint(viewState, local.x, local.y, host.clientWidth, host.clientHeight, baseRect);
+    const point = normalizedRasterPoint(
+      viewStateRef.current,
+      local.x,
+      local.y,
+      host.clientWidth,
+      host.clientHeight,
+      baseRect,
+    );
     if (point) onSelectPoint(point);
+  };
+
+  const cancelPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchDistanceRef.current = null;
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
   };
 
   const scaleBar = useMemo(() => {
@@ -158,14 +232,14 @@ export function ComparisonViewport({
       onPointerDown={pointerDown}
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
-      onPointerCancel={() => { dragRef.current = null; }}
+      onPointerCancel={cancelPointer}
       onWheel={(event) => {
         event.preventDefault();
-        zoomAt(event.clientX, event.clientY, viewState.scale * Math.exp(-event.deltaY * 0.0015));
+        zoomAt(event.clientX, event.clientY, viewStateRef.current.scale * Math.exp(-event.deltaY * 0.0015));
       }}
       onDoubleClick={(event) => {
         event.preventDefault();
-        zoomAt(event.clientX, event.clientY, viewState.scale * 2);
+        zoomAt(event.clientX, event.clientY, viewStateRef.current.scale * 2);
       }}
     >
       <img
@@ -193,11 +267,7 @@ export function ComparisonViewport({
         <>
           <div className="dw-compare-label dw-compare-label--left" style={{ left: geometry.left + 10, top: geometry.top + 10 }}>Reference</div>
           <div className="dw-compare-label dw-compare-label--right" style={{ left: geometry.left + geometry.width - 10, top: geometry.top + 10 }}>Prediction</div>
-          <div
-            className="dw-compare-divider"
-            style={{ left: geometry.left + geometry.width * split / 100, top: geometry.top, height: geometry.height }}
-            aria-hidden="true"
-          />
+          <div className="dw-compare-divider" style={{ left: geometry.left + geometry.width * split / 100, top: geometry.top, height: geometry.height }} aria-hidden="true" />
           <input
             className="dw-compare-slider"
             type="range"
@@ -213,14 +283,10 @@ export function ComparisonViewport({
           {cursorPoint && (
             <span
               className="dw-analysis-crosshair dw-analysis-crosshair--compare"
-              style={{
-                left: geometry.left + cursorPoint.x * geometry.width,
-                top: geometry.top + cursorPoint.y * geometry.height,
-              }}
+              style={{ left: geometry.left + cursorPoint.x * geometry.width, top: geometry.top + cursorPoint.y * geometry.height }}
               aria-hidden="true"
             >
-              <i />
-              <b />
+              <i /><b />
             </span>
           )}
         </>
@@ -228,21 +294,24 @@ export function ComparisonViewport({
 
       {baseRect && (
         <div className="dw-map-navigation" onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => onViewStateChange(DEFAULT_RASTER_VIEW_STATE)}>Fit</button>
+          <button type="button" onClick={() => commitViewState(DEFAULT_RASTER_VIEW_STATE)}>Fit</button>
           <button type="button" onClick={() => {
             const host = hostRef.current;
             if (!host) return;
             const bounds = host.getBoundingClientRect();
-            zoomAt(bounds.left + host.clientWidth / 2, bounds.top + host.clientHeight / 2, viewState.scale / 1.35);
+            zoomAt(bounds.left + host.clientWidth / 2, bounds.top + host.clientHeight / 2, viewStateRef.current.scale / 1.35);
           }}>−</button>
           <span className="dw-map-zoom">{Math.round(viewState.scale * 100)}%</span>
           <button type="button" onClick={() => {
             const host = hostRef.current;
             if (!host) return;
             const bounds = host.getBoundingClientRect();
-            zoomAt(bounds.left + host.clientWidth / 2, bounds.top + host.clientHeight / 2, viewState.scale * 1.35);
+            zoomAt(bounds.left + host.clientWidth / 2, bounds.top + host.clientHeight / 2, viewStateRef.current.scale * 1.35);
           }}>+</button>
-          <button type="button" onClick={() => onViewStateChange({ ...viewState, scale: oneToOneScale(sourceWidth ?? predictionRef.current?.naturalWidth ?? 1, baseRect.width) })}>1:1</button>
+          <button type="button" onClick={() => commitViewState({
+            ...viewStateRef.current,
+            scale: oneToOneScale(sourceWidth ?? predictionRef.current?.naturalWidth ?? 1, baseRect.width),
+          })}>1:1</button>
         </div>
       )}
 
@@ -252,7 +321,7 @@ export function ComparisonViewport({
           <strong>{formatScaleDistance(scaleBar.metres)}</strong>
         </div>
       )}
-      <div className="dw-navigation-help" aria-hidden="true">Drag to pan · wheel/pinch to zoom · use the slider to swipe reference ↔ prediction</div>
+      <div className="dw-navigation-help" aria-hidden="true">Drag to pan · wheel/pinch to zoom · swipe reference ↔ prediction</div>
     </div>
   );
 }
