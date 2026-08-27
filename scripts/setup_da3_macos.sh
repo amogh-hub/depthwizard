@@ -48,6 +48,13 @@ path.write_text(text, encoding="utf-8")
 print("Applied DA3 macOS lazy-export compatibility patch.")
 PY
 
+# The pinned geometry helper uses import-time torch.jit.script. That is valid in a normal Python
+# environment but a PyInstaller frozen loader does not expose source for TorchScript compilation.
+# Apply the exact audited script_if_tracing compatibility patch used by standalone packaging. The
+# helper's tensor math is unchanged, eager inference remains eager, and any unexpected source shape
+# fails closed rather than being guessed.
+"$PYTHON" -m scripts.da3_frozen_compat "$DA3_DIR/src"
+
 # Keep only the dependencies required by the monocular inference path. DA3 and DepthWizard both
 # require NumPy < 2; OpenCV is constrained below the release line that would force NumPy 2.x.
 "$PYTHON" -m pip install \
@@ -94,6 +101,7 @@ import cv2  # noqa: F401
 import numpy as np
 import torch
 from depth_anything_3.api import DepthAnything3
+from depth_anything_3.utils.geometry import affine_inverse
 
 print("Depth Anything 3 import: OK")
 print("Architecture:", platform.machine())
@@ -102,6 +110,12 @@ print("PyTorch:", torch.__version__)
 print("MPS built:", torch.backends.mps.is_built())
 print("MPS available:", torch.backends.mps.is_available())
 print("DA3 API:", DepthAnything3.__name__)
+
+probe = torch.eye(4, dtype=torch.float32)
+probe[:3, 3] = torch.tensor([3.0, -2.0, 5.0], dtype=torch.float32)
+if not torch.allclose(affine_inverse(probe), torch.linalg.inv(probe), atol=1e-6, rtol=1e-6):
+    raise SystemExit("ERROR: DA3 affine_inverse compatibility probe failed")
+print("DA3 affine_inverse compatibility probe: PASS")
 
 major = int(np.__version__.split(".", 1)[0])
 if major >= 2:
