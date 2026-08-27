@@ -9,6 +9,7 @@ const Icon = ({ children }: { children: ReactNode }) => (
 export const ProjectIcon = () => <Icon><path d="M4 7.5h6l1.7 2H20v9.5H4z"/><path d="M4 7.5V5h6l1.7 2"/></Icon>;
 export const LayersIcon = () => <Icon><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4"/><path d="m4 17 8 4 8-4"/></Icon>;
 export const MeasureIcon = () => <Icon><path d="M4 17 17 4l3 3L7 20H4v-3Z"/><path d="m13.5 7.5 3 3"/></Icon>;
+export const StructureIcon = () => <Icon><path d="M5 20V10l7-5 7 5v10"/><path d="M9 20v-6h6v6"/><path d="M3 20h18"/></Icon>;
 export const ProfileIcon = () => <Icon><path d="M3 18h18"/><path d="m5 16 4-6 3 3 4-8 3 11"/></Icon>;
 export const ValidateIcon = () => <Icon><circle cx="12" cy="12" r="8"/><path d="m8.5 12 2.3 2.3 4.8-5"/></Icon>;
 export const CompareIcon = () => <Icon><rect x="4" y="5" width="7" height="14" rx="1"/><rect x="13" y="5" width="7" height="14" rx="1"/></Icon>;
