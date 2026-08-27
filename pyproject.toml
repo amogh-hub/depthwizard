@@ -46,6 +46,7 @@ packages = ["src/depthwizard"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = [
   "ignore:Dataset has no geotransform.*:rasterio.errors.NotGeoreferencedWarning",
