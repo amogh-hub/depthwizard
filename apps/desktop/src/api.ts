@@ -309,6 +309,19 @@ export type ProjectPreviewLayer =
   | "hillshade"
   | "contours";
 
+export type ProjectLayerLegend = {
+  available: boolean;
+  layer: ProjectPreviewLayer;
+  title: string;
+  units: string | null;
+  minimum?: number;
+  midpoint?: number;
+  maximum?: number;
+  semantics: string;
+  ramp: "optical" | "elevation" | "slope" | "diverging" | "grayscale" | "contours" | string;
+  sampled_values?: number;
+};
+
 type RuntimeConfig = {
   apiBase?: string;
   sessionToken?: string;
@@ -500,4 +513,12 @@ export async function getProjectPreviewUrl(
   });
   const response = await checkedResponse(`/v1/projects/preview?${query.toString()}`);
   return URL.createObjectURL(await response.blob());
+}
+
+export function getProjectLayerLegend(
+  projectDir: string,
+  layer: ProjectPreviewLayer,
+): Promise<ProjectLayerLegend> {
+  const query = new URLSearchParams({ project_dir: projectDir, layer });
+  return coreFetch<ProjectLayerLegend>(`/v1/projects/preview/legend?${query.toString()}`);
 }
