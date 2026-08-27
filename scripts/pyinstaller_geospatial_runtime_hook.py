@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import MutableMapping
 from pathlib import Path
 
 
-def configure_geospatial_data(bundle_root: Path) -> dict[str, str]:
+def configure_geospatial_data(
+    bundle_root: Path,
+    environ: MutableMapping[str, str] | None = None,
+) -> dict[str, str]:
     """Point frozen GDAL/PROJ consumers at data packaged inside the PyInstaller bundle."""
+    target = os.environ if environ is None else environ
     configured: dict[str, str] = {}
 
     gdal_data = bundle_root / "rasterio" / "gdal_data"
     if gdal_data.is_dir():
-        os.environ.setdefault("GDAL_DATA", str(gdal_data))
-        configured["GDAL_DATA"] = os.environ["GDAL_DATA"]
+        target.setdefault("GDAL_DATA", str(gdal_data))
+        configured["GDAL_DATA"] = target["GDAL_DATA"]
 
     proj_candidates = (
         bundle_root / "rasterio" / "proj_data",
@@ -20,10 +25,10 @@ def configure_geospatial_data(bundle_root: Path) -> dict[str, str]:
     )
     for proj_data in proj_candidates:
         if proj_data.is_dir():
-            os.environ.setdefault("PROJ_DATA", str(proj_data))
-            os.environ.setdefault("PROJ_LIB", str(proj_data))
-            configured["PROJ_DATA"] = os.environ["PROJ_DATA"]
-            configured["PROJ_LIB"] = os.environ["PROJ_LIB"]
+            target.setdefault("PROJ_DATA", str(proj_data))
+            target.setdefault("PROJ_LIB", str(proj_data))
+            configured["PROJ_DATA"] = target["PROJ_DATA"]
+            configured["PROJ_LIB"] = target["PROJ_LIB"]
             break
 
     return configured
