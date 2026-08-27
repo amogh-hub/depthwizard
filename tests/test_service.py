@@ -180,6 +180,34 @@ def test_validation_and_preview_endpoints_use_persisted_project_artifacts(tmp_pa
         assert preview.headers["content-type"] == "image/png"
         assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
 
+    dsm_legend = client.get(
+        "/v1/projects/preview/legend",
+        params={"project_dir": str(project), "layer": "dsm"},
+    )
+    assert dsm_legend.status_code == 200
+    dsm_payload = dsm_legend.json()
+    assert dsm_payload["available"] is True
+    assert dsm_payload["units"] == "m"
+    assert dsm_payload["minimum"] < dsm_payload["midpoint"] < dsm_payload["maximum"]
+    assert dsm_payload["semantics"] == "display_p02_p98_range_from_persisted_project_raster"
+
+    residual_legend = client.get(
+        "/v1/projects/preview/legend",
+        params={"project_dir": str(project), "layer": "residual"},
+    )
+    assert residual_legend.status_code == 200
+    residual_payload = residual_legend.json()
+    assert residual_payload["ramp"] == "diverging"
+    assert residual_payload["minimum"] == -residual_payload["maximum"]
+    assert residual_payload["midpoint"] == 0.0
+
+    optical_legend = client.get(
+        "/v1/projects/preview/legend",
+        params={"project_dir": str(project), "layer": "optical"},
+    )
+    assert optical_legend.status_code == 200
+    assert optical_legend.json()["available"] is False
+
 
 def test_structure_height_endpoint_is_metric_and_raster_backed(tmp_path: Path) -> None:
     source = tmp_path / "rgb.tif"
