@@ -31,6 +31,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _git_head() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def _wait_for_file(path: Path, process: subprocess.Popen[bytes], timeout_s: float) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -136,6 +147,7 @@ def main() -> None:
     if platform.system() != "Darwin":
         raise RuntimeError("RT5 real application-bundle acceptance must run on the finale macOS host")
 
+    expected_git_sha = _git_head()
     bundle, executable, sidecar, runtime_manifest = _macos_bundle()
     OUT.mkdir(parents=True, exist_ok=True)
     boot_report = OUT / "tauri-boot-report.json"
@@ -159,6 +171,14 @@ def main() -> None:
         payload = _read_json(boot_report)
         if payload.get("status") != "PASS_TAURI_SIDECAR_BOOT":
             raise RuntimeError("Tauri boot report did not record a passing sidecar startup")
+        build_git_sha = payload.get("buildGitSha")
+        if not isinstance(build_git_sha, str):
+            raise TypeError("Tauri boot report buildGitSha must be a string")
+        if build_git_sha != expected_git_sha:
+            raise RuntimeError(
+                "packaged DepthWizard.app was not built from the checked-out Git head: "
+                f"app={build_git_sha}, checkout={expected_git_sha}"
+            )
         if payload.get("sessionTokenBits") != 256 or payload.get("sessionTokenExported") is not False:
             raise RuntimeError("Tauri boot report violates the session-token secrecy contract")
         if payload.get("offlineCore") is not True:
@@ -188,8 +208,10 @@ def main() -> None:
             process.wait(timeout=5)
 
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS_RT5_REAL_TAURI_BUNDLE_LIFECYCLE",
+        "source_git_sha": expected_git_sha,
+        "application_build_git_sha": build_git_sha,
         "platform": platform.platform(),
         "bundle": str(bundle.resolve()),
         "application_executable": str(executable.resolve()),
@@ -221,6 +243,7 @@ def main() -> None:
 
     print("DepthWizard RT5 real Tauri application-bundle lifecycle: PASS")
     print(f"Application bundle: {bundle}")
+    print(f"Exact application source Git SHA: {build_git_sha}")
     print(f"Packaged scientific runtime: {sidecar}")
     print("Packaging mode: qualified PyInstaller onedir Tauri resource")
     print("Frozen geospatial self-check carried into bundle: PASS")
