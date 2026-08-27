@@ -216,6 +216,11 @@ def main() -> None:
         "depth_anything_3.api",
         "--hidden-import",
         "rasterio.serde",
+        # Rasterio's C extensions dynamically import Python helpers such as rasterio.sample.
+        # Data/binary collection alone is therefore insufficient for a frozen runtime. Collect the
+        # package's Python submodules explicitly so the packaged import graph matches normal Python.
+        "--collect-submodules",
+        "rasterio",
         "--collect-data",
         "rasterio",
         "--collect-binaries",
@@ -287,6 +292,7 @@ def main() -> None:
         "da3_vendor_source": str(DA3_VENDOR.resolve()),
         "geospatial_packaging": {
             "rasterio_serde_hidden_import": True,
+            "rasterio_python_submodules_collected": True,
             "rasterio_data_collected": True,
             "rasterio_binaries_collected": True,
             "pyproj_data_collected": True,
