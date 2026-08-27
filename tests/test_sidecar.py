@@ -32,11 +32,15 @@ def test_packaged_sidecar_accepts_secured_loopback_launch(monkeypatch: pytest.Mo
     validate_launch_environment(host="127.0.0.1", port=49152)
 
 
-def test_packaged_geospatial_self_check_exercises_epsg_runtime() -> None:
+def test_packaged_geospatial_self_check_exercises_epsg_runtime_without_forcing_da3() -> None:
     report = packaged_geospatial_self_check()
     assert report["status"] == "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK"
     assert report["rasterio_serde_imported"] is True
     assert report["epsg_roundtrip"] == 32643
+    assert report["da3_probe_required"] is False
+    assert report["da3_api_imported"] is False
+    assert report["da3_runtime_modules_imported"] == []
+    assert report["da3_runtime_execution_gate"] == "release_train_5_full_acceptance"
     assert report["network_used"] is False
     assert report["model_loaded"] is False
 
