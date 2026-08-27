@@ -48,6 +48,7 @@ if __name__ == "__main__":
         "scripts/ensure_tauri_sidecar_stub.py",
         "scripts/release_train_5_sidecar_smoke.py",
         "scripts/release_train_5_app_bundle_smoke.py",
+        "scripts/release_train_5_full_acceptance.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_height_model.py",
