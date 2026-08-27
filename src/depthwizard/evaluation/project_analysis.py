@@ -18,7 +18,10 @@ from depthwizard.contracts import (
     ProjectProfileResult,
     RasterSample,
 )
-from depthwizard.io.raster import ground_sample_distance_m
+from depthwizard.io.raster import (
+    ground_sample_distance_m,
+    ortholoc_metric_affine_override_enabled,
+)
 from depthwizard.pipeline.project import ProjectManifest
 
 _GEOD = Geod(ellps="WGS84")
@@ -111,9 +114,15 @@ def _spatial_coordinates(
     metric_gsd = ground_sample_distance_m(path)
     with rasterio.open(path) as src:
         col, row = _pixel_index(point, width=src.width, height=src.height)
-        if src.crs is None or src.transform.is_identity:
+        if src.transform.is_identity:
             return col, row, None, None, None, None
         x, y = src.xy(row, col)
+        if ortholoc_metric_affine_override_enabled():
+            # Under the explicit OrthoLoC contract these are dataset-local metric map coordinates;
+            # a syntactic CRS tag is not permission to manufacture global lon/lat.
+            return col, row, float(x), float(y), None, None
+        if src.crs is None:
+            return col, row, None, None, None, None
         if metric_gsd is None:
             return col, row, float(x), float(y), None, None
         longitude, latitude = _safe_geographic_coordinates(src.crs, float(x), float(y))
@@ -165,6 +174,20 @@ def _projected_distance_factors(crs: CRS) -> tuple[float, float] | None:
     return factors
 
 
+def _cumulative_map_distance_m(
+    map_coordinates: list[tuple[float, float]],
+) -> list[float | None]:
+    metric_distance: list[float | None] = [0.0]
+    cumulative = 0.0
+    for (x0, y0), (x1, y1) in pairwise(map_coordinates):
+        segment = float(np.hypot(x1 - x0, y1 - y0))
+        if not np.isfinite(segment):
+            return [None for _ in map_coordinates]
+        cumulative += segment
+        metric_distance.append(cumulative)
+    return metric_distance
+
+
 def _profile_distances(
     surface_path: Path,
     points: list[NormalizedPoint],
@@ -181,15 +204,23 @@ def _profile_distances(
                 pixel_distance[-1] + float(np.hypot(col - previous_col, row - previous_row))
             )
 
-        if src.crs is None or src.transform.is_identity or metric_gsd is None:
+        if src.transform.is_identity or metric_gsd is None:
             return pixel_distance, [None for _ in points]
 
-        crs = CRS.from_user_input(src.crs)
         map_coordinates = [
             tuple(float(value) for value in src.xy(row, col))
             for col, row in pixels
         ]
 
+        if ortholoc_metric_affine_override_enabled():
+            # The dedicated OrthoLoC contract defines this affine coordinate space in metres. Use
+            # direct affine geometry so rotation/shear are respected and never round-trip via WGS84.
+            return pixel_distance, _cumulative_map_distance_m(map_coordinates)
+
+        if src.crs is None:
+            return pixel_distance, [None for _ in points]
+
+        crs = CRS.from_user_input(src.crs)
         projected_factors = _projected_distance_factors(crs)
         if projected_factors is not None:
             x_factor, y_factor = projected_factors
@@ -308,6 +339,7 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
         semantics=(
             "Analyst-selected surface transect. Vertical delta is endpoint surface elevation "
             "difference; it is not automatically a building-height classification. Metric horizontal "
-            "distance is emitted only when the raster's spatial scale passes CRS consistency checks."
+            "distance is emitted only when the raster's spatial scale passes the active spatial "
+            "contract, including an explicit dataset-local metric-affine contract when selected."
         ),
     )
