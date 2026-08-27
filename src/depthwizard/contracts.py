@@ -52,6 +52,16 @@ class GroundControlPoint(BaseModel):
     weight: float = Field(default=1.0, gt=0.0)
 
 
+class GroundControlPointFileReport(BaseModel):
+    source_path: Path
+    sha256: str
+    point_count: int = Field(ge=2)
+    minimum_elevation_m: float
+    maximum_elevation_m: float
+    points: list[GroundControlPoint] = Field(min_length=2)
+    semantics: str
+
+
 class EvaluationMetrics(BaseModel):
     valid_pixels: int = Field(ge=0)
     mae_m: float
@@ -117,6 +127,34 @@ class NormalizedPoint(BaseModel):
 
     x: float = Field(ge=0.0, le=1.0)
     y: float = Field(ge=0.0, le=1.0)
+
+
+class ProjectStructureHeightRequest(BaseModel):
+    project_dir: Path
+    polygon: list[NormalizedPoint] = Field(min_length=3, max_length=64)
+    ring_pixels: int = Field(default=8, ge=1, le=128)
+    min_structure_pixels: int = Field(default=4, ge=1)
+    min_ground_pixels: int = Field(default=8, ge=1)
+
+    @model_validator(mode="after")
+    def validate_polygon(self) -> ProjectStructureHeightRequest:
+        unique = {(round(point.x, 9), round(point.y, 9)) for point in self.polygon}
+        if len(unique) < 3:
+            raise ValueError("structure polygon requires at least three distinct points")
+        return self
+
+
+class ProjectStructureHeightResult(BaseModel):
+    project_id: str
+    polygon: list[NormalizedPoint]
+    ring_pixels: int = Field(ge=1)
+    top_elevation_m: float
+    ground_elevation_m: float
+    structure_height_m: float
+    structure_pixels: int = Field(ge=1)
+    ground_pixels: int = Field(ge=1)
+    warnings: list[str] = Field(default_factory=list)
+    semantics: str
 
 
 class RasterSample(BaseModel):
