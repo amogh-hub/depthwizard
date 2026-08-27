@@ -57,12 +57,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Create compile-only sidecar stub
-        run: |
-          triple="$(rustc -vV | sed -n 's/^host: //p')"
-          mkdir -p binaries
-          printf '#!/bin/sh\nexit 0\n' > "binaries/depthwizard-core-${triple}"
-          chmod +x "binaries/depthwizard-core-${triple}"
+      - name: Create compile-only scientific runtime resource stub
+        run: python3 ../../../scripts/ensure_tauri_sidecar_stub.py
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-targets --all-features
