@@ -52,6 +52,13 @@ class GroundControlPoint(BaseModel):
     weight: float = Field(default=1.0, gt=0.0)
 
 
+class GroundControlPointEvidence(BaseModel):
+    """Identity of an analyst-supplied GCP evidence file used to build ``gcps``."""
+
+    source_path: Path
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class GroundControlPointFileReport(BaseModel):
     source_path: Path
     sha256: str
@@ -317,6 +324,7 @@ class ProcessingRequest(BaseModel):
     dem_path: Path | None = None
     srtm_path: Path | None = None
     gcps: list[GroundControlPoint] = Field(default_factory=list)
+    gcp_evidence: GroundControlPointEvidence | None = None
     requested_output: Literal["rdsm", "dsm"] | None = None
     band_indices: tuple[int, int, int] = (1, 2, 3)
     tile_size: int = Field(default=1024, ge=256)
@@ -335,6 +343,8 @@ class ProcessingRequest(BaseModel):
             raise ValueError("DepthWizard accepts PNG, JPG/JPEG, TIFF, and GeoTIFF inputs")
         if self.dem_path is not None and self.srtm_path is not None:
             raise ValueError("supply either dem_path or legacy srtm_path, not both")
+        if self.gcp_evidence is not None and not self.gcps:
+            raise ValueError("gcp_evidence cannot be supplied without GCP points")
         if self.overlap >= self.tile_size:
             raise ValueError("overlap must be smaller than tile_size")
         if len(set(self.band_indices)) != 3 or any(index < 1 for index in self.band_indices):
