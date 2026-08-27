@@ -1,7 +1,9 @@
 import type {
+  GroundControlPointFileReport,
   ProjectExportReport,
   ProjectProbeResult,
   ProjectProfileResult,
+  ProjectStructureHeightResult,
   RasterMetadata,
   ReferenceValidationReport,
 } from "../api";
@@ -50,6 +52,9 @@ type InspectorProps = {
   probe?: ProjectProbeResult | null;
   measurement?: ProjectProfileResult | null;
   profile?: ProjectProfileResult | null;
+  structureHeight?: ProjectStructureHeightResult | null;
+  structureVertexCount?: number;
+  gcpEvidence?: GroundControlPointFileReport | null;
   analysisBusy?: boolean;
   projectExport?: ProjectExportReport | null;
   meshLod?: number;
@@ -72,6 +77,9 @@ export function Inspector({
   probe,
   measurement,
   profile,
+  structureHeight,
+  structureVertexCount = 0,
+  gcpEvidence,
   analysisBusy = false,
   projectExport,
   meshLod = 0,
@@ -84,6 +92,7 @@ export function Inspector({
   const benchmarkDataset = validationEvidence?.dataset.split("/")[0]?.trim() ?? "—";
   const referenceName = projectValidation?.reference_path.split(/[\\/]/).pop() ?? "—";
   const exportName = projectExport?.bundle_path.split(/[\\/]/).pop() ?? "—";
+  const gcpName = gcpEvidence?.source_path.split(/[\\/]/).pop() ?? "—";
 
   return (
     <aside className="dw-inspector" aria-label="Analysis inspector">
@@ -118,6 +127,22 @@ export function Inspector({
         </dl>
       </section>
 
+      {gcpEvidence && (
+        <section className="dw-section">
+          <div className="dw-section-title">Sparse GCP evidence</div>
+          <dl className="dw-property-list">
+            <div className="dw-property"><dt>Evidence file</dt><dd title={gcpEvidence.source_path}>{gcpName}</dd></div>
+            <div className="dw-property"><dt>Control points</dt><dd>{gcpEvidence.point_count}</dd></div>
+            <div className="dw-property"><dt>Elevation span</dt><dd>{gcpEvidence.minimum_elevation_m.toFixed(2)}–{gcpEvidence.maximum_elevation_m.toFixed(2)} m</dd></div>
+            <div className="dw-property"><dt>SHA-256</dt><dd title={gcpEvidence.sha256}>{gcpEvidence.sha256.slice(0, 16)}…</dd></div>
+          </dl>
+          <div className="dw-validation-empty">
+            <strong>Coordinates are never guessed</strong>
+            <p>The CSV parser preserves x/y/elevation values exactly. Calibration interprets coordinates in the source raster CRS and verifies the file hash again before a metric claim.</p>
+          </div>
+        </section>
+      )}
+
       {meshReady && (
         <section className="dw-section">
           <div className="dw-section-title">3D renderer</div>
@@ -142,6 +167,36 @@ export function Inspector({
         profile={profile}
         analysisBusy={analysisBusy}
       />
+
+      {(activeTool === "Structures" || structureHeight) && (
+        <section className="dw-section">
+          <div className="dw-section-title">Structural height</div>
+          {structureHeight ? (
+            <>
+              <dl className="dw-property-list">
+                <div className="dw-property"><dt>Structure height</dt><dd>{structureHeight.structure_height_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Robust top</dt><dd>{structureHeight.top_elevation_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Local ground</dt><dd>{structureHeight.ground_elevation_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Footprint pixels</dt><dd>{structureHeight.structure_pixels.toLocaleString()}</dd></div>
+                <div className="dw-property"><dt>Ground-ring pixels</dt><dd>{structureHeight.ground_pixels.toLocaleString()}</dd></div>
+                <div className="dw-property"><dt>Ring radius</dt><dd>{structureHeight.ring_pixels} px</dd></div>
+              </dl>
+              <div className="dw-validation-empty">
+                <strong>Analyst-selected footprint</strong>
+                <p>Height is the robust median DSM elevation inside the explicit footprint minus the robust surrounding ground ring. DepthWizard does not claim automatic building classification.</p>
+              </div>
+              {structureHeight.warnings.map((warning) => (
+                <div className="dw-validation-empty dw-warning-note" key={warning}><strong>Selection warning</strong><p>{warning}</p></div>
+              ))}
+            </>
+          ) : (
+            <div className="dw-validation-empty">
+              <strong>{structureVertexCount >= 3 ? "Footprint ready" : "Select a footprint"}</strong>
+              <p>{structureVertexCount >= 3 ? `${structureVertexCount} vertices selected. Run the structure-height measurement from the workspace toolbar.` : "Click at least three vertices around one structure on the metric DSM. The selection stays explicit and editable before measurement."}</p>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="dw-section">
         <div className="dw-section-title">Project reference validation</div>
