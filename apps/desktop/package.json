@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "@vitejs/plugin-react": "latest",
     "esbuild": "^0.28.2",
     "typescript": "^5.8.0",
-    "vite": "latest"
+    "vite": "latest",
+    "vitest": "^3.2.4"
   }
 }
