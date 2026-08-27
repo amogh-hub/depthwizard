@@ -1,49 +1,38 @@
 from __future__ import annotations
 
+import json
 import os
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN_DIR = ROOT / "apps" / "desktop" / "src-tauri" / "binaries"
-
-
-def _host_triple() -> str:
-    direct = subprocess.run(
-        ["rustc", "--print", "host-tuple"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if direct.returncode == 0 and direct.stdout.strip():
-        return direct.stdout.strip()
-    verbose = subprocess.run(
-        ["rustc", "-vV"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    for line in verbose.splitlines():
-        if line.startswith("host: "):
-            return line.split(":", 1)[1].strip()
-    raise RuntimeError("unable to resolve Rust host target triple")
+RUNTIME_DIR = ROOT / "apps" / "desktop" / "src-tauri" / "resources" / "depthwizard-core-runtime"
 
 
 def main() -> None:
-    """Create a compile-only Tauri external-binary stub when no packaged core exists yet."""
+    """Create a compile-only Tauri resource stub when no qualified runtime is staged yet."""
     if os.name == "nt":
-        raise RuntimeError("compile-only sidecar stub helper currently supports Unix Tauri hosts")
+        raise RuntimeError("compile-only sidecar resource stub currently supports Unix Tauri hosts")
 
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
-    target = BIN_DIR / f"depthwizard-core-{_host_triple()}"
+    target = RUNTIME_DIR / "depthwizard-core"
     if target.exists():
         target.chmod(target.stat().st_mode | 0o111)
-        print(f"Tauri sidecar compile target already exists: {target}")
+        print(f"Tauri scientific runtime resource already exists: {target}")
         return
 
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     target.chmod(0o755)
-    print(f"Created compile-only Tauri sidecar stub: {target}")
+    manifest = {
+        "schema_version": 1,
+        "status": "COMPILE_ONLY_RUNTIME_STUB",
+        "scientific_runtime": False,
+        "purpose": "Tauri compile/test configuration only; never release or acceptance evidence.",
+    }
+    (RUNTIME_DIR / "runtime-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Created compile-only Tauri scientific runtime resource stub: {target}")
 
 
 if __name__ == "__main__":

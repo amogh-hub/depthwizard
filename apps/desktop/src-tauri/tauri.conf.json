@@ -27,6 +27,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/depthwizard-core"]
+    "resources": {
+      "resources/depthwizard-core-runtime/": "depthwizard-core-runtime/"
+    }
   }
 }

@@ -14,6 +14,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TAURI_TARGET = ROOT / "apps" / "desktop" / "src-tauri" / "target" / "release" / "bundle"
 OUT = ROOT / "artifacts" / "acceptance" / "release-train-5-standalone"
+SIDECAR_RESOURCE = Path("Contents/Resources/depthwizard-core-runtime/depthwizard-core")
+RUNTIME_MANIFEST_RESOURCE = Path(
+    "Contents/Resources/depthwizard-core-runtime/runtime-manifest.json"
+)
 
 
 def _sha256(path: Path) -> str:
@@ -73,7 +77,14 @@ def _wait_for_pid_exit(pid: int, timeout_s: float = 8.0) -> None:
     raise RuntimeError(f"packaged sidecar process {pid} survived after desktop exit")
 
 
-def _macos_bundle() -> tuple[Path, Path, Path]:
+def _read_json(path: Path) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"JSON root must be an object: {path}")
+    return payload
+
+
+def _macos_bundle() -> tuple[Path, Path, Path, dict[str, object]]:
     bundles = sorted((TAURI_TARGET / "macos").glob("*.app"))
     if len(bundles) != 1:
         raise RuntimeError(
@@ -93,23 +104,36 @@ def _macos_bundle() -> tuple[Path, Path, Path]:
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError(f"DepthWizard application executable is missing: {executable}")
 
-    sidecars = [
-        path
-        for path in bundle.rglob("depthwizard-core*")
-        if path.is_file() and os.access(path, os.X_OK)
-    ]
-    if len(sidecars) != 1:
-        raise RuntimeError(
-            f"expected exactly one packaged depthwizard-core executable, found {len(sidecars)}"
-        )
-    return bundle, executable, sidecars[0]
+    sidecar = bundle / SIDECAR_RESOURCE
+    if not sidecar.is_file() or not os.access(sidecar, os.X_OK):
+        raise RuntimeError(f"qualified packaged scientific runtime is missing: {sidecar}")
+    internal = sidecar.parent / "_internal"
+    if not internal.is_dir():
+        raise RuntimeError(f"PyInstaller onedir support tree is missing: {internal}")
+
+    runtime_manifest_path = bundle / RUNTIME_MANIFEST_RESOURCE
+    if not runtime_manifest_path.is_file():
+        raise RuntimeError(f"packaged runtime manifest is missing: {runtime_manifest_path}")
+    runtime_manifest = _read_json(runtime_manifest_path)
+    if runtime_manifest.get("status") != "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME":
+        raise RuntimeError("packaged runtime manifest is not qualified")
+    if runtime_manifest.get("packaging_mode") != "pyinstaller_onedir":
+        raise RuntimeError("packaged runtime is not the approved PyInstaller onedir layout")
+    if runtime_manifest.get("executable_sha256") != _sha256(sidecar):
+        raise RuntimeError("packaged sidecar executable does not match its qualification manifest")
+    self_check = runtime_manifest.get("frozen_self_check")
+    if not isinstance(self_check, dict):
+        raise RuntimeError("packaged runtime manifest is missing frozen self-check evidence")
+    if self_check.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
+        raise RuntimeError("packaged runtime frozen geospatial self-check is not passing")
+    return bundle, executable, sidecar, runtime_manifest
 
 
 def main() -> None:
     if platform.system() != "Darwin":
         raise RuntimeError("RT5 real application-bundle acceptance must run on the finale macOS host")
 
-    bundle, executable, sidecar = _macos_bundle()
+    bundle, executable, sidecar, runtime_manifest = _macos_bundle()
     OUT.mkdir(parents=True, exist_ok=True)
     boot_report = OUT / "tauri-boot-report.json"
     if boot_report.exists():
@@ -129,7 +153,7 @@ def main() -> None:
     started_at = time.monotonic()
     try:
         _wait_for_file(boot_report, process, timeout_s=35.0)
-        payload = json.loads(boot_report.read_text(encoding="utf-8"))
+        payload = _read_json(boot_report)
         if payload.get("status") != "PASS_TAURI_SIDECAR_BOOT":
             raise RuntimeError("Tauri boot report did not record a passing sidecar startup")
         if payload.get("sessionTokenBits") != 256 or payload.get("sessionTokenExported") is not False:
@@ -161,7 +185,7 @@ def main() -> None:
             process.wait(timeout=5)
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_RT5_REAL_TAURI_BUNDLE_LIFECYCLE",
         "platform": platform.platform(),
         "bundle": str(bundle.resolve()),
@@ -169,6 +193,8 @@ def main() -> None:
         "application_sha256": _sha256(executable),
         "packaged_sidecar": str(sidecar.resolve()),
         "packaged_sidecar_sha256": _sha256(sidecar),
+        "runtime_manifest": runtime_manifest,
+        "packaging_mode": "pyinstaller_onedir_tauri_resource",
         "startup_elapsed_seconds": round(time.monotonic() - started_at, 3),
         "sidecar_pid": sidecar_pid,
         "loopback_api_base": api_base,
@@ -182,8 +208,9 @@ def main() -> None:
         "consumed_benchmark_rerun": False,
         "model_promotion_claim": False,
         "scientific_boundary": (
-            "Real packaged Tauri lifecycle/security acceptance only. This does not run DA3 inference "
-            "and is not clean-machine, DSM-accuracy, generalization, FPS, soak, or model-promotion evidence."
+            "Real packaged Tauri lifecycle/security acceptance only. The runtime must already carry "
+            "its passing frozen geospatial self-check. This does not run DA3 inference and is not "
+            "clean-machine, DSM-accuracy, generalization, FPS, soak, or model-promotion evidence."
         ),
     }
     report_path = OUT / "release-train-5-app-bundle-acceptance.json"
@@ -191,7 +218,9 @@ def main() -> None:
 
     print("DepthWizard RT5 real Tauri application-bundle lifecycle: PASS")
     print(f"Application bundle: {bundle}")
-    print(f"Packaged sidecar: {sidecar}")
+    print(f"Packaged scientific runtime: {sidecar}")
+    print("Packaging mode: qualified PyInstaller onedir Tauri resource")
+    print("Frozen geospatial self-check carried into bundle: PASS")
     print("Loopback scientific core readiness: PASS")
     print("256-bit session token exported to evidence: NO")
     print("Offline-after-install mode: YES")

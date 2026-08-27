@@ -17,36 +17,15 @@ import rasterio
 from rasterio.transform import from_origin
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_DIR = ROOT / "apps" / "desktop" / "src-tauri" / "resources" / "depthwizard-core-runtime"
+BUILD_REPORT = ROOT / "artifacts" / "standalone" / "sidecar-build-report.json"
 OUT = ROOT / "artifacts" / "acceptance" / "release-train-5-sidecar"
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def _host_triple() -> str:
-    result = subprocess.run(
-        ["rustc", "--print", "host-tuple"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
-    verbose = subprocess.run(["rustc", "-vV"], check=True, capture_output=True, text=True).stdout
-    for line in verbose.splitlines():
-        if line.startswith("host: "):
-            return line.split(":", 1)[1].strip()
-    raise RuntimeError("unable to resolve Rust host target triple")
-
-
 def _default_binary() -> Path:
     extension = ".exe" if os.name == "nt" else ""
-    return (
-        ROOT
-        / "apps"
-        / "desktop"
-        / "src-tauri"
-        / "binaries"
-        / f"depthwizard-core-{_host_triple()}{extension}"
-    )
+    return RUNTIME_DIR / f"depthwizard-core{extension}"
 
 
 def _free_port() -> int:
@@ -61,6 +40,29 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_json(path: Path) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"JSON root must be an object: {path}")
+    return payload
+
+
+def _read_trace(path: Path) -> list[dict[str, object]]:
+    if not path.is_file():
+        return []
+    events: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events
 
 
 def _request(
@@ -89,7 +91,8 @@ def _request(
 def _wait_for_health(
     base: str,
     process: subprocess.Popen[bytes],
-    timeout_s: float = 90.0,
+    trace_path: Path,
+    timeout_s: float = 45.0,
 ) -> float:
     started = time.monotonic()
     deadline = started + timeout_s
@@ -97,8 +100,10 @@ def _wait_for_health(
     while time.monotonic() < deadline:
         if process.poll() is not None:
             stdout, stderr = process.communicate(timeout=2)
+            phases = [str(event.get("phase", "unknown")) for event in _read_trace(trace_path)]
             raise RuntimeError(
                 "packaged sidecar exited before readiness\n"
+                f"startup_phases={phases}\n"
                 f"stdout={stdout.decode(errors='replace')}\n"
                 f"stderr={stderr.decode(errors='replace')}"
             )
@@ -109,9 +114,12 @@ def _wait_for_health(
         except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
             last_error = repr(exc)
         time.sleep(0.1)
+    phases = [str(event.get("phase", "unknown")) for event in _read_trace(trace_path)]
+    last_phase = phases[-1] if phases else "before Python entrypoint"
     raise RuntimeError(
         "packaged sidecar did not become healthy before timeout; "
         f"timeout_s={timeout_s:.1f}, process_alive={process.poll() is None}, "
+        f"last_startup_phase={last_phase}, startup_phases={phases}, "
         f"last_health_error={last_error}"
     )
 
@@ -146,6 +154,26 @@ def _write_rgb(path: Path) -> None:
         dst.write(data)
 
 
+def _verify_qualified_build(binary: Path) -> dict[str, object]:
+    if not BUILD_REPORT.is_file():
+        raise RuntimeError(
+            f"qualified sidecar build report is missing: {BUILD_REPORT}. Run `make sidecar-build`."
+        )
+    report = _read_json(BUILD_REPORT)
+    if report.get("status") != "PASS_QUALIFIED_SIDECAR_BUILD":
+        raise RuntimeError("sidecar build report is not a qualified passing build")
+    if report.get("packaging_mode") != "pyinstaller_onedir":
+        raise RuntimeError("RT5 sidecar smoke requires the qualified PyInstaller onedir runtime")
+    if report.get("binary_sha256") != _sha256(binary):
+        raise RuntimeError("staged sidecar executable no longer matches the qualified build report")
+    self_check = report.get("frozen_self_check")
+    if not isinstance(self_check, dict):
+        raise RuntimeError("sidecar build report is missing frozen runtime self-check evidence")
+    if self_check.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
+        raise RuntimeError("frozen geospatial self-check is not passing")
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=None)
@@ -155,9 +183,13 @@ def main() -> None:
         raise FileNotFoundError(
             f"packaged sidecar not found: {binary}. Run `make sidecar-build` first."
         )
+    build_report = _verify_qualified_build(binary)
 
     OUT.mkdir(parents=True, exist_ok=True)
     source = OUT / "inputs" / "rgb.tif"
+    trace_path = OUT / "sidecar-startup-trace.jsonl"
+    if trace_path.exists():
+        trace_path.unlink()
     _write_rgb(source)
     port = _free_port()
     token = token_hex(32)
@@ -169,6 +201,7 @@ def main() -> None:
             "DEPTHWIZARD_REQUIRE_SESSION_TOKEN": "1",
             "DEPTHWIZARD_SESSION_TOKEN": token,
             "DEPTHWIZARD_OFFLINE_CORE": "1",
+            "DEPTHWIZARD_STARTUP_TRACE": str(trace_path),
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
             "PYTORCH_ENABLE_MPS_FALLBACK": "1",
@@ -183,7 +216,7 @@ def main() -> None:
         env=env,
     )
     try:
-        startup_elapsed = _wait_for_health(base, process)
+        startup_elapsed = _wait_for_health(base, process, trace_path)
 
         health_status, health_body = _request(f"{base}/health")
         unauth_status, _ = _request(f"{base}/v1/inspect", payload={"path": str(source)})
@@ -211,24 +244,35 @@ def main() -> None:
         health_payload = json.loads(health_body)
     except Exception as exc:
         stdout, stderr = _stop_process(process)
+        phases = [str(event.get("phase", "unknown")) for event in _read_trace(trace_path)]
         raise RuntimeError(
             f"{exc}\n"
             f"binary={binary}\n"
-            f"binary_bytes={binary.stat().st_size}\n"
+            f"startup_phases={phases}\n"
             f"stdout={stdout.decode(errors='replace')}\n"
             f"stderr={stderr.decode(errors='replace')}"
         ) from exc
     else:
         _stop_process(process)
 
+    startup_events = _read_trace(trace_path)
+    startup_phases = [str(event.get("phase", "unknown")) for event in startup_events]
+    if "server_start" not in startup_phases:
+        raise RuntimeError(f"packaged sidecar readiness trace is incomplete: {startup_phases}")
+
     report = {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": "PASS_RT5_PACKAGED_SIDECAR_SECURITY_SMOKE",
+        "packaging_mode": "pyinstaller_onedir",
         "binary": str(binary),
         "binary_bytes": binary.stat().st_size,
         "binary_sha256": _sha256(binary),
+        "runtime_tree_sha256": build_report.get("runtime_tree_sha256"),
+        "runtime_logical_bytes": build_report.get("runtime_logical_bytes"),
+        "frozen_build_self_check": build_report.get("frozen_self_check"),
         "sidecar_port": port,
         "startup_elapsed_seconds": round(startup_elapsed, 3),
+        "startup_phases": startup_phases,
         "session_token_bits": len(token) * 4,
         "health": health_payload,
         "missing_token_http_status": unauth_status,
@@ -240,16 +284,17 @@ def main() -> None:
         "consumed_benchmark_rerun": False,
         "model_promotion_claim": False,
         "scientific_boundary": (
-            "Packaged sidecar lifecycle/security acceptance only. Offline mode installs a Python "
-            "INET connect guard that permits loopback only. This smoke does not run DA3 inference "
-            "and is not scientific accuracy, model-promotion, clean-machine, FPS, or soak evidence."
+            "Qualified packaged sidecar lifecycle/security acceptance only. Offline mode installs a "
+            "Python INET connect guard that permits loopback only. This smoke does not run DA3 "
+            "inference and is not scientific accuracy, model-promotion, clean-machine, FPS, or soak evidence."
         ),
     }
     report_path = OUT / "release-train-5-sidecar-acceptance.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("DepthWizard RT5 packaged sidecar security path: PASS")
+    print("Packaging mode: qualified PyInstaller onedir runtime")
     print(f"Packaged core cold-start readiness: {startup_elapsed:.3f} s")
-    print(f"Packaged core size: {binary.stat().st_size / (1024 * 1024):.2f} MiB")
+    print("Frozen geospatial self-check: PASS")
     print("Loopback health readiness: PASS")
     print("Missing token rejected: PASS")
     print("Wrong token rejected: PASS")

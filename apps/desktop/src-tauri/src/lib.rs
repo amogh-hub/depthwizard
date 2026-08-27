@@ -4,15 +4,17 @@ use serde::Serialize;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::thread;
 use std::time::{Duration, Instant};
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, RunEvent, State};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 
-const SIDECAR_NAME: &str = "depthwizard-core";
+const SIDECAR_RESOURCE_PATH: &str = "depthwizard-core-runtime/depthwizard-core";
 const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Serialize)]
@@ -38,15 +40,16 @@ struct AcceptanceBootReport<'a> {
 }
 
 struct SidecarState {
-    child: Mutex<Option<CommandChild>>,
+    child: Mutex<Option<Child>>,
     runtime: RuntimeConfig,
 }
 
 impl SidecarState {
     fn shutdown(&self) {
         if let Ok(mut guard) = self.child.lock() {
-            if let Some(child) = guard.take() {
+            if let Some(mut child) = guard.take() {
                 let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -97,7 +100,7 @@ fn wait_for_health(port: u16, timeout: Duration) -> io::Result<()> {
             }
             Err(error) => last_error = Some(error),
         }
-        std::thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
     }
     Err(last_error.unwrap_or_else(|| {
         io::Error::new(
@@ -141,30 +144,71 @@ fn schedule_acceptance_auto_exit(app_handle: AppHandle) -> io::Result<()> {
             "DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS must be between 500 and 60000",
         ));
     }
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(millis));
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(millis));
         app_handle.exit(0);
     });
     Ok(())
+}
+
+fn sidecar_executable(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let path = app
+        .path()
+        .resolve(SIDECAR_RESOURCE_PATH, BaseDirectory::Resource)?;
+    let metadata = fs::metadata(&path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("DepthWizard packaged scientific runtime is missing at {path:?}: {error}"),
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("DepthWizard packaged scientific runtime is not a file: {path:?}"),
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("DepthWizard packaged scientific runtime is not executable: {path:?}"),
+            )));
+        }
+    }
+    Ok(path)
+}
+
+fn forward_output<R: Read + Send + 'static>(reader: R, label: &'static str) {
+    thread::spawn(move || {
+        let buffered = BufReader::new(reader);
+        for line in buffered.lines() {
+            match line {
+                Ok(message) => eprintln!("[{label}] {message}"),
+                Err(error) => {
+                    eprintln!("[{label}] output read error: {error}");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 fn launch_sidecar(
     app: &tauri::App,
     port: u16,
     token: &str,
-) -> Result<CommandChild, Box<dyn std::error::Error>> {
-    let args = vec![
-        "--host".to_string(),
-        "127.0.0.1".to_string(),
-        "--port".to_string(),
-        port.to_string(),
-        "--log-level".to_string(),
-        "warning".to_string(),
-    ];
-    let command = app
-        .shell()
-        .sidecar(SIDECAR_NAME)?
-        .args(args)
+) -> Result<Child, Box<dyn std::error::Error>> {
+    let executable = sidecar_executable(app)?;
+    let mut command = Command::new(&executable);
+    command
+        .arg("--host")
+        .arg("127.0.0.1")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--log-level")
+        .arg("warning")
         .env("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
         .env("DEPTHWIZARD_SESSION_TOKEN", token)
         .env("DEPTHWIZARD_OFFLINE_CORE", "1")
@@ -172,34 +216,23 @@ fn launch_sidecar(
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         .env("NO_PROXY", "127.0.0.1,localhost")
-        .env("no_proxy", "127.0.0.1,localhost");
+        .env("no_proxy", "127.0.0.1,localhost")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    let (mut events, child) = command.spawn()?;
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = events.recv().await {
-            match event {
-                CommandEvent::Stdout(bytes) => {
-                    eprintln!(
-                        "[depthwizard-core stdout] {}",
-                        String::from_utf8_lossy(&bytes)
-                    );
-                }
-                CommandEvent::Stderr(bytes) => {
-                    eprintln!(
-                        "[depthwizard-core stderr] {}",
-                        String::from_utf8_lossy(&bytes)
-                    );
-                }
-                CommandEvent::Error(error) => {
-                    eprintln!("[depthwizard-core error] {error}");
-                }
-                CommandEvent::Terminated(payload) => {
-                    eprintln!("[depthwizard-core terminated] {payload:?}");
-                }
-                _ => {}
-            }
-        }
-    });
+    let mut child = command.spawn().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("failed to launch DepthWizard scientific runtime {executable:?}: {error}"),
+        )
+    })?;
+    if let Some(stdout) = child.stdout.take() {
+        forward_output(stdout, "depthwizard-core stdout");
+    }
+    if let Some(stderr) = child.stderr.take() {
+        forward_output(stderr, "depthwizard-core stderr");
+    }
     Ok(child)
 }
 
@@ -207,16 +240,16 @@ fn launch_sidecar(
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![runtime_config])
         .setup(|app| {
             let port = reserve_loopback_port()?;
             let token = generate_session_token();
-            let child = launch_sidecar(app, port, &token)?;
-            let sidecar_pid = child.pid();
+            let mut child = launch_sidecar(app, port, &token)?;
+            let sidecar_pid = child.id();
 
             if let Err(error) = wait_for_health(port, SIDECAR_READY_TIMEOUT) {
                 let _ = child.kill();
+                let _ = child.wait();
                 return Err(Box::new(error));
             }
 
