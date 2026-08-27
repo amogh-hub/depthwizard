@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from scripts.da3_frozen_compat import apply_da3_frozen_compat
 from scripts.standalone_integrity import sha256_file, tree_identity
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,7 +122,7 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
     phases = [str(event.get("phase", "unknown")) for event in events]
     if completed.returncode != 0:
         raise RuntimeError(
-            "frozen sidecar geospatial self-check failed\n"
+            "frozen sidecar runtime self-check failed\n"
             f"returncode={completed.returncode}\n"
             f"startup_phases={phases}\n"
             f"stdout={completed.stdout}\n"
@@ -141,12 +142,19 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
         raise TypeError("frozen sidecar self-check JSON root must be an object")
     if payload.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
         raise RuntimeError(f"frozen sidecar self-check returned non-passing status: {payload}")
-    required_phases = {"python_entry", "self_check_import_complete", "self_check_complete"}
+    required_phases = {
+        "python_entry",
+        "self_check_import_complete",
+        "self_check_da3_geometry_probe_complete",
+        "self_check_complete",
+    }
     if not required_phases.issubset(phases):
         raise RuntimeError(
             "frozen sidecar startup trace is incomplete; "
             f"required={sorted(required_phases)}, observed={phases}"
         )
+    if payload.get("da3_affine_inverse_probe") != "PASS":
+        raise RuntimeError("frozen sidecar did not pass the DA3 affine_inverse compatibility probe")
     return payload, elapsed, phases
 
 
@@ -161,6 +169,13 @@ def main() -> None:
             "PyInstaller is missing; install the standalone extra with "
             "`python -m pip install -e '.[standalone]'`"
         )
+
+    # The pinned upstream DA3 geometry helper uses import-time torch.jit.script, which cannot
+    # compile inside a normal PyInstaller frozen loader because source retrieval is intentionally
+    # unavailable. Apply the exact audited compatibility patch before analysis. The helper's tensor
+    # math is unchanged; script_if_tracing preserves scripting when tracing and eager inference stays
+    # eager. Any unexpected upstream source shape fails closed.
+    da3_compatibility = apply_da3_frozen_compat(DA3_VENDOR)
 
     source_git_sha = _source_git_sha()
     triple = _host_triple()
@@ -242,7 +257,7 @@ def main() -> None:
     executable_sha = sha256_file(staged_executable)
     payload_sha, payload_files, payload_symlinks, payload_bytes = tree_identity(RUNTIME_DIR)
     runtime_manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -253,10 +268,11 @@ def main() -> None:
         "payload_regular_files": payload_files,
         "payload_symlinks": payload_symlinks,
         "payload_logical_bytes": payload_bytes,
+        "da3_frozen_compatibility": da3_compatibility,
         "frozen_self_check": self_check,
         "frozen_self_check_elapsed_seconds": round(self_check_elapsed, 3),
         "startup_phases": startup_phases,
-        "model_loaded_during_packaging_check": False,
+        "model_weights_loaded_during_packaging_check": False,
         "network_used_during_packaging_check": False,
     }
     runtime_manifest_path = RUNTIME_DIR / RUNTIME_MANIFEST_NAME
@@ -273,7 +289,7 @@ def main() -> None:
         raise RuntimeError("runtime payload identity changed while writing qualification manifest")
 
     report = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": "PASS_QUALIFIED_SIDECAR_BUILD",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -290,6 +306,7 @@ def main() -> None:
         "runtime_symlinks": symlink_count,
         "runtime_logical_bytes": logical_bytes,
         "da3_vendor_source": str(DA3_VENDOR.resolve()),
+        "da3_frozen_compatibility": da3_compatibility,
         "geospatial_packaging": {
             "rasterio_serde_hidden_import": True,
             "rasterio_python_submodules_collected": True,
@@ -305,8 +322,9 @@ def main() -> None:
         "offline_after_model_install": True,
         "scientific_boundary": (
             "Packaging and frozen-runtime integrity evidence only. The self-check exercises bundled "
-            "Rasterio/GDAL/PROJ without loading DA3 or using the network. It does not establish DSM "
-            "accuracy, model promotion, offline DA3 inference, clean-machine success, FPS, or soak."
+            "Rasterio/GDAL/PROJ plus the pinned DA3 affine_inverse import/eager tensor path without "
+            "loading model weights or using the network. It does not establish DSM accuracy, model "
+            "promotion, clean-machine success, FPS, or soak."
         ),
     }
     report_path = BUILD_ROOT.parent / "sidecar-build-report.json"
@@ -322,7 +340,8 @@ def main() -> None:
     print(f"Executable SHA-256: {executable_sha}")
     print(f"Runtime payload SHA-256: {payload_sha}")
     print(f"Runtime tree SHA-256: {runtime_sha}")
-    print(f"Frozen geospatial self-check: PASS in {self_check_elapsed:.3f} s")
+    print("DA3 frozen TorchScript compatibility: PASS (torch.jit.script_if_tracing)")
+    print(f"Frozen runtime self-check: PASS in {self_check_elapsed:.3f} s")
     print(f"Report: {report_path}")
 
 
