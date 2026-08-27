@@ -148,7 +148,7 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
             f"stdout={completed.stdout}\nstderr={completed.stderr}"
         ) from exc
     if not isinstance(payload, dict):
-        raise RuntimeError("frozen sidecar self-check JSON root must be an object")
+        raise TypeError("frozen sidecar self-check JSON root must be an object")
     if payload.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
         raise RuntimeError(f"frozen sidecar self-check returned non-passing status: {payload}")
     required_phases = {"python_entry", "self_check_import_complete", "self_check_complete"}

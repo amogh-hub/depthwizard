@@ -45,7 +45,7 @@ def _sha256(path: Path) -> str:
 def _read_json(path: Path) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise RuntimeError(f"JSON root must be an object: {path}")
+        raise TypeError(f"JSON root must be an object: {path}")
     return payload
 
 
@@ -168,7 +168,7 @@ def _verify_qualified_build(binary: Path) -> dict[str, object]:
         raise RuntimeError("staged sidecar executable no longer matches the qualified build report")
     self_check = report.get("frozen_self_check")
     if not isinstance(self_check, dict):
-        raise RuntimeError("sidecar build report is missing frozen runtime self-check evidence")
+        raise TypeError("sidecar build report is missing frozen runtime self-check evidence")
     if self_check.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
         raise RuntimeError("frozen geospatial self-check is not passing")
     return report

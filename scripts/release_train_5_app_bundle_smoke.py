@@ -80,7 +80,7 @@ def _wait_for_pid_exit(pid: int, timeout_s: float = 8.0) -> None:
 def _read_json(path: Path) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise RuntimeError(f"JSON root must be an object: {path}")
+        raise TypeError(f"JSON root must be an object: {path}")
     return payload
 
 
@@ -123,7 +123,7 @@ def _macos_bundle() -> tuple[Path, Path, Path, dict[str, object]]:
         raise RuntimeError("packaged sidecar executable does not match its qualification manifest")
     self_check = runtime_manifest.get("frozen_self_check")
     if not isinstance(self_check, dict):
-        raise RuntimeError("packaged runtime manifest is missing frozen self-check evidence")
+        raise TypeError("packaged runtime manifest is missing frozen self-check evidence")
     if self_check.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
         raise RuntimeError("packaged runtime frozen geospatial self-check is not passing")
     return bundle, executable, sidecar, runtime_manifest
