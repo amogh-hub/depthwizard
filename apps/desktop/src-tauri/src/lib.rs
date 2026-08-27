@@ -62,8 +62,7 @@ impl SidecarState {
     fn shutdown(&self) {
         if let Ok(mut guard) = self.child.lock() {
             if let Some(mut child) = guard.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_child(&mut child);
             }
         }
         if let Some(path) = self.acceptance_control_path.as_ref() {
@@ -75,6 +74,11 @@ impl SidecarState {
 #[tauri::command]
 fn runtime_config(state: State<'_, SidecarState>) -> RuntimeConfig {
     state.runtime.clone()
+}
+
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn generate_session_token() -> String {
@@ -170,17 +174,24 @@ fn write_acceptance_control(runtime: &RuntimeConfig) -> io::Result<Option<PathBu
     };
     let payload = serde_json::to_string(&control).map_err(io::Error::other)?;
 
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    let write_result = (|| -> io::Result<()> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path)?;
+        file.write_all(payload.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&path);
+        return Err(error);
     }
-    let mut file = options.open(&path)?;
-    file.write_all(payload.as_bytes())?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
     Ok(Some(path))
 }
 
@@ -327,8 +338,7 @@ pub fn run() {
             let sidecar_pid = child.id();
 
             if let Err(error) = wait_for_health(port, SIDECAR_READY_TIMEOUT) {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_child(&mut child);
                 return Err(Box::new(error));
             }
 
@@ -338,15 +348,37 @@ pub fn run() {
                 sidecar_pid,
                 offline_core: true,
             };
-            write_acceptance_boot_report(&runtime)?;
-            let acceptance_control_path = write_acceptance_control(&runtime)?;
+            if let Err(error) = write_acceptance_boot_report(&runtime) {
+                terminate_child(&mut child);
+                return Err(Box::new(error));
+            }
+            let acceptance_control_path = match write_acceptance_control(&runtime) {
+                Ok(path) => path,
+                Err(error) => {
+                    terminate_child(&mut child);
+                    return Err(Box::new(error));
+                }
+            };
+            if let Err(error) = schedule_acceptance_auto_exit(app.handle().clone()) {
+                if let Some(path) = acceptance_control_path.as_ref() {
+                    let _ = fs::remove_file(path);
+                }
+                terminate_child(&mut child);
+                return Err(Box::new(error));
+            }
+            if let Err(error) = schedule_acceptance_exit_signal(app.handle().clone()) {
+                if let Some(path) = acceptance_control_path.as_ref() {
+                    let _ = fs::remove_file(path);
+                }
+                terminate_child(&mut child);
+                return Err(Box::new(error));
+            }
+
             app.manage(SidecarState {
                 child: Mutex::new(Some(child)),
                 runtime,
                 acceptance_control_path,
             });
-            schedule_acceptance_auto_exit(app.handle().clone())?;
-            schedule_acceptance_exit_signal(app.handle().clone())?;
             Ok(())
         })
         .build(tauri::generate_context!())
