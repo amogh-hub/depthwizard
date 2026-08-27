@@ -43,11 +43,35 @@ APP_STDERR = OUT / "depthwizard-app.stderr.log"
 DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+class AcceptanceFailure(RuntimeError):
+    """A fail-closed RT5 acceptance contract violation."""
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise TypeError(f"JSON root must be an object: {path}")
     return payload
+
+
+def _require_dict(payload: object, *, context: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise TypeError(f"{context} must be a JSON object")
+    return payload
+
+
+def _require_str(payload: dict[str, Any], key: str, *, context: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise TypeError(f"{context}.{key} must be a non-empty string")
+    return value
+
+
+def _require_int(payload: dict[str, Any], key: str, *, context: str) -> int:
+    value = payload.get(key)
+    if not isinstance(value, int):
+        raise TypeError(f"{context}.{key} must be an integer")
+    return value
 
 
 def _json_request(
@@ -57,7 +81,7 @@ def _json_request(
     token: str | None = None,
     payload: dict[str, Any] | None = None,
     timeout_s: float = 5.0,
-) -> tuple[int, Any]:
+) -> tuple[int, object]:
     data = None
     headers: dict[str, str] = {}
     method = "GET"
@@ -91,11 +115,12 @@ def _wait_for_file(path: Path, process: subprocess.Popen[bytes], timeout_s: floa
         if path.is_file():
             return
         if process.poll() is not None:
-            raise RuntimeError(
-                f"DepthWizard app exited before acceptance control became available: {process.returncode}"
+            raise AcceptanceFailure(
+                "DepthWizard app exited before acceptance control became available: "
+                f"returncode={process.returncode}"
             )
         time.sleep(0.1)
-    raise RuntimeError(f"timed out waiting for acceptance control: {path}")
+    raise AcceptanceFailure(f"timed out waiting for acceptance control: {path}")
 
 
 def _poll_job(
@@ -109,20 +134,25 @@ def _poll_job(
     deadline = time.monotonic() + timeout_s
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
-        status, payload = _json_request(base, f"/v1/jobs/{job_id}", token=token)
-        if status != 200 or not isinstance(payload, dict):
-            raise RuntimeError(f"job polling failed: HTTP {status}, payload={payload!r}")
+        status, raw_payload = _json_request(base, f"/v1/jobs/{job_id}", token=token)
+        if status != 200:
+            raise AcceptanceFailure(
+                f"job polling failed: HTTP {status}, payload={raw_payload!r}"
+            )
+        payload = _require_dict(raw_payload, context="job status response")
         last = payload
         state = str(payload.get("status"))
         if state in {"complete", "failed", "waiting_for_calibration"}:
             if state != expected_terminal:
-                raise RuntimeError(
+                raise AcceptanceFailure(
                     f"job {job_id} terminated as {state!r}; expected {expected_terminal!r}; "
                     f"error={payload.get('error')!r}"
                 )
             return payload
         time.sleep(0.5)
-    raise RuntimeError(f"job {job_id} did not reach a terminal state; last={last!r}")
+    raise AcceptanceFailure(
+        f"job {job_id} did not reach a terminal state before {timeout_s:.1f}s; last={last!r}"
+    )
 
 
 def _write_corrupt_raster(path: Path) -> None:
@@ -148,6 +178,7 @@ def _write_failure_fixture(path: Path) -> None:
 
 
 def _prepare_assets() -> tuple[Path, Path, Path, dict[str, bool]]:
+    """Prepare RT5 integration fixtures before the packaged core is launched offline."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     dop = DATA_DIR / "urban_residential_DOP.tif"
     xdsm = DATA_DIR / "urban_residential_xDSM.tif"
@@ -184,51 +215,74 @@ def _tail(path: Path, max_chars: int = 12000) -> str:
 def _assert_project_outputs(project_dir: Path) -> dict[str, str]:
     manifest_path = project_dir / "project-manifest.json"
     if not manifest_path.is_file():
-        raise RuntimeError("packaged workflow did not persist project-manifest.json")
+        raise AcceptanceFailure("packaged workflow did not persist project-manifest.json")
     manifest = _read_json(manifest_path)
     if manifest.get("status") != "complete":
-        raise RuntimeError(f"project manifest is not complete: {manifest.get('status')!r}")
+        raise AcceptanceFailure(
+            f"project manifest is not complete: {manifest.get('status')!r}"
+        )
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         raise TypeError("project manifest artifacts must be an object")
-    required = ("rdsm", "dsm", "slope")
+
     evidence: dict[str, str] = {}
-    for name in required:
+    for name in ("rdsm", "dsm", "slope"):
         item = artifacts.get(name)
         if not isinstance(item, dict):
-            raise RuntimeError(f"project manifest is missing required artifact: {name}")
+            raise TypeError(f"project manifest artifact {name} must be an object")
         raw_path = item.get("path")
         raw_sha = item.get("sha256")
         if not isinstance(raw_path, str) or not isinstance(raw_sha, str):
-            raise RuntimeError(f"project artifact {name} has incomplete identity evidence")
+            raise TypeError(f"project artifact {name} identity fields must be strings")
         artifact_path = Path(raw_path)
         if not artifact_path.is_file():
-            raise RuntimeError(f"project artifact {name} does not exist: {artifact_path}")
+            raise AcceptanceFailure(
+                f"project artifact {name} does not exist: {artifact_path}"
+            )
         if _sha256(artifact_path) != raw_sha:
-            raise RuntimeError(f"project artifact {name} SHA-256 does not match manifest")
+            raise AcceptanceFailure(
+                f"project artifact {name} SHA-256 does not match manifest"
+            )
         evidence[name] = raw_sha
     return evidence
 
 
-def main() -> None:
-    if platform.system() != "Darwin":
-        raise RuntimeError("RT5 full standalone acceptance must run on the finale macOS host")
+def _cleanup_process(process: subprocess.Popen[bytes] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    try:
+        EXIT_SIGNAL.parent.mkdir(parents=True, exist_ok=True)
+        EXIT_SIGNAL.write_text("exit\n", encoding="utf-8")
+        process.wait(timeout=15.0)
+    except (OSError, subprocess.SubprocessError):
+        process.kill()
+        process.wait(timeout=5.0)
 
-    bundle, executable, sidecar, runtime_manifest = _macos_bundle()
-    OUT.mkdir(parents=True, exist_ok=True)
-    for path in (CONTROL_PATH, EXIT_SIGNAL, BOOT_REPORT, REPORT_PATH, APP_STDOUT, APP_STDERR):
-        if path.exists():
-            path.unlink()
-    for directory in (PROJECT_DIR, FAILURE_PROJECT_DIR):
-        if directory.exists():
-            shutil.rmtree(directory)
 
-    source, dem, reference, cached_before = _prepare_assets()
-    corrupt = OUT / "inputs" / "corrupt.tif"
-    failure_source = OUT / "inputs" / "single-band-runtime-failure.tif"
-    _write_corrupt_raster(corrupt)
-    _write_failure_fixture(failure_source)
+def _validate_control(control: dict[str, Any]) -> tuple[str, str, int]:
+    api_base = _require_str(control, "apiBase", context="acceptance control")
+    token = _require_str(control, "sessionToken", context="acceptance control")
+    sidecar_pid = _require_int(control, "sidecarPid", context="acceptance control")
+    if not api_base.startswith("http://127.0.0.1:"):
+        raise AcceptanceFailure("acceptance control exposed a non-loopback API base")
+    if len(token) != 64 or any(
+        character not in "0123456789abcdefABCDEF" for character in token
+    ):
+        raise AcceptanceFailure(
+            "acceptance control did not provide a 256-bit hexadecimal token"
+        )
+    if sidecar_pid <= 0 or not _pid_alive(sidecar_pid):
+        raise AcceptanceFailure("acceptance control sidecar PID is not live")
+    return api_base, token, sidecar_pid
 
+
+def _run_full_acceptance(
+    executable: Path,
+    *,
+    source: Path,
+    dem: Path,
+    reference: Path,
+) -> dict[str, Any]:
     env = os.environ.copy()
     env.update(
         {
@@ -240,10 +294,14 @@ def main() -> None:
         }
     )
 
-    started_at = time.monotonic()
-    sidecar_pid: int | None = None
-    control_deleted = False
+    corrupt = OUT / "inputs" / "corrupt.tif"
+    failure_source = OUT / "inputs" / "single-band-runtime-failure.tif"
+    _write_corrupt_raster(corrupt)
+    _write_failure_fixture(failure_source)
+
     process: subprocess.Popen[bytes] | None = None
+    sidecar_pid: int | None = None
+    started_at = time.monotonic()
     try:
         with APP_STDOUT.open("wb") as stdout_handle, APP_STDERR.open("wb") as stderr_handle:
             process = subprocess.Popen(
@@ -254,37 +312,40 @@ def main() -> None:
                 env=env,
             )
             _wait_for_file(CONTROL_PATH, process, timeout_s=95.0)
-            control = _read_json(CONTROL_PATH)
-            api_base = control.get("apiBase")
-            token = control.get("sessionToken")
-            raw_pid = control.get("sidecarPid")
-            if not isinstance(api_base, str) or not api_base.startswith("http://127.0.0.1:"):
-                raise RuntimeError("acceptance control exposed a non-loopback API base")
-            if not isinstance(token, str) or len(token) != 64 or any(
-                character not in "0123456789abcdefABCDEF" for character in token
-            ):
-                raise RuntimeError("acceptance control did not provide a 256-bit hexadecimal token")
-            if not isinstance(raw_pid, int) or raw_pid <= 0 or not _pid_alive(raw_pid):
-                raise RuntimeError("acceptance control sidecar PID is not live")
-            sidecar_pid = raw_pid
+            api_base, token, sidecar_pid = _validate_control(_read_json(CONTROL_PATH))
             CONTROL_PATH.unlink()
-            control_deleted = not CONTROL_PATH.exists()
-            if not control_deleted:
-                raise RuntimeError("ephemeral acceptance control file could not be deleted")
+            if CONTROL_PATH.exists():
+                raise AcceptanceFailure(
+                    "ephemeral acceptance control file could not be deleted"
+                )
 
             boot = _read_json(BOOT_REPORT)
             if boot.get("status") != "PASS_TAURI_SIDECAR_BOOT":
-                raise RuntimeError("clean app launch did not record passing Tauri sidecar boot")
-            if boot.get("offlineCore") is not True or boot.get("strictPythonEgressGuard") is not True:
-                raise RuntimeError("clean app launch did not enforce packaged offline policy")
+                raise AcceptanceFailure(
+                    "clean app launch did not record passing Tauri sidecar boot"
+                )
+            if (
+                boot.get("offlineCore") is not True
+                or boot.get("strictPythonEgressGuard") is not True
+            ):
+                raise AcceptanceFailure(
+                    "clean app launch did not enforce packaged offline policy"
+                )
             if boot.get("sessionTokenExported") is not False:
-                raise RuntimeError("boot evidence unexpectedly exported the session token")
+                raise AcceptanceFailure(
+                    "boot evidence unexpectedly exported the session token"
+                )
             if boot.get("ephemeralAcceptanceControlEnabled") is not True:
-                raise RuntimeError("full acceptance control channel was not explicitly marked test-only")
+                raise AcceptanceFailure(
+                    "full acceptance control channel was not explicitly marked test-only"
+                )
 
-            health_status, health = _json_request(api_base, "/health")
-            if health_status != 200 or not isinstance(health, dict) or health.get("status") != "ok":
-                raise RuntimeError(f"packaged app health failed: HTTP {health_status}, {health!r}")
+            health_status, raw_health = _json_request(api_base, "/health")
+            health = _require_dict(raw_health, context="packaged app health response")
+            if health_status != 200 or health.get("status") != "ok":
+                raise AcceptanceFailure(
+                    f"packaged app health failed: HTTP {health_status}, {health!r}"
+                )
 
             missing_status, _ = _json_request(
                 api_base, "/v1/inspect", payload={"path": str(source)}
@@ -296,8 +357,9 @@ def main() -> None:
                 payload={"path": str(source)},
             )
             if missing_status != 401 or wrong_status != 401:
-                raise RuntimeError(
-                    f"packaged app session guard failed: missing={missing_status}, wrong={wrong_status}"
+                raise AcceptanceFailure(
+                    "packaged app session guard failed: "
+                    f"missing={missing_status}, wrong={wrong_status}"
                 )
 
             corrupt_status, corrupt_payload = _json_request(
@@ -307,12 +369,12 @@ def main() -> None:
                 payload={"path": str(corrupt)},
             )
             if corrupt_status != 422:
-                raise RuntimeError(
+                raise AcceptanceFailure(
                     f"malformed raster was not rejected recoverably: HTTP {corrupt_status}, "
                     f"payload={corrupt_payload!r}"
                 )
 
-            failure_submit_status, failure_submit = _json_request(
+            failure_submit_status, raw_failure_submit = _json_request(
                 api_base,
                 "/v1/projects",
                 token=token,
@@ -324,14 +386,17 @@ def main() -> None:
                     "overlap": 32,
                 },
             )
-            if failure_submit_status != 202 or not isinstance(failure_submit, dict):
-                raise RuntimeError(
-                    f"runtime-failure fixture was not queued: HTTP {failure_submit_status}, "
-                    f"payload={failure_submit!r}"
+            if failure_submit_status != 202:
+                raise AcceptanceFailure(
+                    "runtime-failure fixture was not queued: "
+                    f"HTTP {failure_submit_status}, payload={raw_failure_submit!r}"
                 )
-            failure_job_id = failure_submit.get("job_id")
-            if not isinstance(failure_job_id, str):
-                raise RuntimeError("runtime-failure fixture did not return a job id")
+            failure_submit = _require_dict(
+                raw_failure_submit, context="runtime-failure project submission"
+            )
+            failure_job_id = _require_str(
+                failure_submit, "job_id", context="runtime-failure project submission"
+            )
             failure_terminal = _poll_job(
                 api_base,
                 token,
@@ -339,15 +404,19 @@ def main() -> None:
                 expected_terminal="failed",
                 timeout_s=180.0,
             )
-            recovery_health_status, recovery_health = _json_request(api_base, "/health")
-            if (
-                recovery_health_status != 200
-                or not isinstance(recovery_health, dict)
-                or recovery_health.get("status") != "ok"
-            ):
-                raise RuntimeError("scientific core did not remain healthy after a runtime job failure")
 
-            submit_status, submit = _json_request(
+            recovery_health_status, raw_recovery_health = _json_request(
+                api_base, "/health"
+            )
+            recovery_health = _require_dict(
+                raw_recovery_health, context="post-failure health response"
+            )
+            if recovery_health_status != 200 or recovery_health.get("status") != "ok":
+                raise AcceptanceFailure(
+                    "scientific core did not remain healthy after a runtime job failure"
+                )
+
+            submit_status, raw_submit = _json_request(
                 api_base,
                 "/v1/projects",
                 token=token,
@@ -361,13 +430,13 @@ def main() -> None:
                     "harmonize_overlaps": True,
                 },
             )
-            if submit_status != 202 or not isinstance(submit, dict):
-                raise RuntimeError(
-                    f"fresh packaged project was not queued: HTTP {submit_status}, payload={submit!r}"
+            if submit_status != 202:
+                raise AcceptanceFailure(
+                    f"fresh packaged project was not queued: HTTP {submit_status}, "
+                    f"payload={raw_submit!r}"
                 )
-            job_id = submit.get("job_id")
-            if not isinstance(job_id, str):
-                raise RuntimeError("fresh packaged project did not return a job id")
+            submit = _require_dict(raw_submit, context="fresh packaged project submission")
+            job_id = _require_str(submit, "job_id", context="fresh packaged project submission")
             job_terminal = _poll_job(
                 api_base,
                 token,
@@ -377,7 +446,7 @@ def main() -> None:
             )
             artifact_hashes = _assert_project_outputs(PROJECT_DIR)
 
-            validation_status, validation = _json_request(
+            validation_status, raw_validation = _json_request(
                 api_base,
                 "/v1/projects/validate",
                 token=token,
@@ -391,12 +460,14 @@ def main() -> None:
                 },
                 timeout_s=120.0,
             )
-            if validation_status != 200 or not isinstance(validation, dict):
-                raise RuntimeError(
-                    f"packaged validation failed: HTTP {validation_status}, payload={validation!r}"
+            if validation_status != 200:
+                raise AcceptanceFailure(
+                    f"packaged validation failed: HTTP {validation_status}, "
+                    f"payload={raw_validation!r}"
                 )
+            validation = _require_dict(raw_validation, context="packaged validation response")
 
-            mesh_status, mesh = _json_request(
+            mesh_status, raw_mesh = _json_request(
                 api_base,
                 "/v1/projects/mesh",
                 token=token,
@@ -407,15 +478,20 @@ def main() -> None:
                 },
                 timeout_s=120.0,
             )
-            if mesh_status != 200 or not isinstance(mesh, dict):
-                raise RuntimeError(
-                    f"packaged mesh build failed: HTTP {mesh_status}, payload={mesh!r}"
+            if mesh_status != 200:
+                raise AcceptanceFailure(
+                    f"packaged mesh build failed: HTTP {mesh_status}, payload={raw_mesh!r}"
                 )
+            mesh = _require_dict(raw_mesh, context="packaged mesh response")
             lods = mesh.get("lods")
-            if not isinstance(lods, list) or len(lods) < 2:
-                raise RuntimeError("packaged mesh build did not produce the required LOD chain")
+            if not isinstance(lods, list):
+                raise TypeError("packaged mesh response.lods must be a list")
+            if len(lods) < 2:
+                raise AcceptanceFailure(
+                    "packaged mesh build did not produce the required LOD chain"
+                )
 
-            export_status, export = _json_request(
+            export_status, raw_export = _json_request(
                 api_base,
                 "/v1/projects/export",
                 token=token,
@@ -427,152 +503,242 @@ def main() -> None:
                 },
                 timeout_s=120.0,
             )
-            if export_status != 200 or not isinstance(export, dict):
-                raise RuntimeError(
-                    f"packaged export failed: HTTP {export_status}, payload={export!r}"
+            if export_status != 200:
+                raise AcceptanceFailure(
+                    f"packaged export failed: HTTP {export_status}, payload={raw_export!r}"
                 )
-            bundle_path_raw = export.get("bundle_path")
-            bundle_sha = export.get("bundle_sha256")
-            if not isinstance(bundle_path_raw, str) or not isinstance(bundle_sha, str):
-                raise RuntimeError("packaged export response is missing bundle identity")
+            export = _require_dict(raw_export, context="packaged export response")
+            bundle_path_raw = _require_str(
+                export, "bundle_path", context="packaged export response"
+            )
+            bundle_sha = _require_str(
+                export, "bundle_sha256", context="packaged export response"
+            )
             export_bundle = Path(bundle_path_raw)
             if not export_bundle.is_file() or _sha256(export_bundle) != bundle_sha:
-                raise RuntimeError("packaged export bundle identity verification failed")
+                raise AcceptanceFailure(
+                    "packaged export bundle identity verification failed"
+                )
             with zipfile.ZipFile(export_bundle, "r") as archive:
                 bad_member = archive.testzip()
                 if bad_member is not None:
-                    raise RuntimeError(f"packaged export ZIP integrity failed at {bad_member}")
+                    raise AcceptanceFailure(
+                        f"packaged export ZIP integrity failed at {bad_member}"
+                    )
                 archive_names = set(archive.namelist())
             if "project-manifest.json" not in archive_names:
-                raise RuntimeError("packaged export is missing project-manifest.json")
+                raise AcceptanceFailure(
+                    "packaged export is missing project-manifest.json"
+                )
 
-            final_health_status, final_health = _json_request(api_base, "/health")
-            if (
-                final_health_status != 200
-                or not isinstance(final_health, dict)
-                or final_health.get("status") != "ok"
-            ):
-                raise RuntimeError("scientific core was not healthy after process→validate→mesh→export")
+            final_health_status, raw_final_health = _json_request(api_base, "/health")
+            final_health = _require_dict(
+                raw_final_health, context="final packaged health response"
+            )
+            if final_health_status != 200 or final_health.get("status") != "ok":
+                raise AcceptanceFailure(
+                    "scientific core was not healthy after process→validate→mesh→export"
+                )
 
             EXIT_SIGNAL.write_text("exit\n", encoding="utf-8")
             process.wait(timeout=30.0)
             if process.returncode != 0:
-                raise RuntimeError(f"DepthWizard app exited with code {process.returncode}")
+                raise AcceptanceFailure(
+                    f"DepthWizard app exited with code {process.returncode}"
+                )
             _wait_for_pid_exit(sidecar_pid, timeout_s=10.0)
 
         elapsed = time.monotonic() - started_at
-        validation_elevation = validation.get("elevation")
-        report = {
-            "schema_version": 1,
-            "status": "PASS_RT5_FULL_STANDALONE_ENGINEERING_ACCEPTANCE",
-            "git_head": _git_head(),
-            "platform": platform.platform(),
-            "application_bundle": str(bundle.resolve()),
-            "application_sha256": _sha256(executable),
-            "packaged_sidecar": str(sidecar.resolve()),
-            "packaged_sidecar_sha256": _sha256(sidecar),
-            "runtime_tree_sha256": runtime_manifest.get("runtime_tree_sha256"),
-            "runtime_manifest_status": runtime_manifest.get("status"),
-            "clean_application_launch": True,
-            "user_visible_terminal_required": False,
-            "offline_after_model_install": True,
-            "strict_python_non_loopback_egress_guard": True,
-            "session_guard": {
-                "missing_token_http_status": missing_status,
-                "wrong_token_http_status": wrong_status,
-                "token_recorded_in_evidence": False,
-                "ephemeral_acceptance_control_used": True,
-                "ephemeral_control_deleted_before_scientific_requests": control_deleted,
-                "ephemeral_control_removed_on_app_exit": not CONTROL_PATH.exists(),
-            },
-            "recovery": {
-                "malformed_raster_http_status": corrupt_status,
-                "runtime_failure_job_id": failure_job_id,
-                "runtime_failure_terminal_status": failure_terminal.get("status"),
-                "runtime_failure_error_present": bool(failure_terminal.get("error")),
-                "health_after_runtime_failure": recovery_health,
-                "subsequent_valid_job_completed": True,
-            },
-            "offline_da3_project": {
-                "job_id": job_id,
-                "terminal_status": job_terminal.get("status"),
-                "source": str(source.resolve()),
-                "source_sha256": _sha256(source),
-                "calibration_dem": str(dem.resolve()),
-                "calibration_dem_sha256": _sha256(dem),
-                "reference": str(reference.resolve()),
-                "reference_sha256": _sha256(reference),
-                "asset_cache_state_before_acceptance_prep": cached_before,
-                "project_dir": str(PROJECT_DIR.resolve()),
-                "artifact_sha256": artifact_hashes,
-            },
-            "validation": validation,
-            "validation_elevation": validation_elevation,
-            "mesh": {
-                "lod_count": len(lods),
-                "surface_product": mesh.get("surface_product"),
-                "horizontal_units": mesh.get("horizontal_units"),
-                "vertical_units": mesh.get("vertical_units"),
-            },
-            "export": {
-                "bundle_path": str(export_bundle.resolve()),
-                "bundle_sha256": bundle_sha,
-                "bundle_bytes": export.get("bundle_bytes"),
-                "zip_integrity": "PASS",
-                "source_included": export.get("include_source"),
-                "mesh_included": export.get("include_mesh"),
-                "validation_included": export.get("include_validation"),
-            },
-            "lifecycle": {
-                "sidecar_pid": sidecar_pid,
-                "sidecar_terminated_with_app": not _pid_alive(sidecar_pid),
-                "app_exit_code": process.returncode if process is not None else None,
-                "elapsed_seconds": round(elapsed, 3),
-            },
-            "consumed_benchmark_rerun": False,
-            "model_promotion_claim": False,
-            "scientific_boundary": (
-                "RT5 standalone engineering acceptance only. The OrthoLoC source/calibration/reference "
-                "are reused as an integration fixture and are not independent scientific evidence. "
-                "This run proves packaged offline DA3 execution, failure recovery, validation, mesh, "
-                "export, session security and clean Tauri-owned lifecycle. RT6 owns final scientific "
-                "evidence; RT7 owns finale-Mac FPS, two-hour soak and clean-machine qualification."
-            ),
-        }
-        REPORT_PATH.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        if _pid_alive(sidecar_pid):
+            raise AcceptanceFailure("Rust-owned scientific sidecar survived desktop exit")
 
-        print("DepthWizard Release Train 5 full standalone engineering acceptance: PASS")
-        print("Clean packaged DepthWizard.app launch: PASS")
-        print("Offline DA3 reconstruction from installed model assets: PASS")
-        print("Malformed-input rejection without service loss: PASS")
-        print("Runtime job failure → service recovery → subsequent valid job: PASS")
-        print("Fresh-image process → downstream validation: PASS")
-        print("Packaged 3D mesh + LOD generation: PASS")
-        print("Packaged project export + ZIP integrity: PASS")
-        print("Session token persisted in final evidence: NO")
-        print("Sidecar terminated with desktop: PASS")
-        print("Consumed benchmark/model-promotion protocol rerun: NO")
-        print("RT7 FPS/soak/clean-machine evidence consumed here: NO")
-        print(f"Acceptance report: {REPORT_PATH}")
-    except Exception as exc:
-        if process is not None and process.poll() is None:
-            try:
-                EXIT_SIGNAL.parent.mkdir(parents=True, exist_ok=True)
-                EXIT_SIGNAL.write_text("exit\n", encoding="utf-8")
-                process.wait(timeout=15.0)
-            except Exception:
-                process.kill()
-                process.wait(timeout=5.0)
+        return {
+            "elapsed_seconds": round(elapsed, 3),
+            "sidecar_pid": sidecar_pid,
+            "app_exit_code": process.returncode,
+            "missing_status": missing_status,
+            "wrong_status": wrong_status,
+            "corrupt_status": corrupt_status,
+            "failure_job_id": failure_job_id,
+            "failure_terminal": failure_terminal,
+            "recovery_health": recovery_health,
+            "job_id": job_id,
+            "job_terminal": job_terminal,
+            "artifact_hashes": artifact_hashes,
+            "validation": validation,
+            "mesh": mesh,
+            "lod_count": len(lods),
+            "export": export,
+            "export_bundle": export_bundle,
+            "bundle_sha": bundle_sha,
+            "final_health": final_health,
+        }
+    except (
+        AcceptanceFailure,
+        TypeError,
+        ValueError,
+        OSError,
+        TimeoutError,
+        subprocess.SubprocessError,
+        urllib.error.URLError,
+        json.JSONDecodeError,
+        zipfile.BadZipFile,
+    ) as exc:
+        _cleanup_process(process)
         if CONTROL_PATH.exists():
             CONTROL_PATH.unlink()
-        if sidecar_pid is not None and _pid_alive(sidecar_pid):
-            time.sleep(1.0)
-        raise RuntimeError(
+        raise AcceptanceFailure(
             f"{exc}\n\nDepthWizard app stdout tail:\n{_tail(APP_STDOUT)}\n\n"
             f"DepthWizard app stderr tail:\n{_tail(APP_STDERR)}"
         ) from exc
+
+
+def main() -> None:
+    if platform.system() != "Darwin":
+        raise AcceptanceFailure(
+            "RT5 full standalone acceptance must run on the finale macOS host"
+        )
+
+    bundle, executable, sidecar, runtime_manifest = _macos_bundle()
+    OUT.mkdir(parents=True, exist_ok=True)
+    for path in (
+        CONTROL_PATH,
+        EXIT_SIGNAL,
+        BOOT_REPORT,
+        REPORT_PATH,
+        APP_STDOUT,
+        APP_STDERR,
+    ):
+        if path.exists():
+            path.unlink()
+    for directory in (PROJECT_DIR, FAILURE_PROJECT_DIR):
+        if directory.exists():
+            shutil.rmtree(directory)
+
+    source, dem, reference, cached_before = _prepare_assets()
+    evidence = _run_full_acceptance(
+        executable, source=source, dem=dem, reference=reference
+    )
+
+    failure_terminal = _require_dict(
+        evidence["failure_terminal"], context="stored runtime-failure evidence"
+    )
+    job_terminal = _require_dict(
+        evidence["job_terminal"], context="stored project evidence"
+    )
+    recovery_health = _require_dict(
+        evidence["recovery_health"], context="stored recovery health evidence"
+    )
+    validation = _require_dict(evidence["validation"], context="stored validation evidence")
+    mesh = _require_dict(evidence["mesh"], context="stored mesh evidence")
+    export = _require_dict(evidence["export"], context="stored export evidence")
+    artifact_hashes = _require_dict(
+        evidence["artifact_hashes"], context="stored artifact identity evidence"
+    )
+    export_bundle = evidence["export_bundle"]
+    if not isinstance(export_bundle, Path):
+        raise TypeError("stored export bundle must be a Path")
+    bundle_sha = evidence["bundle_sha"]
+    if not isinstance(bundle_sha, str):
+        raise TypeError("stored export bundle SHA-256 must be a string")
+    sidecar_pid = evidence["sidecar_pid"]
+    if not isinstance(sidecar_pid, int):
+        raise TypeError("stored sidecar PID must be an integer")
+
+    report = {
+        "schema_version": 2,
+        "status": "PASS_RT5_FULL_STANDALONE_ENGINEERING_ACCEPTANCE",
+        "git_head": _git_head(),
+        "platform": platform.platform(),
+        "application_bundle": str(bundle.resolve()),
+        "application_sha256": _sha256(executable),
+        "packaged_sidecar": str(sidecar.resolve()),
+        "packaged_sidecar_sha256": _sha256(sidecar),
+        "runtime_tree_sha256": runtime_manifest.get("runtime_tree_sha256"),
+        "runtime_manifest_status": runtime_manifest.get("status"),
+        "clean_application_launch": True,
+        "user_visible_terminal_required": False,
+        "offline_after_model_install": True,
+        "strict_python_non_loopback_egress_guard": True,
+        "session_guard": {
+            "missing_token_http_status": evidence["missing_status"],
+            "wrong_token_http_status": evidence["wrong_status"],
+            "token_recorded_in_evidence": False,
+            "ephemeral_acceptance_control_used": True,
+            "ephemeral_control_deleted_before_scientific_requests": True,
+            "ephemeral_control_removed_on_app_exit": not CONTROL_PATH.exists(),
+        },
+        "recovery": {
+            "malformed_raster_http_status": evidence["corrupt_status"],
+            "runtime_failure_job_id": evidence["failure_job_id"],
+            "runtime_failure_terminal_status": failure_terminal.get("status"),
+            "runtime_failure_error_present": bool(failure_terminal.get("error")),
+            "health_after_runtime_failure": recovery_health,
+            "subsequent_valid_job_completed": True,
+        },
+        "offline_da3_project": {
+            "job_id": evidence["job_id"],
+            "terminal_status": job_terminal.get("status"),
+            "source": str(source.resolve()),
+            "source_sha256": _sha256(source),
+            "calibration_dem": str(dem.resolve()),
+            "calibration_dem_sha256": _sha256(dem),
+            "reference": str(reference.resolve()),
+            "reference_sha256": _sha256(reference),
+            "asset_cache_state_before_acceptance_prep": cached_before,
+            "project_dir": str(PROJECT_DIR.resolve()),
+            "artifact_sha256": artifact_hashes,
+        },
+        "validation": validation,
+        "validation_elevation": validation.get("elevation"),
+        "mesh": {
+            "lod_count": evidence["lod_count"],
+            "surface_product": mesh.get("surface_product"),
+            "horizontal_units": mesh.get("horizontal_units"),
+            "vertical_units": mesh.get("vertical_units"),
+        },
+        "export": {
+            "bundle_path": str(export_bundle.resolve()),
+            "bundle_sha256": bundle_sha,
+            "bundle_bytes": export.get("bundle_bytes"),
+            "zip_integrity": "PASS",
+            "source_included": export.get("include_source"),
+            "mesh_included": export.get("include_mesh"),
+            "validation_included": export.get("include_validation"),
+        },
+        "lifecycle": {
+            "sidecar_pid": sidecar_pid,
+            "sidecar_terminated_with_app": not _pid_alive(sidecar_pid),
+            "app_exit_code": evidence["app_exit_code"],
+            "elapsed_seconds": evidence["elapsed_seconds"],
+        },
+        "consumed_benchmark_rerun": False,
+        "model_promotion_claim": False,
+        "scientific_boundary": (
+            "RT5 standalone engineering acceptance only. The OrthoLoC source/calibration/reference "
+            "are reused as an integration fixture and are not independent scientific evidence. "
+            "This run proves packaged offline DA3 execution, failure recovery, validation, mesh, "
+            "export, session security and clean Tauri-owned lifecycle. RT6 owns final scientific "
+            "evidence; RT7 owns finale-Mac FPS, two-hour soak and clean-machine qualification."
+        ),
+    }
+    REPORT_PATH.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    print("DepthWizard Release Train 5 full standalone engineering acceptance: PASS")
+    print("Clean packaged DepthWizard.app launch: PASS")
+    print("Offline DA3 reconstruction from installed model assets: PASS")
+    print("Malformed-input rejection without service loss: PASS")
+    print("Runtime job failure → service recovery → subsequent valid job: PASS")
+    print("Fresh-image process → downstream validation: PASS")
+    print("Packaged 3D mesh + LOD generation: PASS")
+    print("Packaged project export + ZIP integrity: PASS")
+    print("Session token persisted in final evidence: NO")
+    print("Sidecar terminated with desktop: PASS")
+    print("Consumed benchmark/model-promotion protocol rerun: NO")
+    print("RT7 FPS/soak/clean-machine evidence consumed here: NO")
+    print(f"Acceptance report: {REPORT_PATH}")
 
 
 if __name__ == "__main__":
