@@ -92,8 +92,10 @@ def _wait_for_health(
     base: str,
     process: subprocess.Popen[bytes],
     trace_path: Path,
-    timeout_s: float = 45.0,
+    timeout_s: float = 90.0,
 ) -> float:
+    # This is a liveness/correctness watchdog, not a performance target. The measured launch time is
+    # written into the acceptance report and judged separately by the finale performance gate.
     started = time.monotonic()
     deadline = started + timeout_s
     last_error: str | None = None
@@ -204,6 +206,7 @@ def main() -> None:
             "DEPTHWIZARD_STARTUP_TRACE": str(trace_path),
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "PROJ_NETWORK": "OFF",
             "PYTORCH_ENABLE_MPS_FALLBACK": "1",
             "NO_PROXY": "127.0.0.1,localhost",
             "no_proxy": "127.0.0.1,localhost",
