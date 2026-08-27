@@ -11,7 +11,17 @@ from rasterio.enums import Resampling
 
 from depthwizard.pipeline.project import ProjectManifest
 
-PreviewLayer = Literal["optical", "rdsm", "dsm", "slope", "reference", "residual", "confidence"]
+PreviewLayer = Literal[
+    "optical",
+    "rdsm",
+    "dsm",
+    "slope",
+    "reference",
+    "residual",
+    "confidence",
+    "hillshade",
+    "contours",
+]
 
 
 def _preview_shape(height: int, width: int, max_side: int) -> tuple[int, int]:
@@ -106,7 +116,7 @@ def _read_optical(path: Path, *, max_side: int) -> np.ndarray:
     return np.clip(np.rint(np.stack(channels, axis=-1) * 255.0), 0, 255).astype(np.uint8)
 
 
-def _read_scalar(path: Path, *, layer: PreviewLayer, max_side: int) -> np.ndarray:
+def _read_scalar_values(path: Path, *, max_side: int) -> tuple[np.ndarray, np.ndarray]:
     with rasterio.open(path) as src:
         out_h, out_w = _preview_shape(src.height, src.width, max_side)
         sample = src.read(
@@ -120,7 +130,57 @@ def _read_scalar(path: Path, *, layer: PreviewLayer, max_side: int) -> np.ndarra
         if src.nodata is not None and np.isfinite(src.nodata):
             valid &= values != np.float32(src.nodata)
     values[~valid] = np.nan
+    return values, valid
+
+
+def _read_scalar(path: Path, *, layer: PreviewLayer, max_side: int) -> np.ndarray:
+    values, valid = _read_scalar_values(path, max_side=max_side)
     return _scalar_rgb(values, layer=layer, valid=valid)
+
+
+def _hillshade_rgb(path: Path, *, max_side: int) -> np.ndarray:
+    values, valid = _read_scalar_values(path, max_side=max_side)
+    if values.shape[0] < 2 or values.shape[1] < 2:
+        raise ValueError("hillshade preview requires at least a 2x2 surface")
+    fill = np.where(valid, values, np.nanmedian(values[valid]))
+    grad_y, grad_x = np.gradient(fill.astype(np.float64))
+    slope = np.arctan(np.hypot(grad_x, grad_y))
+    aspect = np.arctan2(-grad_x, grad_y)
+    azimuth = np.deg2rad(315.0)
+    altitude = np.deg2rad(45.0)
+    shaded = (
+        np.sin(altitude) * np.cos(slope)
+        + np.cos(altitude) * np.sin(slope) * np.cos(azimuth - aspect)
+    )
+    intensity = np.clip(0.5 + 0.5 * shaded, 0.0, 1.0).astype(np.float32)
+    rgb = np.stack((intensity, intensity, intensity), axis=-1)
+    rgb[~valid] = np.array([0.94, 0.94, 0.94], dtype=np.float32)
+    return np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
+
+
+def _contour_rgb(path: Path, *, max_side: int) -> np.ndarray:
+    values, valid = _read_scalar_values(path, max_side=max_side)
+    lo, hi = _finite_percentiles(values, 2.0, 98.0)
+    normalized = np.clip((values - lo) / (hi - lo), 0.0, 1.0)
+    normalized[~valid] = 0.0
+    bins = np.floor(normalized * 12.0).astype(np.int16)
+    edges = np.zeros(values.shape, dtype=bool)
+    edges[:, 1:] |= bins[:, 1:] != bins[:, :-1]
+    edges[1:, :] |= bins[1:, :] != bins[:-1, :]
+    edges &= valid
+    base = 0.94 - 0.24 * normalized
+    rgb = np.stack((base, base, base), axis=-1)
+    rgb[edges] = np.array([0.12, 0.18, 0.24], dtype=np.float32)
+    rgb[~valid] = np.array([0.97, 0.97, 0.97], dtype=np.float32)
+    return np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
+
+
+def _surface_path(manifest: ProjectManifest) -> Path:
+    for name in ("dsm", "rdsm"):
+        path = manifest.artifact_path(name)
+        if path is not None and path.is_file():
+            return path
+    raise FileNotFoundError("project has no persisted DSM/rDSM surface for derived visualization")
 
 
 def render_project_layer_preview(
@@ -133,6 +193,10 @@ def render_project_layer_preview(
     if layer == "optical":
         path = manifest.source_path
         pixels = _read_optical(path, max_side=max_side)
+    elif layer == "hillshade":
+        pixels = _hillshade_rgb(_surface_path(manifest), max_side=max_side)
+    elif layer == "contours":
+        pixels = _contour_rgb(_surface_path(manifest), max_side=max_side)
     else:
         path = manifest.artifact_path(layer)
         if path is None or not path.is_file():
