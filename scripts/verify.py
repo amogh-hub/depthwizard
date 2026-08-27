@@ -13,7 +13,11 @@ def run(*command: str) -> None:
 
 
 if __name__ == "__main__":
-    run(sys.executable, "-m", "pytest")
+    # Verification is intentionally scoped to DepthWizard-owned tests. Packaged PyInstaller
+    # resource trees can contain third-party files named test_*.py (for example inside torch),
+    # and those are runtime payload, not repository tests. Never let generated scientific runtime
+    # contents alter the verification surface.
+    run(sys.executable, "-m", "pytest", "tests")
     run(sys.executable, "-m", "ruff", "check", "src", "tests", "scripts")
     run(
         sys.executable,
