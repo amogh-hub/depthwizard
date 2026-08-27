@@ -44,6 +44,7 @@ if __name__ == "__main__":
         "scripts/release_train_3_export_smoke.py",
         "scripts/release_train_3_workstation_smoke.py",
         "scripts/release_train_4_scientific_analytical_smoke.py",
+        "scripts/da3_frozen_compat.py",
         "scripts/build_standalone_sidecar.py",
         "scripts/ensure_tauri_sidecar_stub.py",
         "scripts/release_train_5_sidecar_smoke.py",
