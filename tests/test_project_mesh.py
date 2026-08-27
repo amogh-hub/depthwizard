@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from affine import Affine
 from fastapi.testclient import TestClient
@@ -133,6 +134,26 @@ def test_project_mesh_falls_back_to_pixel_xy_for_inconsistent_projected_extent(
     details = manifest.stages["mesh"]["details"]
     assert details["metric_horizontal_scale_trusted"] is False
     assert details["horizontal_units"] == "px"
+
+
+def test_project_mesh_honors_explicit_ortholoc_metric_affine_with_crs_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_metric_transform = from_origin(11.0, 48.0, 0.18, 0.22)
+    project_dir = _project(tmp_path, transform=local_metric_transform)
+    monkeypatch.setenv("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", "1")
+
+    report = build_project_mesh(
+        ProjectMeshBuildRequest(project_dir=project_dir, max_finest_samples=128, lod_levels=2)
+    )
+
+    assert report.horizontal_units == "m"
+    assert report.vertical_units == "m"
+    assert abs(report.gsd_x - 0.18) < 1e-6
+    assert abs(report.gsd_y - 0.22) < 1e-6
+    manifest = ProjectManifest.load(project_dir)
+    assert manifest.stages["mesh"]["details"]["metric_horizontal_scale_trusted"] is True
 
 
 def test_project_mesh_service_build_report_and_glb(tmp_path: Path) -> None:
