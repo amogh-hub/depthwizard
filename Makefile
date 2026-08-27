@@ -98,7 +98,12 @@ release-train-5-full-smoke:
 
 release-train-5-standalone-acceptance: release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke
 
-release-train-5-final-qualification: verify
+# Final RT5 qualification must rebuild the frozen scientific runtime from the exact checked-out
+# source head before bundling the app. Reusing a previously staged onedir tree could otherwise
+# produce a valid-looking app whose scientific payload predates the source commit under test.
+release-train-5-final-qualification:
+	$(MAKE) verify
+	$(MAKE) sidecar-build
 	cd apps/desktop && npm run tauri build
 	$(MAKE) release-train-5-standalone-acceptance
 
