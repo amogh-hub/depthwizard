@@ -15,6 +15,7 @@ TAURI_DIR = ROOT / "apps" / "desktop" / "src-tauri"
 BIN_DIR = TAURI_DIR / "binaries"
 BUILD_ROOT = ROOT / "artifacts" / "standalone" / "pyinstaller"
 ENTRY = ROOT / "scripts" / "depthwizard_sidecar_entry.py"
+RUNTIME_HOOK = ROOT / "scripts" / "pyinstaller_geospatial_runtime_hook.py"
 DA3_VENDOR = ROOT / ".vendor" / "depth-anything-3" / "src"
 
 
@@ -53,6 +54,8 @@ def main() -> None:
         raise RuntimeError(
             "pinned Depth Anything 3 source is missing; run `make da3-setup` before sidecar packaging"
         )
+    if not RUNTIME_HOOK.is_file():
+        raise RuntimeError(f"PyInstaller geospatial runtime hook is missing: {RUNTIME_HOOK}")
     if importlib.util.find_spec("PyInstaller") is None:
         raise RuntimeError(
             "PyInstaller is missing; install the standalone extra with "
@@ -86,10 +89,18 @@ def main() -> None:
         str(ROOT / "src"),
         "--paths",
         str(DA3_VENDOR),
+        "--runtime-hook",
+        str(RUNTIME_HOOK),
         "--hidden-import",
         "torch",
         "--hidden-import",
         "depth_anything_3.api",
+        "--hidden-import",
+        "rasterio.serde",
+        "--collect-all",
+        "rasterio",
+        "--collect-all",
+        "pyproj",
         "--collect-data",
         "depth_anything_3",
         str(ENTRY),
@@ -106,7 +117,7 @@ def main() -> None:
         target.chmod(target.stat().st_mode | 0o111)
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_SIDECAR_BUILD",
         "target_triple": triple,
         "platform": platform.platform(),
@@ -115,6 +126,12 @@ def main() -> None:
         "bytes": target.stat().st_size,
         "sha256": _sha256(target),
         "da3_vendor_source": str(DA3_VENDOR.resolve()),
+        "geospatial_packaging": {
+            "rasterio_collect_all": True,
+            "pyproj_collect_all": True,
+            "rasterio_serde_hidden_import": True,
+            "runtime_data_hook": str(RUNTIME_HOOK.resolve()),
+        },
         "offline_after_model_install": True,
         "scientific_boundary": (
             "Packaging evidence only. This build does not establish DSM accuracy, model promotion, "
@@ -127,6 +144,7 @@ def main() -> None:
     print(f"Target: {triple}")
     print(f"Binary: {target}")
     print(f"Size: {report['bytes'] / (1024 * 1024):.2f} MiB")
+    print("Geospatial bundle policy: rasterio + pyproj collected, runtime data hook enabled")
     print(f"SHA-256: {report['sha256']}")
     print(f"Report: {report_path}")
 
