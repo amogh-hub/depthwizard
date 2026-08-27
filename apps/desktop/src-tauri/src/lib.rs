@@ -1,12 +1,14 @@
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::Serialize;
+use std::env;
 use std::fmt::Write as _;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{Manager, RunEvent, State};
+use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -20,6 +22,19 @@ struct RuntimeConfig {
     session_token: String,
     sidecar_pid: u32,
     offline_core: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceptanceBootReport<'a> {
+    schema_version: u8,
+    status: &'static str,
+    api_base: &'a str,
+    sidecar_pid: u32,
+    offline_core: bool,
+    session_token_bits: u16,
+    session_token_exported: bool,
+    strict_python_egress_guard: bool,
 }
 
 struct SidecarState {
@@ -90,6 +105,47 @@ fn wait_for_health(port: u16, timeout: Duration) -> io::Result<()> {
             "DepthWizard sidecar did not become healthy before timeout",
         )
     }))
+}
+
+fn write_acceptance_boot_report(runtime: &RuntimeConfig) -> io::Result<()> {
+    let Ok(path) = env::var("DEPTHWIZARD_ACCEPTANCE_BOOT_REPORT") else {
+        return Ok(());
+    };
+    let report = AcceptanceBootReport {
+        schema_version: 1,
+        status: "PASS_TAURI_SIDECAR_BOOT",
+        api_base: &runtime.api_base,
+        sidecar_pid: runtime.sidecar_pid,
+        offline_core: runtime.offline_core,
+        session_token_bits: (runtime.session_token.len() * 4) as u16,
+        session_token_exported: false,
+        strict_python_egress_guard: runtime.offline_core,
+    };
+    let payload = serde_json::to_string_pretty(&report).map_err(io::Error::other)?;
+    fs::write(path, format!("{payload}\n"))
+}
+
+fn schedule_acceptance_auto_exit(app_handle: AppHandle) -> io::Result<()> {
+    let Ok(raw) = env::var("DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS") else {
+        return Ok(());
+    };
+    let millis = raw.parse::<u64>().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS: {error}"),
+        )
+    })?;
+    if !(500..=60_000).contains(&millis) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS must be between 500 and 60000",
+        ));
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(millis));
+        app_handle.exit(0);
+    });
+    Ok(())
 }
 
 fn launch_sidecar(
@@ -164,15 +220,18 @@ pub fn run() {
                 return Err(Box::new(error));
             }
 
+            let runtime = RuntimeConfig {
+                api_base: format!("http://127.0.0.1:{port}"),
+                session_token: token,
+                sidecar_pid,
+                offline_core: true,
+            };
+            write_acceptance_boot_report(&runtime)?;
             app.manage(SidecarState {
                 child: Mutex::new(Some(child)),
-                runtime: RuntimeConfig {
-                    api_base: format!("http://127.0.0.1:{port}"),
-                    session_token: token,
-                    sidecar_pid,
-                    offline_core: true,
-                },
+                runtime,
             });
+            schedule_acceptance_auto_exit(app.handle().clone())?;
             Ok(())
         })
         .build(tauri::generate_context!())

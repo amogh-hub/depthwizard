@@ -195,7 +195,7 @@ def main() -> None:
             process.wait(timeout=5)
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_RT5_PACKAGED_SIDECAR_SECURITY_SMOKE",
         "binary": str(binary),
         "binary_sha256": _sha256(binary),
@@ -207,11 +207,13 @@ def main() -> None:
         "authorized_inspect_http_status": auth_status,
         "authorized_inspect_crs": inspect_payload["crs"],
         "offline_environment_forced": True,
+        "strict_python_egress_guard": True,
         "consumed_benchmark_rerun": False,
         "model_promotion_claim": False,
         "scientific_boundary": (
-            "Packaged sidecar lifecycle/security acceptance only. This smoke does not run DA3 "
-            "inference and is not scientific accuracy, model-promotion, clean-machine, FPS, or soak evidence."
+            "Packaged sidecar lifecycle/security acceptance only. Offline mode installs a Python "
+            "INET connect guard that permits loopback only. This smoke does not run DA3 inference "
+            "and is not scientific accuracy, model-promotion, clean-machine, FPS, or soak evidence."
         ),
     }
     report_path = OUT / "release-train-5-sidecar-acceptance.json"
@@ -222,6 +224,7 @@ def main() -> None:
     print("Wrong token rejected: PASS")
     print("Authorized raster inspection: PASS")
     print("Offline environment forced: YES")
+    print("Strict Python non-loopback egress guard: YES")
     print("Consumed benchmark/model-promotion protocol rerun: NO")
     print(f"Acceptance report: {report_path}")
 

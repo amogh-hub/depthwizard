@@ -38,10 +38,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     validate_launch_environment(host=args.host, port=args.port)
 
     # Standalone mode is deliberately offline after model installation. Hugging Face-compatible
-    # model loaders must use the local cache instead of silently reaching the network.
+    # model loaders must use the local cache instead of silently reaching the network. The Python
+    # socket guard adds a second fail-closed boundary: INET connections are allowed only to loopback.
     if os.environ.get("DEPTHWIZARD_OFFLINE_CORE") == "1":
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        from depthwizard.network_guard import install_strict_offline_network_guard
+
+        install_strict_offline_network_guard()
 
     import uvicorn
 
