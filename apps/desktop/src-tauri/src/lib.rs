@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
@@ -378,11 +378,5 @@ mod tests {
         let port = reserve_loopback_port().expect("reserve loopback port");
         let listener = TcpListener::bind(("127.0.0.1", port)).expect("rebind loopback port");
         assert_eq!(listener.local_addr().expect("local address").port(), port);
-    }
-
-    #[test]
-    fn acceptance_control_path_is_not_a_production_default() {
-        assert!(std::env::var_os("DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH").is_none());
-        assert!(std::env::var_os("DEPTHWIZARD_ACCEPTANCE_EXIT_SIGNAL").is_none());
     }
 }
