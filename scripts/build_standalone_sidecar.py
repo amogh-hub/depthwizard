@@ -145,6 +145,8 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
     required_phases = {
         "python_entry",
         "self_check_import_complete",
+        "self_check_da3_api_import_complete",
+        "self_check_da3_runtime_closure_complete",
         "self_check_da3_geometry_probe_complete",
         "self_check_complete",
     }
@@ -152,6 +154,14 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
         raise RuntimeError(
             "frozen sidecar startup trace is incomplete; "
             f"required={sorted(required_phases)}, observed={phases}"
+        )
+    if payload.get("da3_api_imported") is not True:
+        raise RuntimeError("frozen sidecar did not import the DA3 public API")
+    required_modules = payload.get("da3_runtime_modules_required")
+    imported_modules = payload.get("da3_runtime_modules_imported")
+    if not isinstance(required_modules, list) or imported_modules != required_modules:
+        raise RuntimeError(
+            "frozen sidecar did not import the complete DA3MONO-LARGE runtime module closure"
         )
     if payload.get("da3_affine_inverse_probe") != "PASS":
         raise RuntimeError("frozen sidecar did not pass the DA3 affine_inverse compatibility probe")
@@ -215,6 +225,21 @@ def main() -> None:
         "torch",
         "--hidden-import",
         "depth_anything_3.api",
+        # DA3 builds the production network from YAML object paths through importlib. PyInstaller
+        # cannot infer those modules from static imports, so freeze the exact DA3MONO-LARGE closure.
+        "--hidden-import",
+        "depth_anything_3.model.da3",
+        "--hidden-import",
+        "depth_anything_3.model.dinov2.dinov2",
+        "--hidden-import",
+        "depth_anything_3.model.dpt",
+        # Hugging Face exposes PyTorchModelHubMixin through a lazy module. Bundle its implementation
+        # explicitly so depth_anything_3.api can import in a frozen process. Safetensors is the
+        # production local-weight path used by the pinned DA3 checkpoint.
+        "--hidden-import",
+        "huggingface_hub.hub_mixin",
+        "--hidden-import",
+        "safetensors.torch",
         "--hidden-import",
         "rasterio.serde",
         # Rasterio's C extensions dynamically import Python helpers such as rasterio.sample.
@@ -257,7 +282,7 @@ def main() -> None:
     executable_sha = sha256_file(staged_executable)
     payload_sha, payload_files, payload_symlinks, payload_bytes = tree_identity(RUNTIME_DIR)
     runtime_manifest = {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -289,7 +314,7 @@ def main() -> None:
         raise RuntimeError("runtime payload identity changed while writing qualification manifest")
 
     report = {
-        "schema_version": 5,
+        "schema_version": 6,
         "status": "PASS_QUALIFIED_SIDECAR_BUILD",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -307,6 +332,13 @@ def main() -> None:
         "runtime_logical_bytes": logical_bytes,
         "da3_vendor_source": str(DA3_VENDOR.resolve()),
         "da3_frozen_compatibility": da3_compatibility,
+        "da3_packaging": {
+            "public_api_hidden_import": True,
+            "da3mono_large_config_modules_hidden": True,
+            "huggingface_hub_mixin_hidden_import": True,
+            "safetensors_torch_hidden_import": True,
+            "package_data_collected": True,
+        },
         "geospatial_packaging": {
             "rasterio_serde_hidden_import": True,
             "rasterio_python_submodules_collected": True,
@@ -322,9 +354,10 @@ def main() -> None:
         "offline_after_model_install": True,
         "scientific_boundary": (
             "Packaging and frozen-runtime integrity evidence only. The self-check exercises bundled "
-            "Rasterio/GDAL/PROJ plus the pinned DA3 affine_inverse import/eager tensor path without "
-            "loading model weights or using the network. It does not establish DSM accuracy, model "
-            "promotion, clean-machine success, FPS, or soak."
+            "Rasterio/GDAL/PROJ, imports the full production DA3MONO-LARGE runtime closure, and "
+            "numerically exercises the pinned affine_inverse compatibility path without loading model "
+            "weights or using the network. It does not establish DSM accuracy, model promotion, "
+            "clean-machine success, FPS, or soak."
         ),
     }
     report_path = BUILD_ROOT.parent / "sidecar-build-report.json"
@@ -341,6 +374,7 @@ def main() -> None:
     print(f"Runtime payload SHA-256: {payload_sha}")
     print(f"Runtime tree SHA-256: {runtime_sha}")
     print("DA3 frozen TorchScript compatibility: PASS (torch.jit.script_if_tracing)")
+    print("DA3 production API + config-driven runtime closure: PASS")
     print(f"Frozen runtime self-check: PASS in {self_check_elapsed:.3f} s")
     print(f"Report: {report_path}")
 
