@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--self-check",
         action="store_true",
-        help="validate the frozen geospatial runtime and exit without starting the server",
+        help="validate the frozen geospatial and DA3 runtime wiring, then exit",
     )
     return parser
 
@@ -61,7 +61,7 @@ def validate_launch_environment(*, host: str, port: int) -> None:
 
 
 def packaged_geospatial_self_check() -> dict[str, object]:
-    """Exercise frozen Rasterio/GDAL/PROJ wiring without touching model or network state."""
+    """Exercise frozen geospatial wiring and DA3 geometry import without model weights/network."""
     _startup_trace("self_check_import_start")
 
     _startup_trace("self_check_numpy_import_start")
@@ -114,16 +114,37 @@ def packaged_geospatial_self_check() -> dict[str, object]:
                 )
     _startup_trace("self_check_rasterio_roundtrip_complete")
 
+    # The pinned DA3 source contains a geometry helper that upstream decorates with
+    # torch.jit.script. Import-time scripting needs source access that PyInstaller's frozen loader
+    # intentionally does not expose. The build applies an audited script_if_tracing compatibility
+    # patch; exercise the exact helper here so this failure class is caught before an app is bundled.
+    _startup_trace("self_check_da3_geometry_import_start")
+    import torch
+    from depth_anything_3.utils.geometry import affine_inverse
+
+    _startup_trace("self_check_da3_geometry_import_complete")
+    _startup_trace("self_check_da3_geometry_probe_start")
+    transform = torch.eye(4, dtype=torch.float32)
+    transform[:3, 3] = torch.tensor([3.0, -2.0, 5.0], dtype=torch.float32)
+    actual_inverse = affine_inverse(transform)
+    expected_inverse = torch.linalg.inv(transform)
+    if not torch.allclose(actual_inverse, expected_inverse, atol=1e-6, rtol=1e-6):
+        raise RuntimeError("DA3 affine_inverse frozen-runtime probe disagrees with torch.linalg.inv")
+    _startup_trace("self_check_da3_geometry_probe_complete")
+
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK",
         "rasterio_version": rasterio.__version__,
         "gdal_version": rasterio.__gdal_version__,
         "pyproj_version": pyproj.__version__,
+        "torch_version": torch.__version__,
         "rasterio_serde_imported": rasterio_serde.__name__ == "rasterio.serde",
         "epsg_roundtrip": 32643,
+        "da3_geometry_imported": True,
+        "da3_affine_inverse_probe": "PASS",
         "network_used": False,
-        "model_loaded": False,
+        "model_weights_loaded": False,
     }
     _startup_trace("self_check_complete", status=report["status"])
     return report
