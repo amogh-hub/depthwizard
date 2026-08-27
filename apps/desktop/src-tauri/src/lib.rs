@@ -62,9 +62,7 @@ fn health_check(port: u16) -> io::Result<bool> {
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(300))?;
     stream.set_read_timeout(Some(Duration::from_millis(500)))?;
     stream.set_write_timeout(Some(Duration::from_millis(500)))?;
-    stream.write_all(
-        b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-    )?;
+    stream.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")?;
     let mut response = [0_u8; 512];
     let count = stream.read(&mut response)?;
     let head = String::from_utf8_lossy(&response[..count]);
