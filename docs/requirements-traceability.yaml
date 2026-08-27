@@ -46,14 +46,18 @@ requirements:
     implementation:
       - depthwizard.io.raster.reproject_to_match
       - depthwizard.calibration.evidence.calibrate_relative_height_with_dem
-    verification: "coarse-DEM integration test + calibration residual benchmark"
+      - depthwizard.pipeline.runtime.ProductionElevationRuntime
+    verification: "coarse-DEM integration test + spatial-frequency matching + calibration residual benchmark"
     evidence: "calibration_dem_report.json"
 
   - id: PS-CAL-GCP-001
     clause: "Support a limited set of Ground Control Points for absolute metric calibration"
     implementation:
       - depthwizard.calibration.gcp.calibrate_relative_height_with_gcps
-    verification: "world-coordinate GCP sampling and scale/offset recovery tests"
+      - depthwizard.calibration.gcp_io.inspect_ground_control_point_file
+      - depthwizard.pipeline.runtime.ProductionElevationRuntime
+      - desktop GCP-only and DEM+GCP evidence workflows
+    verification: "world-coordinate GCP sampling, scale/offset recovery, CSV SHA identity, post-inspection mutation rejection and DEM+GCP fusion tests"
     evidence: "calibration_gcp_report.json"
 
   - id: PS-CAL-SEM-001
@@ -92,8 +96,10 @@ requirements:
     clause: "Analysis of structural heights"
     implementation:
       - depthwizard.analysis.structures.estimate_structure_height
-      - contextual desktop measurement inspector
-    verification: "local-ground structural-height tests + reference-height task benchmark"
+      - depthwizard.analysis.project_structure.estimate_project_structure_height
+      - depthwizard.service project structure-height endpoint
+      - desktop Structures tool with explicit polygon footprint and contextual inspector
+    verification: "local-ground structural-height tests + explicit-footprint project integration + reference-height task benchmark"
     evidence: "structural_height_validation.json"
 
   - id: PS-SLOPE-001
@@ -125,7 +131,8 @@ requirements:
     implementation:
       - textured metric GLB/LOD exporter
       - Three.js renderer with neutral scientific workstation design system
-    verification: "projection tests, render QA, LOD/FPS benchmark"
+      - display-only hillshade and contour derivatives from persisted project surfaces
+    verification: "projection tests, render QA, derived-preview contract and LOD/FPS benchmark"
     evidence: "rendering_quality_report.json"
 
   - id: PS-UX-001

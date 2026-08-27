@@ -1,0 +1,37 @@
+from pathlib import Path
+
+import pytest
+
+from depthwizard.calibration.gcp_io import inspect_ground_control_point_file
+
+
+def test_gcp_csv_import_preserves_metric_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "gcps.csv"
+    path.write_text(
+        "x,y,elevation_m,weight\n"
+        "500000,1400000,101.25,2\n"
+        "500010,1400010,108.75,1\n",
+        encoding="utf-8",
+    )
+
+    report = inspect_ground_control_point_file(path)
+
+    assert report.point_count == 2
+    assert report.minimum_elevation_m == 101.25
+    assert report.maximum_elevation_m == 108.75
+    assert report.points[0].weight == 2.0
+    assert len(report.sha256) == 64
+    assert "does not transform or infer coordinates" in report.semantics
+
+
+def test_gcp_csv_import_rejects_nonfinite_values(tmp_path: Path) -> None:
+    path = tmp_path / "gcps.csv"
+    path.write_text(
+        "x,y,z\n"
+        "500000,1400000,101\n"
+        "500010,1400010,nan\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-finite GCP"):
+        inspect_ground_control_point_file(path)

@@ -198,6 +198,32 @@ def _dem_evidence_payload(dem_path: Path, result: EvidenceCalibrationOutput) -> 
     }
 
 
+def _gcp_source_evidence_payload(request: ProcessingRequest) -> dict[str, object]:
+    """Return auditable GCP source identity and reject post-inspection file mutation."""
+    evidence = request.gcp_evidence
+    if evidence is None:
+        return {
+            "kind": "inline_points",
+            "source": None,
+            "sha256": None,
+            "identity_verified": False,
+        }
+    source = evidence.source_path
+    if not source.is_file():
+        raise FileNotFoundError(f"GCP evidence file does not exist: {source}")
+    actual_sha256 = sha256_file(source)
+    if actual_sha256 != evidence.sha256:
+        raise RuntimeError(
+            "GCP evidence file bytes changed after inspection; re-import the GCP file before calibration"
+        )
+    return {
+        "kind": "csv_file",
+        "source": str(source.resolve()),
+        "sha256": actual_sha256,
+        "identity_verified": True,
+    }
+
+
 class ProductionElevationRuntime:
     """Unified production runtime for truthful rDSM/metric DSM project processing.
 
@@ -441,6 +467,7 @@ class ProductionElevationRuntime:
     ) -> _CalibrationOutcome:
         dem_path = request.metric_dem_path
         gcps = request.gcps
+        gcp_source_evidence = _gcp_source_evidence_payload(request) if gcps else None
         with rasterio.open(request.source) as source:
             if source.crs is None or source.transform.is_identity:
                 raise ValueError("metric calibration requires a georeferenced source raster")
@@ -477,6 +504,7 @@ class ProductionElevationRuntime:
                     "fusion_method": "dem_then_gcp_high_reliability_refinement",
                     "dem": dem_payload,
                     "gcp_refinement": {
+                        "source_evidence": gcp_source_evidence,
                         "calibration": gcp_result.calibration.model_dump(),
                         "gcp_count_supplied": len(gcps),
                         "gcp_residuals_m": gcp_result.gcp_residuals_m.tolist(),
@@ -498,6 +526,7 @@ class ProductionElevationRuntime:
             dsm=gcp_result.dsm,
             evidence={
                 "gcp": {
+                    "source_evidence": gcp_source_evidence,
                     "calibration": gcp_result.calibration.model_dump(),
                     "gcp_count_supplied": len(gcps),
                     "gcp_residuals_m": gcp_result.gcp_residuals_m.tolist(),

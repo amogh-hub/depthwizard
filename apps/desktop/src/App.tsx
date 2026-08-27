@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   buildProjectExport,
   buildProjectMesh,
+  estimateProjectStructureHeight,
   getProjectExportUrl,
   getProjectJob,
   getProjectManifest,
@@ -10,11 +11,13 @@ import {
   getProjectMeshUrl,
   getProjectPreviewUrl,
   getProjectValidation,
+  inspectGroundControlPoints,
   inspectRaster,
   probeProject,
   sampleProjectProfile,
   submitProject,
   validateProjectReference,
+  type GroundControlPointFileReport,
   type NormalizedPoint,
   type ProjectExportReport,
   type ProjectJobState,
@@ -23,6 +26,7 @@ import {
   type ProjectPreviewLayer,
   type ProjectProbeResult,
   type ProjectProfileResult,
+  type ProjectStructureHeightResult,
   type RasterMetadata,
   type ReferenceValidationReport,
 } from "./api";
@@ -38,7 +42,7 @@ import {
 } from "./workspace/TerrainViewport";
 
 const views = ["Optical", "DSM", "3D Terrain", "Reference", "Residual", "Confidence"] as const;
-const layers = ["Texture", "DSM", "Slope", "Confidence", "Residual"] as const;
+const layers = ["Texture", "DSM", "Slope", "Hillshade", "Contours", "Confidence", "Residual"] as const;
 const cameraModes: { id: CameraMode; label: string }[] = [
   { id: "orbit", label: "Orbit" },
   { id: "fly", label: "Fly" },
@@ -108,6 +112,8 @@ function projectPreviewLayer(
   if (view === "Optical") return "optical";
   if (view === "DSM") {
     if (activeLayer === "Slope" && manifest.artifacts.slope) return "slope";
+    if (activeLayer === "Hillshade") return "hillshade";
+    if (activeLayer === "Contours") return "contours";
     if (manifest.artifacts.dsm) return "dsm";
     if (manifest.artifacts.rdsm) return "rdsm";
     return null;
@@ -129,6 +135,8 @@ function terrainOverlayLayer(
     return null;
   }
   if (activeLayer === "Slope" && manifest.artifacts.slope) return "slope";
+  if (activeLayer === "Hillshade") return "hillshade";
+  if (activeLayer === "Contours") return "contours";
   if (activeLayer === "Confidence" && manifest.artifacts.confidence) return "confidence";
   if (activeLayer === "Residual" && manifest.artifacts.residual) return "residual";
   return null;
@@ -151,6 +159,7 @@ export function App() {
   const [projectJob, setProjectJob] = useState<ProjectJobState | null>(null);
   const [projectManifest, setProjectManifest] = useState<ProjectManifest | null>(null);
   const [submittingProject, setSubmittingProject] = useState(false);
+  const [gcpEvidence, setGcpEvidence] = useState<GroundControlPointFileReport | null>(null);
   const [demoReport, setDemoReport] = useState<AbsoluteDemoReport | null>(null);
   const [validationEvidence, setValidationEvidence] = useState<ValidationEvidence | null>(null);
   const [projectValidation, setProjectValidation] = useState<ReferenceValidationReport | null>(null);
@@ -164,6 +173,8 @@ export function App() {
   const [lineEnd, setLineEnd] = useState<NormalizedPoint | null>(null);
   const [measurement, setMeasurement] = useState<ProjectProfileResult | null>(null);
   const [profile, setProfile] = useState<ProjectProfileResult | null>(null);
+  const [structurePolygon, setStructurePolygon] = useState<NormalizedPoint[]>([]);
+  const [structureHeight, setStructureHeight] = useState<ProjectStructureHeightResult | null>(null);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [projectMesh, setProjectMesh] = useState<ProjectMeshReport | null>(null);
   const [projectMeshUrl, setProjectMeshUrl] = useState<string | null>(null);
@@ -259,6 +270,8 @@ export function App() {
             setProjectManifest(manifest);
             setProjectJob(next);
             setProjectExport(null);
+            setStructurePolygon([]);
+            setStructureHeight(null);
             setActiveLayer(manifest.artifacts.dsm ? "DSM" : "Texture");
             setActiveView(manifest.artifacts.dsm || manifest.artifacts.rdsm ? "DSM" : "Optical");
             return;
@@ -477,17 +490,25 @@ export function App() {
     setLineEnd(null);
     setMeasurement(null);
     setProfile(null);
+    if (activeTool !== "Structures") {
+      setStructurePolygon([]);
+      setStructureHeight(null);
+    }
     if (activeTool === "Validation" && projectValidation) {
       setActiveView("Residual");
       setActiveLayer("Residual");
     } else if (activeTool === "Compare" && projectValidation) {
       setActiveView("DSM");
       setActiveLayer("DSM");
+    } else if (activeTool === "Structures" && calibrationReady) {
+      setActiveView("DSM");
+      setActiveLayer("DSM");
+      setAutoFlythrough(false);
     } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady && !meshReady) {
       setActiveView("DSM");
       setActiveLayer("DSM");
     }
-  }, [activeTool, geometryReady, meshReady, projectValidation]);
+  }, [activeTool, calibrationReady, geometryReady, meshReady, projectValidation]);
 
   const projectName = useMemo(
     () => (
@@ -504,6 +525,8 @@ export function App() {
     setLineEnd(null);
     setMeasurement(null);
     setProfile(null);
+    setStructurePolygon([]);
+    setStructureHeight(null);
     setAnalysisBusy(false);
   };
 
@@ -540,6 +563,7 @@ export function App() {
       setProjectDir(null);
       setProjectJob(null);
       setProjectManifest(null);
+      setGcpEvidence(null);
       setValidationEvidence(null);
       setProjectValidation(null);
       clearProjectMesh();
@@ -567,6 +591,7 @@ export function App() {
       });
       setProjectDir(selectedDir);
       setProjectManifest(null);
+      setGcpEvidence(null);
       setProjectValidation(null);
       clearProjectMesh();
       resetAnalysis();
@@ -595,11 +620,79 @@ export function App() {
         dem_path: dem,
         requested_output: "dsm",
       });
+      setGcpEvidence(null);
       clearProjectMesh();
       resetAnalysis();
       setProjectJob(next);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Unable to start metric calibration");
+    } finally {
+      setSubmittingProject(false);
+    }
+  };
+
+  const addGcpEvidence = async () => {
+    if (!metadata || !projectDir) return;
+    setImportError(null);
+    const gcpPath = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Ground control points", extensions: ["csv"] }],
+    });
+    if (!gcpPath || Array.isArray(gcpPath)) return;
+    try {
+      setSubmittingProject(true);
+      const report = await inspectGroundControlPoints(gcpPath);
+      const next = await submitProject({
+        source: metadata.path,
+        output_dir: projectDir,
+        gcps: report.points,
+        gcp_evidence: { source_path: report.source_path, sha256: report.sha256 },
+        requested_output: "dsm",
+      });
+      setGcpEvidence(report);
+      clearProjectMesh();
+      resetAnalysis();
+      setProjectJob(next);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to start GCP calibration");
+    } finally {
+      setSubmittingProject(false);
+    }
+  };
+
+  const addDemGcpEvidence = async () => {
+    if (!metadata || !projectDir) return;
+    setImportError(null);
+    const dem = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Metric DEM", extensions: ["tif", "tiff"] }],
+    });
+    if (!dem || Array.isArray(dem)) return;
+    const gcpPath = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Ground control points", extensions: ["csv"] }],
+    });
+    if (!gcpPath || Array.isArray(gcpPath)) return;
+    try {
+      setSubmittingProject(true);
+      const report = await inspectGroundControlPoints(gcpPath);
+      const next = await submitProject({
+        source: metadata.path,
+        output_dir: projectDir,
+        dem_path: dem,
+        gcps: report.points,
+        gcp_evidence: { source_path: report.source_path, sha256: report.sha256 },
+        requested_output: "dsm",
+      });
+      setGcpEvidence(report);
+      clearProjectMesh();
+      resetAnalysis();
+      setProjectJob(next);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to start DEM + GCP calibration");
     } finally {
       setSubmittingProject(false);
     }
@@ -697,6 +790,13 @@ export function App() {
 
   const analyzeRasterPoint = async (point: NormalizedPoint) => {
     if (!projectDir || !geometryReady) return;
+    if (activeTool === "Structures") {
+      if (!calibrationReady) return;
+      setStructureHeight(null);
+      setStructurePolygon((current) => current.length >= 64 ? current : [...current, point]);
+      await analyzePoint(point);
+      return;
+    }
     if (activeTool !== "Measure" && activeTool !== "Profiles") {
       await analyzePoint(point);
       return;
@@ -734,32 +834,47 @@ export function App() {
     }
   };
 
+  const measureStructure = async () => {
+    if (!projectDir || !calibrationReady || structurePolygon.length < 3) return;
+    setImportError(null);
+    setAnalysisBusy(true);
+    try {
+      setStructureHeight(await estimateProjectStructureHeight(projectDir, structurePolygon));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to estimate structural height");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
+
   const normalStatus = projectJob?.error
     ?? (exporting
       ? "Building deterministic project export…"
       : buildingMesh
         ? "Building persistent terrain LODs…"
         : analysisBusy
-          ? "Sampling persisted analytical products…"
-          : projectExport
-            ? `Export ready · ${(projectExport.bundle_bytes / (1024 * 1024)).toFixed(2)} MiB`
-            : projectValidation
-              ? `Reference validation ready · RMSE ${projectValidation.elevation.rmse_m.toFixed(3)} m`
-              : projectMesh
-                ? `3D terrain ready · ${projectMesh.lods.length} LODs`
-                : projectJob?.status === "waiting_for_calibration"
-                  ? "Geometry ready · metric evidence required"
-                  : projectJob?.status === "complete"
-                    ? "Production products ready"
-                    : projectJob?.status === "failed"
-                      ? "Processing failed"
-                      : processing
-                        ? "Production processing…"
-                        : geometryReady
-                          ? "Reconstruction loaded · local processing"
-                          : metadata
-                            ? "Input ready · local processing"
-                            : "Ready · local processing");
+          ? activeTool === "Structures" ? "Measuring analyst-selected structure…" : "Sampling persisted analytical products…"
+          : structureHeight
+            ? `Structure height ${structureHeight.structure_height_m.toFixed(3)} m`
+            : projectExport
+              ? `Export ready · ${(projectExport.bundle_bytes / (1024 * 1024)).toFixed(2)} MiB`
+              : projectValidation
+                ? `Reference validation ready · RMSE ${projectValidation.elevation.rmse_m.toFixed(3)} m`
+                : projectMesh
+                  ? `3D terrain ready · ${projectMesh.lods.length} LODs`
+                  : projectJob?.status === "waiting_for_calibration"
+                    ? "Geometry ready · metric evidence required"
+                    : projectJob?.status === "complete"
+                      ? "Production products ready"
+                      : projectJob?.status === "failed"
+                        ? "Processing failed"
+                        : processing
+                          ? "Production processing…"
+                          : geometryReady
+                            ? "Reconstruction loaded · local processing"
+                            : metadata
+                              ? "Input ready · local processing"
+                              : "Ready · local processing");
 
   const viewAvailable = (view: (typeof views)[number]): boolean => {
     if (view === "3D Terrain") return meshReady;
@@ -785,6 +900,7 @@ export function App() {
     if (layer === "Texture") return meshReady || Boolean(projectManifest);
     if (layer === "DSM") return geometryReady;
     if (layer === "Slope") return Boolean(projectManifest?.artifacts.slope);
+    if (layer === "Hillshade" || layer === "Contours") return geometryReady;
     if (layer === "Confidence") return Boolean(projectManifest?.artifacts.confidence);
     if (layer === "Residual") return Boolean(projectValidation);
     return false;
@@ -795,20 +911,26 @@ export function App() {
     setActiveLayer(layer);
     if (activeView === "3D Terrain" && meshReady) return;
     if (layer === "Texture") setActiveView("Optical");
-    if (layer === "DSM" || layer === "Slope") setActiveView("DSM");
+    if (layer === "DSM" || layer === "Slope" || layer === "Hillshade" || layer === "Contours") setActiveView("DSM");
     if (layer === "Confidence") setActiveView("Confidence");
     if (layer === "Residual") setActiveView("Residual");
   };
 
-  const analysisHint = activeTool === "Measure"
-    ? lineStart && !lineEnd ? "Select endpoint B" : "Select point A, then point B"
-    : activeTool === "Profiles"
-      ? lineStart && !lineEnd ? "Select transect endpoint B" : "Select transect endpoints A → B"
-      : activeTool === "Compare"
-        ? "Swipe reference against prediction · click to synchronize values"
-        : activeView === "3D Terrain"
-          ? "Click terrain to inspect synchronized project values"
-          : "Click raster to inspect synchronized project values";
+  const analysisHint = activeTool === "Structures"
+    ? calibrationReady
+      ? structurePolygon.length < 3
+        ? `Select footprint vertices · ${structurePolygon.length}/3 minimum`
+        : `${structurePolygon.length} vertices selected · measure when footprint is complete`
+      : "Structural height requires an absolute metric DSM"
+    : activeTool === "Measure"
+      ? lineStart && !lineEnd ? "Select endpoint B" : "Select point A, then point B"
+      : activeTool === "Profiles"
+        ? lineStart && !lineEnd ? "Select transect endpoint B" : "Select transect endpoints A → B"
+        : activeTool === "Compare"
+          ? "Swipe reference against prediction · click to synchronize values"
+          : activeView === "3D Terrain"
+            ? "Click terrain to inspect synchronized project values"
+            : "Click raster to inspect synchronized project values";
 
   return (
     <main className="dw-app">
@@ -831,9 +953,17 @@ export function App() {
             </button>
           )}
           {!demoMode && waitingForCalibration && (
-            <button className="dw-btn dw-btn--primary" onClick={addDemEvidence} disabled={submittingProject}>
-              {submittingProject ? "Starting…" : "Add DEM evidence"}
-            </button>
+            <>
+              <button className="dw-btn dw-btn--primary" onClick={addDemEvidence} disabled={submittingProject}>
+                {submittingProject ? "Starting…" : "Add DEM"}
+              </button>
+              <button className="dw-btn" onClick={addGcpEvidence} disabled={submittingProject}>
+                Add GCP CSV
+              </button>
+              <button className="dw-btn" onClick={addDemGcpEvidence} disabled={submittingProject}>
+                DEM + GCP
+              </button>
+            </>
           )}
           {!demoMode && geometryReady && (
             <button className="dw-btn" onClick={buildTerrain} disabled={buildingMesh || processing || Boolean(projectMesh)}>
@@ -960,13 +1090,35 @@ export function App() {
                 {terrainPerformance.fps.toFixed(0)} fps
               </span>
             )}
-            {activeView === "3D Terrain" && projectAnalystInteractive && (
+            {activeView === "3D Terrain" && projectAnalystInteractive && activeTool !== "Structures" && (
               <span className="dw-analysis-hint">{analysisHint}</span>
             )}
             {activeView !== "3D Terrain" && analystInteractive && (
               <span className="dw-analysis-hint">{analysisHint}</span>
             )}
-            {(lineStart || probe) && (
+            {activeTool === "Structures" && activeView !== "3D Terrain" && calibrationReady && (
+              <>
+                <button
+                  className="dw-chip"
+                  disabled={structurePolygon.length === 0 || analysisBusy}
+                  onClick={() => {
+                    setStructureHeight(null);
+                    setStructurePolygon((current) => current.slice(0, -1));
+                  }}
+                >
+                  Undo vertex
+                </button>
+                <button
+                  className="dw-chip"
+                  data-active={Boolean(structureHeight)}
+                  disabled={structurePolygon.length < 3 || analysisBusy}
+                  onClick={() => void measureStructure()}
+                >
+                  {analysisBusy ? "Measuring…" : "Measure footprint"}
+                </button>
+              </>
+            )}
+            {(lineStart || probe || structurePolygon.length > 0 || structureHeight) && (
               <button className="dw-chip" onClick={resetAnalysis}>Clear analysis</button>
             )}
             <span className="dw-toolbar-divider" aria-hidden="true" />
@@ -996,7 +1148,7 @@ export function App() {
               overlayUrl={terrainOverlayUrl}
               autoFlythrough={autoFlythrough}
               resetToken={cameraResetToken}
-              onSelectPoint={projectAnalystInteractive ? analyzeRasterPoint : undefined}
+              onSelectPoint={projectAnalystInteractive && activeTool !== "Structures" ? analyzeRasterPoint : undefined}
               onPerformance={setTerrainPerformance}
             />
           )}
@@ -1016,6 +1168,8 @@ export function App() {
               cursorPoint={probe?.point}
               lineStart={activeTool === "Measure" || activeTool === "Profiles" ? lineStart : null}
               lineEnd={activeTool === "Measure" || activeTool === "Profiles" ? lineEnd : null}
+              polygonPoints={activeTool === "Structures" ? structurePolygon : []}
+              polygonClosed={activeTool === "Structures" && Boolean(structureHeight)}
               onSelectPoint={analyzeRasterPoint}
             />
           )}
@@ -1043,11 +1197,15 @@ export function App() {
                           ? "Aligned reference DSM"
                           : previewLayer === "slope"
                             ? "Surface slope"
-                            : previewLayer === "confidence"
-                              ? "Model-native confidence"
-                              : previewLayer === "optical"
-                                ? "Optical RGB"
-                                : calibrationReady ? "Absolute DSM" : "Relative DSM"}
+                            : previewLayer === "hillshade"
+                              ? "Derived hillshade"
+                              : previewLayer === "contours"
+                                ? "Derived contour visualization"
+                                : previewLayer === "confidence"
+                                  ? "Model-native confidence"
+                                  : previewLayer === "optical"
+                                    ? "Optical RGB"
+                                    : calibrationReady ? "Absolute DSM" : "Relative DSM"}
                 </strong>
                 <span>
                   {compareActive
@@ -1064,34 +1222,40 @@ export function App() {
                           ? "evaluation-only · aligned to prediction grid"
                           : previewLayer === "confidence"
                             ? "not probability calibrated"
-                            : estimatorModel(projectManifest) ?? "persisted project raster"}
+                            : previewLayer === "hillshade" || previewLayer === "contours"
+                              ? "display derivative · numerical surface unchanged"
+                              : estimatorModel(projectManifest) ?? "persisted project raster"}
                 </span>
               </div>
               <div className="dw-north-indicator" aria-label="North indicator"><strong>N</strong><span>↑</span></div>
               <div className="dw-scene-badge">
                 <strong>
                   {analysisBusy
-                    ? "Sampling analytical products"
-                    : activeView === "3D Terrain" && probe?.surface.available
-                      ? `${probe.surface.value?.toFixed(2) ?? "—"} ${probe.surface.units ?? ""}`
-                      : previewLayer === "residual"
-                        ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
-                        : demoMode || calibrationReady ? "Metric elevation" : "Relative elevation"}
+                    ? activeTool === "Structures" ? "Measuring selected structure" : "Sampling analytical products"
+                    : activeTool === "Structures" && structureHeight
+                      ? `${structureHeight.structure_height_m.toFixed(2)} m structure height`
+                      : activeView === "3D Terrain" && probe?.surface.available
+                        ? `${probe.surface.value?.toFixed(2) ?? "—"} ${probe.surface.units ?? ""}`
+                        : previewLayer === "residual"
+                          ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
+                          : demoMode || calibrationReady ? "Metric elevation" : "Relative elevation"}
                 </strong>
                 <span>
                   {activeView === "3D Terrain" && projectMesh
                     ? `LOD ${meshLod} ${autoLod ? "auto" : "manual"} · ${terrainPerformance ? `${terrainPerformance.fps.toFixed(0)} fps · ${terrainPerformance.triangles.toLocaleString()} triangles · ` : ""}${projectMesh.relief.toFixed(2)} ${projectMesh.vertical_units} relief`
-                    : previewLayer === "residual"
-                      ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
-                      : activeTool === "Measure" && measurement
-                        ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m"} · Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
-                        : activeTool === "Profiles" && profile
-                          ? `${profile.sample_count} samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m"}`
-                          : demoMode
-                            ? "DEM-calibrated · metres · engineering path"
-                            : calibrationReady
-                              ? "evidence-calibrated · metres"
-                              : "dimensionless relative surface height · not metric height"}
+                    : activeTool === "Structures" && structureHeight
+                      ? `top ${structureHeight.top_elevation_m.toFixed(2)} m · local ground ${structureHeight.ground_elevation_m.toFixed(2)} m · ${structureHeight.structure_pixels} footprint px`
+                      : previewLayer === "residual"
+                        ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
+                        : activeTool === "Measure" && measurement
+                          ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m"} · Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
+                          : activeTool === "Profiles" && profile
+                            ? `${profile.sample_count} samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m"}`
+                            : demoMode
+                              ? "DEM-calibrated · metres · engineering path"
+                              : calibrationReady
+                                ? "evidence-calibrated · metres"
+                                : "dimensionless relative surface height · not metric height"}
                 </span>
               </div>
             </>
@@ -1124,7 +1288,7 @@ export function App() {
                       : geometryReady && !projectMesh
                         ? "Build the persistent terrain LOD pyramid to enable Orbit, Fly, First Person, Top Down and synchronized 3D probing."
                         : waitingForCalibration
-                          ? "This georeferenced project is intentionally paused before any metric-height claim. Add a DEM now; sparse GCP workflow remains an explicit calibration path."
+                          ? "This georeferenced project is intentionally paused before any metric-height claim. Add DEM evidence, sparse GCP evidence, or combine DEM + GCP."
                           : calibrationReady
                             ? "DepthWizard completed evidence-calibrated metric elevation. Load a separate reference DSM to create evaluation-only residuals and validation metrics."
                             : geometryReady
@@ -1161,6 +1325,9 @@ export function App() {
         probe={probe}
         measurement={measurement}
         profile={profile}
+        structureHeight={structureHeight}
+        structureVertexCount={structurePolygon.length}
+        gcpEvidence={gcpEvidence}
         analysisBusy={analysisBusy}
         projectExport={projectExport}
         meshLod={meshLod}

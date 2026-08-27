@@ -38,6 +38,23 @@ def test_inspect_endpoint_reports_georeferenced_raster(tmp_path: Path) -> None:
     assert abs(payload["ground_sample_distance_x"] - 1.0) < 0.01
 
 
+def test_gcp_inspect_endpoint_returns_typed_metric_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "gcps.csv"
+    path.write_text(
+        "x,y,elevation_m,weight\n"
+        "500000,1400000,101,1\n"
+        "500010,1400010,109,2\n",
+        encoding="utf-8",
+    )
+    client = TestClient(app)
+    response = client.post("/v1/calibration/gcps/inspect", json={"path": str(path)})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["point_count"] == 2
+    assert payload["points"][1]["weight"] == 2.0
+    assert len(payload["sha256"]) == 64
+
+
 def test_project_submission_rejects_missing_source_before_background_execution(
     tmp_path: Path,
 ) -> None:
@@ -154,10 +171,49 @@ def test_validation_and_preview_endpoints_use_persisted_project_artifacts(tmp_pa
     assert reloaded.status_code == 200
     assert reloaded.json()["reference_sha256"] == payload["reference_sha256"]
 
-    preview = client.get(
-        "/v1/projects/preview",
-        params={"project_dir": str(project), "layer": "residual", "max_side": 256},
+    for layer in ("residual", "hillshade", "contours"):
+        preview = client.get(
+            "/v1/projects/preview",
+            params={"project_dir": str(project), "layer": layer, "max_side": 256},
+        )
+        assert preview.status_code == 200
+        assert preview.headers["content-type"] == "image/png"
+        assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_structure_height_endpoint_is_metric_and_raster_backed(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    project = tmp_path / "project"
+    dsm = project / "products" / "dsm.tif"
+    _write_rgb(source)
+    values = np.full((32, 32), 100.0, dtype=np.float32)
+    values[10:22, 10:22] = 114.0
+    _write_surface(dsm, values)
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        dsm,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(dsm),
     )
-    assert preview.status_code == 200
-    assert preview.headers["content-type"] == "image/png"
-    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/projects/structure-height",
+        json={
+            "project_dir": str(project),
+            "polygon": [
+                {"x": 10 / 31, "y": 10 / 31},
+                {"x": 21 / 31, "y": 10 / 31},
+                {"x": 21 / 31, "y": 21 / 31},
+                {"x": 10 / 31, "y": 21 / 31},
+            ],
+            "ring_pixels": 5,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert abs(payload["structure_height_m"] - 14.0) < 1e-6
+    assert payload["structure_pixels"] > 100
+    assert payload["ground_pixels"] >= 8

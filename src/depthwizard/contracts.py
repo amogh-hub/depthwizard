@@ -52,6 +52,23 @@ class GroundControlPoint(BaseModel):
     weight: float = Field(default=1.0, gt=0.0)
 
 
+class GroundControlPointEvidence(BaseModel):
+    """Identity of an analyst-supplied GCP evidence file used to build ``gcps``."""
+
+    source_path: Path
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class GroundControlPointFileReport(BaseModel):
+    source_path: Path
+    sha256: str
+    point_count: int = Field(ge=2)
+    minimum_elevation_m: float
+    maximum_elevation_m: float
+    points: list[GroundControlPoint] = Field(min_length=2)
+    semantics: str
+
+
 class EvaluationMetrics(BaseModel):
     valid_pixels: int = Field(ge=0)
     mae_m: float
@@ -117,6 +134,34 @@ class NormalizedPoint(BaseModel):
 
     x: float = Field(ge=0.0, le=1.0)
     y: float = Field(ge=0.0, le=1.0)
+
+
+class ProjectStructureHeightRequest(BaseModel):
+    project_dir: Path
+    polygon: list[NormalizedPoint] = Field(min_length=3, max_length=64)
+    ring_pixels: int = Field(default=8, ge=1, le=128)
+    min_structure_pixels: int = Field(default=4, ge=1)
+    min_ground_pixels: int = Field(default=8, ge=1)
+
+    @model_validator(mode="after")
+    def validate_polygon(self) -> ProjectStructureHeightRequest:
+        unique = {(round(point.x, 9), round(point.y, 9)) for point in self.polygon}
+        if len(unique) < 3:
+            raise ValueError("structure polygon requires at least three distinct points")
+        return self
+
+
+class ProjectStructureHeightResult(BaseModel):
+    project_id: str
+    polygon: list[NormalizedPoint]
+    ring_pixels: int = Field(ge=1)
+    top_elevation_m: float
+    ground_elevation_m: float
+    structure_height_m: float
+    structure_pixels: int = Field(ge=1)
+    ground_pixels: int = Field(ge=1)
+    warnings: list[str] = Field(default_factory=list)
+    semantics: str
 
 
 class RasterSample(BaseModel):
@@ -279,6 +324,7 @@ class ProcessingRequest(BaseModel):
     dem_path: Path | None = None
     srtm_path: Path | None = None
     gcps: list[GroundControlPoint] = Field(default_factory=list)
+    gcp_evidence: GroundControlPointEvidence | None = None
     requested_output: Literal["rdsm", "dsm"] | None = None
     band_indices: tuple[int, int, int] = (1, 2, 3)
     tile_size: int = Field(default=1024, ge=256)
@@ -297,6 +343,8 @@ class ProcessingRequest(BaseModel):
             raise ValueError("DepthWizard accepts PNG, JPG/JPEG, TIFF, and GeoTIFF inputs")
         if self.dem_path is not None and self.srtm_path is not None:
             raise ValueError("supply either dem_path or legacy srtm_path, not both")
+        if self.gcp_evidence is not None and not self.gcps:
+            raise ValueError("gcp_evidence cannot be supplied without GCP points")
         if self.overlap >= self.tile_size:
             raise ValueError("overlap must be smaller than tile_size")
         if len(set(self.band_indices)) != 3 or any(index < 1 for index in self.band_indices):

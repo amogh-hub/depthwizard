@@ -15,6 +15,8 @@ type RasterAnalysisViewportProps = {
   cursorPoint?: NormalizedPoint | null;
   lineStart?: NormalizedPoint | null;
   lineEnd?: NormalizedPoint | null;
+  polygonPoints?: NormalizedPoint[];
+  polygonClosed?: boolean;
   onSelectPoint?: (point: NormalizedPoint) => void;
 };
 
@@ -34,6 +36,10 @@ function fittedRect(host: HTMLDivElement, image: HTMLImageElement): ContentRect 
   return { left: 0, top: (host.clientHeight - height) / 2, width, height };
 }
 
+function svgPoints(points: NormalizedPoint[]): string {
+  return points.map((point) => `${(point.x * 100).toFixed(3)},${(point.y * 100).toFixed(3)}`).join(" ");
+}
+
 export function RasterAnalysisViewport({
   src,
   alt,
@@ -41,6 +47,8 @@ export function RasterAnalysisViewport({
   cursorPoint,
   lineStart,
   lineEnd,
+  polygonPoints = [],
+  polygonClosed = false,
   onSelectPoint,
 }: RasterAnalysisViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -111,8 +119,27 @@ export function RasterAnalysisViewport({
               />
             </svg>
           )}
+          {polygonPoints.length > 1 && (
+            <svg className="dw-structure-polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {polygonClosed && polygonPoints.length >= 3 ? (
+                <polygon points={svgPoints(polygonPoints)} />
+              ) : (
+                <polyline points={svgPoints(polygonPoints)} />
+              )}
+            </svg>
+          )}
           {lineStart && <span className="dw-analysis-marker" data-kind="start" style={overlayPoint(lineStart)}>A</span>}
           {lineEnd && <span className="dw-analysis-marker" data-kind="end" style={overlayPoint(lineEnd)}>B</span>}
+          {polygonPoints.map((point, index) => (
+            <span
+              className="dw-structure-vertex"
+              key={`${point.x}-${point.y}-${index}`}
+              style={overlayPoint(point)}
+              aria-hidden="true"
+            >
+              {index + 1}
+            </span>
+          ))}
           {cursorPoint && (
             <span className="dw-analysis-crosshair" style={overlayPoint(cursorPoint)} aria-hidden="true">
               <i />

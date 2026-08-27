@@ -19,6 +19,10 @@
   background-size: 32px 32px;
 }
 
+.dw-raster-view[data-interactive="true"] {
+  cursor: crosshair;
+}
+
 .dw-raster-view img {
   position: relative;
   z-index: 1;
@@ -29,4 +33,102 @@
   border: 1px solid rgba(174, 186, 198, 0.82);
   background: #f7f8fa;
   box-shadow: 0 8px 24px rgba(16, 24, 40, 0.10);
+  user-select: none;
+}
+
+.dw-raster-overlay {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.dw-analysis-line,
+.dw-structure-polygon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.dw-analysis-line line {
+  stroke: #1f5fae;
+  stroke-width: 0.45;
+  vector-effect: non-scaling-stroke;
+}
+
+.dw-analysis-marker,
+.dw-structure-vertex {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #1f5fae;
+  color: #ffffff;
+  box-shadow: 0 1px 5px rgba(16, 24, 40, 0.26);
+  font-size: 9px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.dw-structure-polygon polygon {
+  fill: rgba(31, 95, 174, 0.13);
+  stroke: #1f5fae;
+  stroke-width: 0.45;
+  vector-effect: non-scaling-stroke;
+}
+
+.dw-structure-polygon polyline {
+  fill: none;
+  stroke: #1f5fae;
+  stroke-width: 0.45;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.dw-structure-vertex {
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-color: #1f5fae;
+  color: #1f5fae;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.20);
+  font-size: 8px;
+}
+
+.dw-analysis-crosshair {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+}
+
+.dw-analysis-crosshair i,
+.dw-analysis-crosshair b {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(31, 95, 174, 0.82);
+}
+
+.dw-analysis-crosshair i {
+  width: 1px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+}
+
+.dw-analysis-crosshair b {
+  width: 22px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+}
+
+.dw-warning-note {
+  margin-top: 8px;
 }

@@ -1,9 +1,19 @@
-import { CompareIcon, ExportIcon, LayersIcon, MeasureIcon, ProfileIcon, ProjectIcon, ValidateIcon } from "./icons";
+import {
+  CompareIcon,
+  ExportIcon,
+  LayersIcon,
+  MeasureIcon,
+  ProfileIcon,
+  ProjectIcon,
+  StructureIcon,
+  ValidateIcon,
+} from "./icons";
 
 const tools = [
   ["Project", ProjectIcon],
   ["Layers", LayersIcon],
   ["Measure", MeasureIcon],
+  ["Structures", StructureIcon],
   ["Profiles", ProfileIcon],
   ["Validation", ValidateIcon],
   ["Compare", CompareIcon],

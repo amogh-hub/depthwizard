@@ -26,11 +26,27 @@ export type GroundControlPoint = {
   weight?: number;
 };
 
+export type GroundControlPointEvidence = {
+  source_path: string;
+  sha256: string;
+};
+
+export type GroundControlPointFileReport = {
+  source_path: string;
+  sha256: string;
+  point_count: number;
+  minimum_elevation_m: number;
+  maximum_elevation_m: number;
+  points: GroundControlPoint[];
+  semantics: string;
+};
+
 export type ProcessingRequest = {
   source: string;
   output_dir: string;
   dem_path?: string | null;
   gcps?: GroundControlPoint[];
+  gcp_evidence?: GroundControlPointEvidence | null;
   requested_output?: "rdsm" | "dsm" | null;
   band_indices?: [number, number, number];
   tile_size?: number;
@@ -158,6 +174,19 @@ export type NormalizedPoint = {
   y: number;
 };
 
+export type ProjectStructureHeightResult = {
+  project_id: string;
+  polygon: NormalizedPoint[];
+  ring_pixels: number;
+  top_elevation_m: number;
+  ground_elevation_m: number;
+  structure_height_m: number;
+  structure_pixels: number;
+  ground_pixels: number;
+  warnings: string[];
+  semantics: string;
+};
+
 export type RasterSample = {
   available: boolean;
   value: number | null;
@@ -276,7 +305,9 @@ export type ProjectPreviewLayer =
   | "slope"
   | "reference"
   | "residual"
-  | "confidence";
+  | "confidence"
+  | "hillshade"
+  | "contours";
 
 type RuntimeConfig = {
   apiBase?: string;
@@ -323,6 +354,13 @@ async function coreFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function inspectRaster(path: string): Promise<RasterMetadata> {
   return coreFetch<RasterMetadata>("/v1/inspect", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+export function inspectGroundControlPoints(path: string): Promise<GroundControlPointFileReport> {
+  return coreFetch<GroundControlPointFileReport>("/v1/calibration/gcps/inspect", {
     method: "POST",
     body: JSON.stringify({ path }),
   });
@@ -380,6 +418,21 @@ export function sampleProjectProfile(
   return coreFetch<ProjectProfileResult>("/v1/projects/profile", {
     method: "POST",
     body: JSON.stringify({ project_dir: projectDir, start, end, samples }),
+  });
+}
+
+export function estimateProjectStructureHeight(
+  projectDir: string,
+  polygon: NormalizedPoint[],
+  ringPixels = 8,
+): Promise<ProjectStructureHeightResult> {
+  return coreFetch<ProjectStructureHeightResult>("/v1/projects/structure-height", {
+    method: "POST",
+    body: JSON.stringify({
+      project_dir: projectDir,
+      polygon,
+      ring_pixels: ringPixels,
+    }),
   });
 }
 
