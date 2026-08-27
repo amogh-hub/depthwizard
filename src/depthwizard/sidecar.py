@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -60,8 +61,13 @@ def validate_launch_environment(*, host: str, port: int) -> None:
             )
 
 
-def packaged_geospatial_self_check() -> dict[str, object]:
-    """Exercise frozen geospatial wiring and DA3 geometry import without model weights/network."""
+def packaged_geospatial_self_check(*, require_da3: bool | None = None) -> dict[str, object]:
+    """Exercise frozen geospatial wiring and, in bundles, the DA3 geometry import path.
+
+    Source-only CI intentionally does not install the vendored DA3 repository, so the DA3 probe is
+    mandatory by default only when running under PyInstaller. The standalone builder executes this
+    function from the frozen executable, where skipping the DA3 probe is therefore impossible.
+    """
     _startup_trace("self_check_import_start")
 
     _startup_trace("self_check_numpy_import_start")
@@ -114,23 +120,36 @@ def packaged_geospatial_self_check() -> dict[str, object]:
                 )
     _startup_trace("self_check_rasterio_roundtrip_complete")
 
-    # The pinned DA3 source contains a geometry helper that upstream decorates with
-    # torch.jit.script. Import-time scripting needs source access that PyInstaller's frozen loader
-    # intentionally does not expose. The build applies an audited script_if_tracing compatibility
-    # patch; exercise the exact helper here so this failure class is caught before an app is bundled.
-    _startup_trace("self_check_da3_geometry_import_start")
-    import torch
-    from depth_anything_3.utils.geometry import affine_inverse
+    if require_da3 is None:
+        require_da3 = bool(getattr(sys, "frozen", False))
 
-    _startup_trace("self_check_da3_geometry_import_complete")
-    _startup_trace("self_check_da3_geometry_probe_start")
-    transform = torch.eye(4, dtype=torch.float32)
-    transform[:3, 3] = torch.tensor([3.0, -2.0, 5.0], dtype=torch.float32)
-    actual_inverse = affine_inverse(transform)
-    expected_inverse = torch.linalg.inv(transform)
-    if not torch.allclose(actual_inverse, expected_inverse, atol=1e-6, rtol=1e-6):
-        raise RuntimeError("DA3 affine_inverse frozen-runtime probe disagrees with torch.linalg.inv")
-    _startup_trace("self_check_da3_geometry_probe_complete")
+    da3_geometry_imported = False
+    da3_affine_inverse_probe = "SKIPPED_NON_FROZEN_SOURCE_ENVIRONMENT"
+    torch_version: str | None = None
+    if require_da3:
+        # The pinned DA3 source contains a geometry helper that upstream decorates with
+        # torch.jit.script. Import-time scripting needs source access that PyInstaller's frozen
+        # loader intentionally does not expose. The build applies an audited script_if_tracing
+        # compatibility patch; exercise the exact helper here so this failure class is caught before
+        # an app is bundled.
+        _startup_trace("self_check_da3_geometry_import_start")
+        import torch
+        from depth_anything_3.utils.geometry import affine_inverse
+
+        _startup_trace("self_check_da3_geometry_import_complete")
+        _startup_trace("self_check_da3_geometry_probe_start")
+        transform = torch.eye(4, dtype=torch.float32)
+        transform[:3, 3] = torch.tensor([3.0, -2.0, 5.0], dtype=torch.float32)
+        actual_inverse = affine_inverse(transform)
+        expected_inverse = torch.linalg.inv(transform)
+        if not torch.allclose(actual_inverse, expected_inverse, atol=1e-6, rtol=1e-6):
+            raise RuntimeError(
+                "DA3 affine_inverse frozen-runtime probe disagrees with torch.linalg.inv"
+            )
+        _startup_trace("self_check_da3_geometry_probe_complete")
+        da3_geometry_imported = True
+        da3_affine_inverse_probe = "PASS"
+        torch_version = torch.__version__
 
     report = {
         "schema_version": 2,
@@ -138,12 +157,14 @@ def packaged_geospatial_self_check() -> dict[str, object]:
         "rasterio_version": rasterio.__version__,
         "gdal_version": rasterio.__gdal_version__,
         "pyproj_version": pyproj.__version__,
-        "torch_version": torch.__version__,
+        "torch_version": torch_version,
         "rasterio_serde_imported": rasterio_serde.__name__ == "rasterio.serde",
         "epsg_roundtrip": 32643,
-        "da3_geometry_imported": True,
-        "da3_affine_inverse_probe": "PASS",
+        "da3_probe_required": require_da3,
+        "da3_geometry_imported": da3_geometry_imported,
+        "da3_affine_inverse_probe": da3_affine_inverse_probe,
         "network_used": False,
+        "model_loaded": False,
         "model_weights_loaded": False,
     }
     _startup_trace("self_check_complete", status=report["status"])
