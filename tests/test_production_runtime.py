@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -8,10 +9,16 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
-from depthwizard.contracts import GroundControlPoint, ProcessingRequest, ProjectRunStatus
+from depthwizard.contracts import (
+    GroundControlPoint,
+    GroundControlPointEvidence,
+    ProcessingRequest,
+    ProjectRunStatus,
+)
 from depthwizard.geometry_prior.base import GeometryPrior, GeometryPriorOutput
 from depthwizard.pipeline.policy import EstimatorPath, current_production_estimator_decision
 from depthwizard.pipeline.runtime import ProductionElevationRuntime
+from depthwizard.provenance.manifest import sha256_file
 
 
 def _relative(shape: tuple[int, int]) -> np.ndarray:
@@ -82,6 +89,21 @@ def _read_float(path: Path) -> np.ndarray:
         return data
 
 
+def _metric_gcps() -> list[GroundControlPoint]:
+    relative = _relative((32, 32))
+    transform = from_origin(500000, 1400000, 1.0, 1.0)
+
+    def gcp(row: int, col: int) -> GroundControlPoint:
+        x, y = transform * (col + 0.5, row + 0.5)
+        return GroundControlPoint(
+            x=x,
+            y=y,
+            elevation_m=75.0 + 20.0 * float(relative[row, col]),
+        )
+
+    return [gcp(2, 2), gcp(4, 25), gcp(18, 8), gcp(27, 28)]
+
+
 def test_current_production_policy_keeps_external_safe_da3() -> None:
     decision = current_production_estimator_decision()
     assert decision.selected_path is EstimatorPath.CALIBRATED_DA3
@@ -150,28 +172,80 @@ def test_gcp_only_metric_project_recovers_absolute_height(tmp_path: Path) -> Non
     source = tmp_path / "rgb.tif"
     project = tmp_path / "project"
     _write_rgb(source, georeferenced=True)
-    prior = FakePrior()
-    runtime = ProductionElevationRuntime(prior=prior)
-    relative = _relative((32, 32))
-    transform = from_origin(500000, 1400000, 1.0, 1.0)
+    runtime = ProductionElevationRuntime(prior=FakePrior())
 
-    def gcp(row: int, col: int) -> GroundControlPoint:
-        x, y = transform * (col + 0.5, row + 0.5)
-        return GroundControlPoint(
-            x=x,
-            y=y,
-            elevation_m=75.0 + 20.0 * float(relative[row, col]),
-        )
-
-    gcps = [gcp(2, 2), gcp(4, 25), gcp(18, 8), gcp(27, 28)]
     result = runtime.run(
-        ProcessingRequest(source=source, output_dir=project, gcps=gcps, requested_output="dsm")
+        ProcessingRequest(
+            source=source,
+            output_dir=project,
+            gcps=_metric_gcps(),
+            requested_output="dsm",
+        )
     )
 
     assert result.status is ProjectRunStatus.COMPLETE
     prediction = _read_float(Path(result.artifacts["dsm"]))
-    truth = 75.0 + 20.0 * relative
+    truth = 75.0 + 20.0 * _relative((32, 32))
     assert float(np.nanmean(np.abs(prediction - truth))) < 1e-3
+    calibration = json.loads(Path(result.artifacts["calibration"]).read_text(encoding="utf-8"))
+    assert calibration["evidence"]["gcp"]["source_evidence"] == {
+        "identity_verified": False,
+        "kind": "inline_points",
+        "sha256": None,
+        "source": None,
+    }
+
+
+def test_gcp_file_identity_is_verified_and_persisted(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    gcp_file = tmp_path / "control.csv"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=True)
+    gcp_file.write_text("x,y,elevation_m\n500002.5,1399997.5,76.0\n", encoding="utf-8")
+    evidence_sha = sha256_file(gcp_file)
+
+    result = ProductionElevationRuntime(prior=FakePrior()).run(
+        ProcessingRequest(
+            source=source,
+            output_dir=project,
+            gcps=_metric_gcps(),
+            gcp_evidence=GroundControlPointEvidence(
+                source_path=gcp_file,
+                sha256=evidence_sha,
+            ),
+            requested_output="dsm",
+        )
+    )
+
+    calibration = json.loads(Path(result.artifacts["calibration"]).read_text(encoding="utf-8"))
+    source_evidence = calibration["evidence"]["gcp"]["source_evidence"]
+    assert source_evidence["kind"] == "csv_file"
+    assert source_evidence["identity_verified"] is True
+    assert source_evidence["sha256"] == evidence_sha
+    assert Path(source_evidence["source"]) == gcp_file.resolve()
+
+
+def test_gcp_file_mutation_after_inspection_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    gcp_file = tmp_path / "control.csv"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=True)
+    gcp_file.write_text("x,y,elevation_m\n500002.5,1399997.5,76.0\n", encoding="utf-8")
+    inspected_sha = sha256_file(gcp_file)
+    gcp_file.write_text("x,y,elevation_m\n500002.5,1399997.5,999.0\n", encoding="utf-8")
+
+    request = ProcessingRequest(
+        source=source,
+        output_dir=project,
+        gcps=_metric_gcps(),
+        gcp_evidence=GroundControlPointEvidence(
+            source_path=gcp_file,
+            sha256=inspected_sha,
+        ),
+        requested_output="dsm",
+    )
+    with pytest.raises(RuntimeError, match="GCP evidence file bytes changed after inspection"):
+        ProductionElevationRuntime(prior=FakePrior()).run(request)
 
 
 def test_completed_project_rejects_geometry_configuration_drift(tmp_path: Path) -> None:
