@@ -3,10 +3,10 @@ use rand::RngCore;
 use serde::Serialize;
 use std::env;
 use std::fmt::Write as _;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
@@ -40,11 +40,22 @@ struct AcceptanceBootReport<'a> {
     session_token_bits: u16,
     session_token_exported: bool,
     strict_python_egress_guard: bool,
+    ephemeral_acceptance_control_enabled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceptanceControl<'a> {
+    schema_version: u8,
+    api_base: &'a str,
+    session_token: &'a str,
+    sidecar_pid: u32,
 }
 
 struct SidecarState {
     child: Mutex<Option<Child>>,
     runtime: RuntimeConfig,
+    acceptance_control_path: Option<PathBuf>,
 }
 
 impl SidecarState {
@@ -54,6 +65,9 @@ impl SidecarState {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+        }
+        if let Some(path) = self.acceptance_control_path.as_ref() {
+            let _ = fs::remove_file(path);
         }
     }
 }
@@ -118,7 +132,7 @@ fn write_acceptance_boot_report(runtime: &RuntimeConfig) -> io::Result<()> {
         return Ok(());
     };
     let report = AcceptanceBootReport {
-        schema_version: 1,
+        schema_version: 2,
         status: "PASS_TAURI_SIDECAR_BOOT",
         api_base: &runtime.api_base,
         sidecar_pid: runtime.sidecar_pid,
@@ -126,9 +140,48 @@ fn write_acceptance_boot_report(runtime: &RuntimeConfig) -> io::Result<()> {
         session_token_bits: (runtime.session_token.len() * 4) as u16,
         session_token_exported: false,
         strict_python_egress_guard: runtime.offline_core,
+        ephemeral_acceptance_control_enabled: env::var_os("DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH")
+            .is_some(),
     };
     let payload = serde_json::to_string_pretty(&report).map_err(io::Error::other)?;
     fs::write(path, format!("{payload}\n"))
+}
+
+fn write_acceptance_control(runtime: &RuntimeConfig) -> io::Result<Option<PathBuf>> {
+    let Ok(raw_path) = env::var("DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH") else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(raw_path);
+    if path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("acceptance control path already exists: {path:?}"),
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let control = AcceptanceControl {
+        schema_version: 1,
+        api_base: &runtime.api_base,
+        session_token: &runtime.session_token,
+        sidecar_pid: runtime.sidecar_pid,
+    };
+    let payload = serde_json::to_string(&control).map_err(io::Error::other)?;
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    file.write_all(payload.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    Ok(Some(path))
 }
 
 fn schedule_acceptance_auto_exit(app_handle: AppHandle) -> io::Result<()> {
@@ -150,6 +203,28 @@ fn schedule_acceptance_auto_exit(app_handle: AppHandle) -> io::Result<()> {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(millis));
         app_handle.exit(0);
+    });
+    Ok(())
+}
+
+fn schedule_acceptance_exit_signal(app_handle: AppHandle) -> io::Result<()> {
+    let Ok(raw_path) = env::var("DEPTHWIZARD_ACCEPTANCE_EXIT_SIGNAL") else {
+        return Ok(());
+    };
+    let path = PathBuf::from(raw_path);
+    if path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("acceptance exit signal path already exists: {path:?}"),
+        ));
+    }
+    thread::spawn(move || loop {
+        if path.is_file() {
+            let _ = fs::remove_file(&path);
+            app_handle.exit(0);
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
     });
     Ok(())
 }
@@ -264,11 +339,14 @@ pub fn run() {
                 offline_core: true,
             };
             write_acceptance_boot_report(&runtime)?;
+            let acceptance_control_path = write_acceptance_control(&runtime)?;
             app.manage(SidecarState {
                 child: Mutex::new(Some(child)),
                 runtime,
+                acceptance_control_path,
             });
             schedule_acceptance_auto_exit(app.handle().clone())?;
+            schedule_acceptance_exit_signal(app.handle().clone())?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -300,5 +378,11 @@ mod tests {
         let port = reserve_loopback_port().expect("reserve loopback port");
         let listener = TcpListener::bind(("127.0.0.1", port)).expect("rebind loopback port");
         assert_eq!(listener.local_addr().expect("local address").port(), port);
+    }
+
+    #[test]
+    fn acceptance_control_path_is_not_a_production_default() {
+        assert!(std::env::var_os("DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH").is_none());
+        assert!(std::env::var_os("DEPTHWIZARD_ACCEPTANCE_EXIT_SIGNAL").is_none());
     }
 }
