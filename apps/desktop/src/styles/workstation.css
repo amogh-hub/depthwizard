@@ -1,0 +1,633 @@
+:root {
+  --dw-toolrail-width: 82px;
+  --dw-inspector-width: 360px;
+}
+
+/* The workstation canvas owns pointer gestures; the app shell must never scroll underneath it. */
+.dw-workspace {
+  grid-template-rows: auto minmax(0, 1fr) 34px;
+}
+
+.dw-workspace-bar {
+  min-height: 48px;
+  height: auto;
+  padding: 6px 10px;
+  align-items: center;
+  overflow: visible;
+}
+
+.dw-toolbar-group {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  padding: 1px 0 2px;
+  scrollbar-width: thin;
+  overscroll-behavior-inline: contain;
+}
+
+.dw-toolbar-group::-webkit-scrollbar {
+  height: 4px;
+}
+
+.dw-toolbar-group::-webkit-scrollbar-thumb {
+  background: #d6dde6;
+  border-radius: 999px;
+}
+
+.dw-compact-select {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 24px 0 8px;
+  border: 1px solid var(--dw-border);
+  border-radius: 6px;
+  background: var(--dw-surface);
+  color: var(--dw-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.dw-chip[data-render-disabled="true"] {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.dw-toolrail {
+  gap: 4px;
+  padding: 8px 5px;
+}
+
+.dw-tool {
+  width: 70px;
+  min-height: 48px;
+  height: auto;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
+  text-align: left;
+}
+
+.dw-tool:disabled {
+  opacity: 0.36;
+  cursor: not-allowed;
+}
+
+.dw-tool-icon {
+  display: grid;
+  place-items: center;
+}
+
+.dw-tool-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.dw-tool-label {
+  min-width: 0;
+  font-size: 9.5px;
+  line-height: 1.1;
+  font-weight: 610;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+.dw-canvas {
+  background: #e8edf1;
+}
+
+/* Real geospatial viewport: no static centering/padding constraints survive from validation.css. */
+.dw-raster-view,
+.dw-compare-view {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  padding: 0;
+  background: #e8edf1;
+  touch-action: none;
+  user-select: none;
+}
+
+.dw-raster-view::before,
+.dw-compare-view::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(44, 62, 80, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(44, 62, 80, 0.032) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.dw-raster-view img,
+.dw-compare-view > img {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+  margin: 0;
+  border: 1px solid rgba(170, 181, 193, 0.88);
+  background: #f7f8fa;
+  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.09);
+  pointer-events: none;
+  user-select: none;
+}
+
+.dw-raster-view[data-cursor-mode="navigate"],
+.dw-compare-view {
+  cursor: grab;
+}
+
+.dw-raster-view[data-cursor-mode="probe"],
+.dw-raster-view[data-cursor-mode="measure"],
+.dw-raster-view[data-cursor-mode="profile"],
+.dw-raster-view[data-cursor-mode="structure"] {
+  cursor: crosshair;
+}
+
+.dw-raster-view:active[data-cursor-mode="navigate"],
+.dw-compare-view:active {
+  cursor: grabbing;
+}
+
+.dw-raster-overlay {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.dw-structure-vertex {
+  pointer-events: auto;
+  cursor: move;
+  padding: 0;
+}
+
+.dw-analysis-line line[data-preview="true"] {
+  stroke-dasharray: 5 4;
+  opacity: 0.78;
+}
+
+.dw-map-navigation {
+  position: absolute;
+  z-index: 8;
+  right: 62px;
+  top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 3px;
+  border: 1px solid rgba(201, 210, 220, 0.94);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 2px 10px rgba(16, 24, 40, 0.07);
+}
+
+.dw-map-navigation button {
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dw-text);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.dw-map-navigation button:hover {
+  background: var(--dw-primary-soft);
+  color: var(--dw-primary);
+}
+
+.dw-map-zoom {
+  min-width: 42px;
+  padding: 0 4px;
+  text-align: center;
+  color: var(--dw-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-map-scale {
+  position: absolute;
+  z-index: 8;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(201, 210, 220, 0.92);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.93);
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06);
+  pointer-events: none;
+}
+
+.dw-map-scale > span {
+  height: 7px;
+  border-left: 2px solid #1d2939;
+  border-right: 2px solid #1d2939;
+  border-bottom: 2px solid #1d2939;
+}
+
+.dw-map-scale strong {
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-navigation-help,
+.dw-interaction-hint {
+  position: absolute;
+  z-index: 7;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 9px;
+  border: 1px solid rgba(201, 210, 220, 0.86);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.90);
+  color: var(--dw-text-muted);
+  box-shadow: 0 1px 5px rgba(16, 24, 40, 0.04);
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.dw-navigation-help {
+  bottom: 16px;
+}
+
+.dw-interaction-hint {
+  top: 14px;
+  max-width: min(540px, calc(100% - 260px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compare stays geographically registered while the split control moves independently. */
+.dw-compare-reference {
+  z-index: 2 !important;
+}
+
+.dw-compare-label {
+  position: absolute;
+  z-index: 6;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--dw-text);
+  font-size: 10px;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.dw-compare-label--right {
+  transform: translateX(-100%);
+}
+
+.dw-compare-divider {
+  position: absolute;
+  z-index: 5;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 0 0 1px rgba(31, 95, 174, 0.45);
+  pointer-events: none;
+}
+
+.dw-compare-slider {
+  position: absolute;
+  z-index: 7;
+  margin: 0;
+  accent-color: var(--dw-primary);
+}
+
+/* Renderer state is separate from mesh-artifact state. */
+.dw-terrain-viewport,
+.dw-terrain-render-host {
+  position: absolute;
+  inset: 0;
+}
+
+.dw-terrain-render-host canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.dw-render-state {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  top: 50%;
+  width: min(430px, calc(100% - 64px));
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 34px rgba(16, 24, 40, 0.11);
+}
+
+.dw-render-state strong {
+  font-size: 14px;
+}
+
+.dw-render-state p {
+  margin: 0;
+  color: var(--dw-text-muted);
+  line-height: 1.5;
+}
+
+.dw-render-state--error {
+  border-color: rgba(181, 77, 77, 0.42);
+}
+
+.dw-render-state-actions {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.dw-render-state details {
+  width: 100%;
+  color: var(--dw-text-muted);
+  font-size: 11px;
+}
+
+.dw-render-state code {
+  display: block;
+  margin-top: 7px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f3f5f7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dw-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d5dce5;
+  border-top-color: var(--dw-primary);
+  border-radius: 50%;
+  animation: dw-spin 0.8s linear infinite;
+}
+
+@keyframes dw-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Quantitative legends use the same semantic ramps as the backend previews. */
+.dw-scientific-legend {
+  position: absolute;
+  z-index: 8;
+  right: 16px;
+  top: 78px;
+  width: 154px;
+  padding: 9px;
+  border: 1px solid rgba(201, 210, 220, 0.94);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 10px rgba(16, 24, 40, 0.07);
+  pointer-events: none;
+}
+
+.dw-scientific-legend header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.dw-scientific-legend header strong {
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.dw-scientific-legend header span,
+.dw-scientific-legend footer {
+  color: var(--dw-text-muted);
+  font-size: 8.5px;
+}
+
+.dw-legend-body {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 8px;
+  height: 108px;
+}
+
+.dw-legend-ramp {
+  width: 14px;
+  height: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  border-radius: 3px;
+}
+
+.dw-scientific-legend[data-ramp="elevation"] .dw-legend-ramp {
+  background: linear-gradient(to top, rgb(41,64,87), rgb(122,143,159), rgb(204,222,209));
+}
+
+.dw-scientific-legend[data-ramp="slope"] .dw-legend-ramp {
+  background: linear-gradient(to top, rgb(56,61,69), rgb(143,132,116), rgb(230,204,166));
+}
+
+.dw-scientific-legend[data-ramp="diverging"] .dw-legend-ramp {
+  background: linear-gradient(to top, rgb(71,51,255), rgb(255,255,255) 50%, rgb(255,51,71));
+}
+
+.dw-scientific-legend[data-ramp="grayscale"] .dw-legend-ramp,
+.dw-scientific-legend[data-ramp="contours"] .dw-legend-ramp {
+  background: linear-gradient(to top, #2f3740, #f3f4f5);
+}
+
+.dw-legend-ticks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  color: var(--dw-text);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-scientific-legend footer {
+  margin-top: 7px;
+  line-height: 1.25;
+}
+
+/* Inspector content should be readable scientific metadata, never single-character ellipses. */
+.dw-property {
+  grid-template-columns: minmax(108px, 0.82fr) minmax(0, 1.18fr);
+  align-items: start;
+}
+
+.dw-property dd {
+  max-width: none;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+  line-height: 1.35;
+}
+
+.dw-stage small {
+  max-width: 146px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dw-stage[data-state="failed"] {
+  color: var(--dw-danger);
+  font-weight: 590;
+}
+
+.dw-stage[data-state="failed"] .dw-stage-dot {
+  background: var(--dw-danger);
+  box-shadow: 0 0 0 4px rgba(181, 77, 77, 0.10);
+}
+
+.dw-inspector-disclosure {
+  border-bottom: 1px solid var(--dw-border);
+  background: var(--dw-surface);
+}
+
+.dw-inspector-disclosure > summary {
+  padding: 12px 16px;
+  color: var(--dw-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  list-style-position: inside;
+}
+
+.dw-section--nested {
+  padding-top: 6px;
+  border-bottom: 0;
+}
+
+.dw-validation-empty--danger {
+  border-color: rgba(181, 77, 77, 0.30);
+  background: rgba(181, 77, 77, 0.055);
+}
+
+.dw-top-actions {
+  min-width: 0;
+}
+
+.dw-recent-projects {
+  position: relative;
+}
+
+.dw-recent-projects > summary {
+  list-style: none;
+}
+
+.dw-recent-projects > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dw-recent-menu {
+  position: absolute;
+  z-index: 40;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 330px;
+  padding: 6px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: 9px;
+  background: var(--dw-surface);
+  box-shadow: 0 12px 30px rgba(16, 24, 40, 0.13);
+}
+
+.dw-recent-menu button {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dw-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dw-recent-menu button:hover {
+  background: var(--dw-surface-subtle);
+}
+
+.dw-recent-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 610;
+}
+
+.dw-recent-menu button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dw-text-muted);
+  font-size: 9px;
+}
+
+.dw-layer-loading-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  background: rgba(232, 237, 241, 0.88);
+  pointer-events: none;
+}
+
+.dw-layer-loading-shade > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.96);
+  color: var(--dw-text-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 1240px) {
+  :root {
+    --dw-inspector-width: 330px;
+    --dw-toolrail-width: 76px;
+  }
+
+  .dw-tool {
+    width: 64px;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 5px;
+    padding-inline: 5px;
+  }
+
+  .dw-tool-label {
+    font-size: 8.8px;
+  }
+}
