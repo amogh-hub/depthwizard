@@ -155,7 +155,8 @@ def _metric_error(manifest: ProjectManifest) -> dict[str, float]:
     if dsm_path is None or not dsm_path.is_file():
         raise RuntimeError("metric project has no DSM artifact")
     prediction = _read_surface(dsm_path)
-    truth = _metric_truth(prediction.shape)
+    shape = (int(prediction.shape[0]), int(prediction.shape[1]))
+    truth = _metric_truth(shape)
     valid = np.isfinite(prediction) & np.isfinite(truth)
     residual = prediction[valid] - truth[valid]
     return {
@@ -170,7 +171,8 @@ def _high_frequency_preservation(manifest: ProjectManifest) -> dict[str, float |
     if dsm_path is None:
         raise RuntimeError("DSM missing for high-frequency preservation check")
     prediction = _read_surface(dsm_path).astype(np.float64)
-    raw_metric_structure = 40.0 * _relative_surface(prediction.shape).astype(np.float64)
+    shape = (int(prediction.shape[0]), int(prediction.shape[1]))
+    raw_metric_structure = 40.0 * _relative_surface(shape).astype(np.float64)
     pred_high = prediction - gaussian_filter(prediction, sigma=3.0)
     raw_high = raw_metric_structure - gaussian_filter(raw_metric_structure, sigma=3.0)
     valid = np.isfinite(pred_high) & np.isfinite(raw_high)

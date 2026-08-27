@@ -85,12 +85,7 @@ def estimate_project_structure_height(
         if col1 - col0 < 2 or row1 - row0 < 2:
             raise ValueError("selected structure polygon has insufficient raster coverage")
 
-        window = Window(
-            col_off=col0,
-            row_off=row0,
-            width=col1 - col0,
-            height=row1 - row0,
-        )
+        window = Window.from_slices((row0, row1), (col0, col1))
         sample = src.read(1, window=window, masked=True).astype(np.float64)
         values = np.asarray(sample.filled(np.nan), dtype=np.float64)
         invalid = np.ma.getmaskarray(sample) | ~np.isfinite(values)
