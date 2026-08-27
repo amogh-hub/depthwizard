@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { FlyControls } from "three/examples/jsm/controls/FlyControls.js";
 import { FirstPersonControls } from "three/examples/jsm/controls/FirstPersonControls.js";
@@ -14,6 +14,15 @@ export type TerrainPerformance = {
   drawCalls: number;
 };
 
+export type TerrainRenderPhase = "idle" | "loading" | "ready" | "error";
+
+export type TerrainRenderState = {
+  phase: TerrainRenderPhase;
+  message: string;
+  triangles: number;
+  drawCalls: number;
+};
+
 type TerrainViewportProps = {
   meshUrl?: string;
   cameraMode: CameraMode;
@@ -25,6 +34,14 @@ type TerrainViewportProps = {
   resetToken?: number;
   onSelectPoint?: (point: NormalizedPoint) => void;
   onPerformance?: (metrics: TerrainPerformance) => void;
+  onRenderState?: (state: TerrainRenderState) => void;
+};
+
+const EMPTY_RENDER_STATE: TerrainRenderState = {
+  phase: "idle",
+  message: "Terrain renderer idle",
+  triangles: 0,
+  drawCalls: 0,
 };
 
 export function TerrainViewport({
@@ -38,6 +55,7 @@ export function TerrainViewport({
   resetToken = 0,
   onSelectPoint,
   onPerformance,
+  onRenderState,
 }: TerrainViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modeRef = useRef(cameraMode);
@@ -49,6 +67,9 @@ export function TerrainViewport({
   const resetRef = useRef(resetToken);
   const selectRef = useRef(onSelectPoint);
   const performanceRef = useRef(onPerformance);
+  const renderStateRef = useRef(onRenderState);
+  const [retryGeneration, setRetryGeneration] = useState(0);
+  const [renderState, setRenderState] = useState<TerrainRenderState>(EMPTY_RENDER_STATE);
   modeRef.current = cameraMode;
   exaggerationRef.current = verticalExaggeration;
   cursorRef.current = cursorPoint;
@@ -58,20 +79,56 @@ export function TerrainViewport({
   resetRef.current = resetToken;
   selectRef.current = onSelectPoint;
   performanceRef.current = onPerformance;
+  renderStateRef.current = onRenderState;
+
+  const publishState = (state: TerrainRenderState) => {
+    setRenderState(state);
+    renderStateRef.current?.(state);
+  };
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !meshUrl) return;
+    if (!host || !meshUrl) {
+      publishState(EMPTY_RENDER_STATE);
+      return;
+    }
+
+    let disposed = false;
+    let fatal = false;
+    const fail = (message: string) => {
+      if (disposed || fatal) return;
+      fatal = true;
+      publishState({ phase: "error", message, triangles: 0, drawCalls: 0 });
+    };
+
+    publishState({
+      phase: "loading",
+      message: "Loading persistent terrain LOD…",
+      triangles: 0,
+      drawCalls: 0,
+    });
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xebeff3);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1_000_000);
     camera.position.set(0, 250, 350);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    host.appendChild(renderer.domElement);
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      host.appendChild(renderer.domElement);
+    } catch (error) {
+      fail(`WebGL renderer initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+
+    const contextLost = (event: Event) => {
+      event.preventDefault();
+      fail("WebGL context was lost. Retry the renderer to recreate GPU resources.");
+    };
+    renderer.domElement.addEventListener("webglcontextlost", contextLost);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x728094, 2.15));
     const sun = new THREE.DirectionalLight(0xffffff, 2.0);
@@ -81,6 +138,7 @@ export function TerrainViewport({
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = true;
     orbit.dampingFactor = 0.08;
+    orbit.enablePan = true;
     orbit.screenSpacePanning = false;
 
     const fly = new FlyControls(camera, renderer.domElement);
@@ -138,6 +196,8 @@ export function TerrainViewport({
     let overlayMaterial: THREE.MeshBasicMaterial | null = null;
     let appliedOverlayUrl: string | null = null;
     let overlayLoadGeneration = 0;
+    let modelLoadedAt = 0;
+    let rendererReady = false;
 
     const refreshBounds = () => {
       if (!loaded) return;
@@ -284,26 +344,52 @@ export function TerrainViewport({
       );
     };
 
-    loader.load(meshUrl, (gltf) => {
-      loaded = gltf.scene;
-      terrainMeshes = [];
-      loaded.traverse((object) => {
-        if (object instanceof THREE.Mesh) {
-          terrainMeshes.push(object);
-          originalMaterials.set(object, object.material);
+    loader.load(
+      meshUrl,
+      (gltf) => {
+        if (disposed) return;
+        loaded = gltf.scene;
+        terrainMeshes = [];
+        let geometryVertices = 0;
+        loaded.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            terrainMeshes.push(object);
+            originalMaterials.set(object, object.material);
+            const position = object.geometry.getAttribute("position");
+            geometryVertices += position?.count ?? 0;
+          }
+        });
+        if (terrainMeshes.length === 0 || geometryVertices < 3) {
+          fail("Terrain GLB parsed but contained no renderable triangle geometry.");
+          return;
         }
-      });
-      scene.add(loaded);
-      const unscaledBounds = new THREE.Box3().setFromObject(loaded);
-      elevationCenter = unscaledBounds.getCenter(new THREE.Vector3()).y;
-      appliedExaggeration = 1;
-      applyExaggeration();
-      refreshBounds();
-      fitView();
-      positionMarker(cursorRef.current);
-      refreshAnalysisPath();
-      applyOverlay(overlayRef.current);
-    });
+        scene.add(loaded);
+        const unscaledBounds = new THREE.Box3().setFromObject(loaded);
+        elevationCenter = unscaledBounds.getCenter(new THREE.Vector3()).y;
+        appliedExaggeration = 1;
+        applyExaggeration();
+        refreshBounds();
+        fitView();
+        positionMarker(cursorRef.current);
+        refreshAnalysisPath();
+        applyOverlay(overlayRef.current);
+        modelLoadedAt = performance.now();
+        publishState({
+          phase: "loading",
+          message: "Preparing GPU resources and validating the first terrain frame…",
+          triangles: 0,
+          drawCalls: 0,
+        });
+      },
+      (progress) => {
+        if (disposed || fatal || !progress.total) return;
+        const percent = Math.min(100, Math.max(0, Math.round((progress.loaded / progress.total) * 100)));
+        publishState({ phase: "loading", message: `Loading persistent terrain LOD… ${percent}%`, triangles: 0, drawCalls: 0 });
+      },
+      (error) => {
+        fail(`Terrain GLB could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
+      },
+    );
 
     const resize = () => {
       const width = host.clientWidth;
@@ -318,12 +404,17 @@ export function TerrainViewport({
     resize();
 
     let pointerDown: { x: number; y: number } | null = null;
+    let shiftPan = false;
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
       pointerDown = { x: event.clientX, y: event.clientY };
+      shiftPan = event.shiftKey;
+      if (shiftPan && modeRef.current === "orbit") orbit.mouseButtons.LEFT = THREE.MOUSE.PAN;
     };
     const onPointerUp = (event: PointerEvent) => {
-      if (!pointerDown || event.button !== 0 || !loaded || terrainMeshes.length === 0) {
+      if (modeRef.current !== "topDown") orbit.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+      shiftPan = false;
+      if (!pointerDown || event.button !== 0 || !loaded || terrainMeshes.length === 0 || !rendererReady) {
         pointerDown = null;
         return;
       }
@@ -358,12 +449,25 @@ export function TerrainViewport({
     let performanceFrames = 0;
     let frame = 0;
     const animate = () => {
+      if (disposed) return;
       const mode = modeRef.current;
       const dt = Math.min(clock.getDelta(), 0.05);
-      const touring = autoFlythroughRef.current && Boolean(loaded);
-      orbit.enabled = !touring && (mode === "orbit" || mode === "topDown");
-      fly.enabled = !touring && mode === "fly";
-      firstPerson.enabled = !touring && mode === "firstPerson";
+      const touring = autoFlythroughRef.current && Boolean(loaded) && rendererReady;
+      orbit.enabled = rendererReady && !touring && (mode === "orbit" || mode === "topDown");
+      fly.enabled = rendererReady && !touring && mode === "fly";
+      firstPerson.enabled = rendererReady && !touring && mode === "firstPerson";
+
+      if (mode === "topDown") {
+        orbit.enableRotate = false;
+        orbit.screenSpacePanning = true;
+        orbit.mouseButtons.LEFT = THREE.MOUSE.PAN;
+        orbit.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+      } else {
+        orbit.enableRotate = true;
+        orbit.screenSpacePanning = false;
+        if (!shiftPan) orbit.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+        orbit.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+      }
 
       applyExaggeration();
       const currentCursor = cursorRef.current;
@@ -420,24 +524,44 @@ export function TerrainViewport({
       if (firstPerson.enabled) firstPerson.update(dt);
       renderer.render(scene, camera);
 
-      performanceSeconds += dt;
-      performanceFrames += 1;
-      if (performanceSeconds >= 1) {
-        performanceRef.current?.({
-          fps: performanceFrames / performanceSeconds,
-          triangles: renderer.info.render.triangles,
-          drawCalls: renderer.info.render.calls,
-        });
-        performanceSeconds = 0;
-        performanceFrames = 0;
+      const triangles = renderer.info.render.triangles;
+      const drawCalls = renderer.info.render.calls;
+      if (!rendererReady && loaded && !fatal) {
+        if (triangles > 0 && drawCalls > 0) {
+          rendererReady = true;
+          publishState({
+            phase: "ready",
+            message: "Terrain renderer ready",
+            triangles,
+            drawCalls,
+          });
+        } else if (modelLoadedAt > 0 && performance.now() - modelLoadedAt > 5000) {
+          fail("Terrain GLB loaded, but no renderable frame was produced within 5 seconds (0 triangles / 0 draw calls).");
+        }
+      }
+
+      if (rendererReady) {
+        performanceSeconds += dt;
+        performanceFrames += 1;
+        if (performanceSeconds >= 1) {
+          performanceRef.current?.({
+            fps: performanceFrames / performanceSeconds,
+            triangles,
+            drawCalls,
+          });
+          performanceSeconds = 0;
+          performanceFrames = 0;
+        }
       }
       frame = requestAnimationFrame(animate);
     };
     animate();
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      renderer.domElement.removeEventListener("webglcontextlost", contextLost);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       orbit.dispose();
@@ -456,13 +580,31 @@ export function TerrainViewport({
       (pathLine.material as THREE.Material).dispose();
       renderer.domElement.remove();
     };
-  }, [meshUrl]);
+  }, [meshUrl, retryGeneration]);
 
   return (
-    <div
-      ref={hostRef}
-      style={{ position: "absolute", inset: 0 }}
-      aria-label="3D terrain viewport"
-    />
+    <div className="dw-terrain-viewport">
+      <div ref={hostRef} className="dw-terrain-render-host" aria-label="3D terrain viewport" />
+      {renderState.phase === "loading" && (
+        <div className="dw-render-state" role="status">
+          <span className="dw-spinner" aria-hidden="true" />
+          <strong>Preparing 3D terrain</strong>
+          <p>{renderState.message}</p>
+        </div>
+      )}
+      {renderState.phase === "error" && (
+        <div className="dw-render-state dw-render-state--error" role="alert">
+          <strong>Terrain renderer failed</strong>
+          <p>{renderState.message}</p>
+          <div className="dw-render-state-actions">
+            <button type="button" className="dw-btn dw-btn--primary" onClick={() => setRetryGeneration((value) => value + 1)}>Retry renderer</button>
+            <details>
+              <summary>Open diagnostics</summary>
+              <code>phase={renderState.phase}\ntriangles={renderState.triangles}\ndrawCalls={renderState.drawCalls}\nmesh={meshUrl?.startsWith("blob:") ? "authenticated blob-backed GLB" : meshUrl ?? "none"}</code>
+            </details>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
