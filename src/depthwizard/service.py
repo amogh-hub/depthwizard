@@ -16,7 +16,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from depthwizard import __version__
+from depthwizard.analysis.project_structure import estimate_project_structure_height
+from depthwizard.calibration.gcp_io import inspect_ground_control_point_file
 from depthwizard.contracts import (
+    GroundControlPointFileReport,
     ProcessingRequest,
     ProjectExportReport,
     ProjectExportRequest,
@@ -27,6 +30,8 @@ from depthwizard.contracts import (
     ProjectProfileRequest,
     ProjectProfileResult,
     ProjectRunStatus,
+    ProjectStructureHeightRequest,
+    ProjectStructureHeightResult,
     RasterMetadata,
     ReferenceValidationReport,
     ReferenceValidationRequest,
@@ -136,6 +141,22 @@ def inspect(request: InspectRequest) -> RasterMetadata:
         return inspect_raster(request.path)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"unable to inspect raster: {exc}") from exc
+
+
+@app.post(
+    "/v1/calibration/gcps/inspect",
+    response_model=GroundControlPointFileReport,
+    dependencies=[Depends(_session_guard)],
+)
+def inspect_gcps(request: InspectRequest) -> GroundControlPointFileReport:
+    if not request.path.exists():
+        raise HTTPException(status_code=404, detail="GCP file does not exist")
+    try:
+        return inspect_ground_control_point_file(request.path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post(
@@ -260,6 +281,22 @@ def project_profile(request: ProjectProfileRequest) -> ProjectProfileResult:
 
 
 @app.post(
+    "/v1/projects/structure-height",
+    response_model=ProjectStructureHeightResult,
+    dependencies=[Depends(_session_guard)],
+)
+def project_structure_height(
+    request: ProjectStructureHeightRequest,
+) -> ProjectStructureHeightResult:
+    try:
+        return estimate_project_structure_height(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
     "/v1/projects/mesh",
     response_model=ProjectMeshReport,
     dependencies=[Depends(_session_guard)],
@@ -378,7 +415,17 @@ def project_preview(
     layer: str,
     max_side: Annotated[int, Query(ge=64, le=4096)] = 1600,
 ) -> Response:
-    allowed = {"optical", "rdsm", "dsm", "slope", "reference", "residual", "confidence"}
+    allowed = {
+        "optical",
+        "rdsm",
+        "dsm",
+        "slope",
+        "reference",
+        "residual",
+        "confidence",
+        "hillshade",
+        "contours",
+    }
     if layer not in allowed:
         raise HTTPException(status_code=422, detail=f"unsupported project preview layer: {layer}")
     if not (project_dir / "project-manifest.json").is_file():
