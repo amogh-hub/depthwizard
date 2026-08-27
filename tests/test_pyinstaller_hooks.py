@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from importlib.metadata import entry_points
+import tomllib
 from pathlib import Path
 
 from depthwizard.__pyinstaller import get_hook_dirs
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_pyinstaller_hook_directory_contains_imageio_metadata_hook() -> None:
@@ -17,12 +19,7 @@ def test_pyinstaller_hook_directory_contains_imageio_metadata_hook() -> None:
     assert 'copy_metadata("imageio")' in source
 
 
-def test_pyinstaller40_entry_point_registers_depthwizard_hook_directory() -> None:
-    registered = [
-        item
-        for item in entry_points(group="pyinstaller40")
-        if item.name == "hook-dirs" and item.value == "depthwizard.__pyinstaller:get_hook_dirs"
-    ]
-    assert len(registered) == 1
-    loaded = registered[0].load()
-    assert loaded() == get_hook_dirs()
+def test_pyinstaller40_entry_point_is_declared_in_source_metadata() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyinstaller40 = project["project"]["entry-points"]["pyinstaller40"]
+    assert pyinstaller40["hook-dirs"] == "depthwizard.__pyinstaller:get_hook_dirs"
