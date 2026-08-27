@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  buildProjectExport,
+  buildProjectMesh,
+  getProjectExportUrl,
   getProjectJob,
   getProjectManifest,
+  getProjectMesh,
+  getProjectMeshUrl,
   getProjectPreviewUrl,
   getProjectValidation,
   inspectRaster,
@@ -11,8 +16,10 @@ import {
   submitProject,
   validateProjectReference,
   type NormalizedPoint,
+  type ProjectExportReport,
   type ProjectJobState,
   type ProjectManifest,
+  type ProjectMeshReport,
   type ProjectPreviewLayer,
   type ProjectProbeResult,
   type ProjectProfileResult,
@@ -24,7 +31,11 @@ import { ToolRail } from "./components/ToolRail";
 import { UploadIcon } from "./components/icons";
 import { ComparisonViewport } from "./workspace/ComparisonViewport";
 import { RasterAnalysisViewport } from "./workspace/RasterAnalysisViewport";
-import { TerrainViewport, type CameraMode } from "./workspace/TerrainViewport";
+import {
+  TerrainViewport,
+  type CameraMode,
+  type TerrainPerformance,
+} from "./workspace/TerrainViewport";
 
 const views = ["Optical", "DSM", "3D Terrain", "Reference", "Residual", "Confidence"] as const;
 const layers = ["Texture", "DSM", "Slope", "Confidence", "Residual"] as const;
@@ -34,7 +45,7 @@ const cameraModes: { id: CameraMode; label: string }[] = [
   { id: "firstPerson", label: "First person" },
   { id: "topDown", label: "Top down" },
 ];
-
+const exaggerations = [1, 1.5, 2, 3] as const;
 const terminalJobStates = new Set(["waiting_for_calibration", "complete", "failed"]);
 
 type AbsoluteDemoReport = {
@@ -107,6 +118,26 @@ function projectPreviewLayer(
   return null;
 }
 
+function terrainOverlayLayer(
+  activeLayer: (typeof layers)[number],
+  manifest: ProjectManifest | null,
+): ProjectPreviewLayer | null {
+  if (!manifest || activeLayer === "Texture") return null;
+  if (activeLayer === "DSM") {
+    if (manifest.artifacts.dsm) return "dsm";
+    if (manifest.artifacts.rdsm) return "rdsm";
+    return null;
+  }
+  if (activeLayer === "Slope" && manifest.artifacts.slope) return "slope";
+  if (activeLayer === "Confidence" && manifest.artifacts.confidence) return "confidence";
+  if (activeLayer === "Residual" && manifest.artifacts.residual) return "residual";
+  return null;
+}
+
+function bundleName(report: ProjectExportReport): string {
+  return report.bundle_path.split(/[\\/]/).pop() ?? `depthwizard-${report.project_id}.zip`;
+}
+
 export function App() {
   const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
   const [activeTool, setActiveTool] = useState("Project");
@@ -134,7 +165,21 @@ export function App() {
   const [measurement, setMeasurement] = useState<ProjectProfileResult | null>(null);
   const [profile, setProfile] = useState<ProjectProfileResult | null>(null);
   const [analysisBusy, setAnalysisBusy] = useState(false);
-  const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : undefined;
+  const [projectMesh, setProjectMesh] = useState<ProjectMeshReport | null>(null);
+  const [projectMeshUrl, setProjectMeshUrl] = useState<string | null>(null);
+  const [buildingMesh, setBuildingMesh] = useState(false);
+  const [meshLod, setMeshLod] = useState(0);
+  const [autoLod, setAutoLod] = useState(true);
+  const [terrainPerformance, setTerrainPerformance] = useState<TerrainPerformance | null>(null);
+  const [verticalExaggeration, setVerticalExaggeration] = useState<number>(1);
+  const [terrainOverlayUrl, setTerrainOverlayUrl] = useState<string | null>(null);
+  const [terrainOverlayLoading, setTerrainOverlayLoading] = useState(false);
+  const [autoFlythrough, setAutoFlythrough] = useState(false);
+  const [cameraResetToken, setCameraResetToken] = useState(0);
+  const [projectExport, setProjectExport] = useState<ProjectExportReport | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const lodChangedAtRef = useRef(0);
+  const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : projectMeshUrl ?? undefined;
 
   useEffect(() => {
     if (!demoMode) return;
@@ -201,13 +246,19 @@ export function App() {
             const manifest = await getProjectManifest(next.project_dir);
             if (cancelled) return;
             let validation: ReferenceValidationReport | null = null;
+            let mesh: ProjectMeshReport | null = null;
             if (manifest.artifacts.metrics) {
               validation = await getProjectValidation(next.project_dir).catch(() => null);
             }
+            if (manifest.artifacts.mesh_manifest) {
+              mesh = await getProjectMesh(next.project_dir).catch(() => null);
+            }
             if (cancelled) return;
             setProjectValidation(validation);
+            setProjectMesh(mesh);
             setProjectManifest(manifest);
             setProjectJob(next);
+            setProjectExport(null);
             setActiveLayer(manifest.artifacts.dsm ? "DSM" : "Texture");
             setActiveView(manifest.artifacts.dsm || manifest.artifacts.rdsm ? "DSM" : "Optical");
             return;
@@ -237,8 +288,109 @@ export function App() {
   const processing = projectJob?.status === "queued" || projectJob?.status === "running";
   const waitingForCalibration = projectJob?.status === "waiting_for_calibration";
   const previewLayer = projectPreviewLayer(activeView, activeLayer, projectManifest);
+  const terrainOverlay = terrainOverlayLayer(activeLayer, projectManifest);
   const compareActive = activeTool === "Compare" && Boolean(projectValidation) && calibrationReady;
   const analystInteractive = !demoMode && activeView !== "3D Terrain" && Boolean(projectDir) && geometryReady;
+  const projectAnalystInteractive = !demoMode && Boolean(projectDir) && geometryReady;
+  const terrainAnalysisPath = useMemo<NormalizedPoint[]>(() => {
+    if (activeTool === "Profiles" && profile) return profile.samples.map((sample) => sample.point);
+    if (activeTool === "Measure" && measurement) return measurement.samples.map((sample) => sample.point);
+    if (lineStart && lineEnd) return [lineStart, lineEnd];
+    return [];
+  }, [activeTool, lineEnd, lineStart, measurement, profile]);
+
+  useEffect(() => {
+    if (demoMode || !projectDir || !projectMesh) {
+      setProjectMeshUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return null;
+      });
+      return;
+    }
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    void getProjectMeshUrl(projectDir, meshLod)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        createdUrl = url;
+        setProjectMeshUrl((current) => {
+          if (current) URL.revokeObjectURL(current);
+          return url;
+        });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setProjectMeshUrl((current) => {
+            if (current) URL.revokeObjectURL(current);
+            return null;
+          });
+          setImportError(error instanceof Error ? error.message : "Unable to load project terrain LOD");
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [demoMode, meshLod, projectDir, projectMesh?.build_config_sha256]);
+
+  useEffect(() => {
+    if (demoMode || activeView !== "3D Terrain" || !projectDir || !projectMesh || !terrainOverlay) {
+      setTerrainOverlayUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return null;
+      });
+      setTerrainOverlayLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    setTerrainOverlayLoading(true);
+    void getProjectPreviewUrl(projectDir, terrainOverlay, 1600)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        createdUrl = url;
+        setTerrainOverlayUrl((current) => {
+          if (current) URL.revokeObjectURL(current);
+          return url;
+        });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setTerrainOverlayUrl((current) => {
+            if (current) URL.revokeObjectURL(current);
+            return null;
+          });
+          setImportError(error instanceof Error ? error.message : "Unable to load 3D analytical overlay");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTerrainOverlayLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [activeView, demoMode, projectDir, projectManifest?.updated_at_utc, projectMesh?.build_config_sha256, terrainOverlay]);
+
+  useEffect(() => {
+    if (!autoLod || activeView !== "3D Terrain" || !projectMesh || !terrainPerformance) return;
+    const now = performance.now();
+    if (now - lodChangedAtRef.current < 3500) return;
+    const lastLod = Math.max(0, projectMesh.lods.length - 1);
+    if (terrainPerformance.fps < 38 && meshLod < lastLod) {
+      lodChangedAtRef.current = now;
+      setMeshLod((current) => Math.min(lastLod, current + 1));
+    } else if (terrainPerformance.fps > 56 && meshLod > 0) {
+      lodChangedAtRef.current = now;
+      setMeshLod((current) => Math.max(0, current - 1));
+    }
+  }, [activeView, autoLod, meshLod, projectMesh, terrainPerformance]);
 
   useEffect(() => {
     if (demoMode || activeView === "3D Terrain" || !projectDir || !previewLayer) {
@@ -331,11 +483,11 @@ export function App() {
     } else if (activeTool === "Compare" && projectValidation) {
       setActiveView("DSM");
       setActiveLayer("DSM");
-    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady) {
+    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady && !meshReady) {
       setActiveView("DSM");
       setActiveLayer("DSM");
     }
-  }, [activeTool, geometryReady, projectValidation]);
+  }, [activeTool, geometryReady, meshReady, projectValidation]);
 
   const projectName = useMemo(
     () => (
@@ -355,6 +507,24 @@ export function App() {
     setAnalysisBusy(false);
   };
 
+  const clearProjectMesh = () => {
+    setProjectMesh(null);
+    setMeshLod(0);
+    setAutoLod(true);
+    setTerrainPerformance(null);
+    setVerticalExaggeration(1);
+    setAutoFlythrough(false);
+    setProjectExport(null);
+    setProjectMeshUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    setTerrainOverlayUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+  };
+
   const importImagery = async () => {
     setImportError(null);
     const selected = await open({
@@ -372,6 +542,7 @@ export function App() {
       setProjectManifest(null);
       setValidationEvidence(null);
       setProjectValidation(null);
+      clearProjectMesh();
       resetAnalysis();
       setActiveLayer("Texture");
       setActiveView("3D Terrain");
@@ -397,6 +568,7 @@ export function App() {
       setProjectDir(selectedDir);
       setProjectManifest(null);
       setProjectValidation(null);
+      clearProjectMesh();
       resetAnalysis();
       setProjectJob(next);
     } catch (error) {
@@ -423,6 +595,7 @@ export function App() {
         dem_path: dem,
         requested_output: "dsm",
       });
+      clearProjectMesh();
       resetAnalysis();
       setProjectJob(next);
     } catch (error) {
@@ -447,6 +620,7 @@ export function App() {
       const manifest = await getProjectManifest(projectDir);
       setProjectValidation(report);
       setProjectManifest(manifest);
+      setProjectExport(null);
       resetAnalysis();
       setActiveLayer("Residual");
       setActiveView("Residual");
@@ -455,6 +629,56 @@ export function App() {
       setImportError(error instanceof Error ? error.message : "Unable to validate reference DSM");
     } finally {
       setValidatingReference(false);
+    }
+  };
+
+  const buildTerrain = async () => {
+    if (!projectDir || !geometryReady || demoMode) return;
+    setImportError(null);
+    try {
+      setBuildingMesh(true);
+      const report = await buildProjectMesh(projectDir);
+      const manifest = await getProjectManifest(projectDir);
+      setProjectMesh(report);
+      setProjectManifest(manifest);
+      setProjectExport(null);
+      setMeshLod(0);
+      setAutoLod(true);
+      setTerrainPerformance(null);
+      setVerticalExaggeration(1);
+      setActiveLayer("Texture");
+      setActiveView("3D Terrain");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to build project terrain mesh");
+    } finally {
+      setBuildingMesh(false);
+    }
+  };
+
+  const exportProject = async () => {
+    if (!projectDir || !geometryReady || demoMode) return;
+    setImportError(null);
+    try {
+      setExporting(true);
+      const report = await buildProjectExport(projectDir, {
+        includeSource: false,
+        includeMesh: true,
+        includeValidation: true,
+      });
+      setProjectExport(report);
+      const url = await getProjectExportUrl(projectDir);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = bundleName(report);
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to build project export bundle");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -511,23 +735,31 @@ export function App() {
   };
 
   const normalStatus = projectJob?.error
-    ?? (analysisBusy
-      ? "Sampling persisted analytical products…"
-      : projectValidation
-        ? `Reference validation ready · RMSE ${projectValidation.elevation.rmse_m.toFixed(3)} m`
-        : projectJob?.status === "waiting_for_calibration"
-          ? "Geometry ready · metric evidence required"
-          : projectJob?.status === "complete"
-            ? "Production products ready"
-            : projectJob?.status === "failed"
-              ? "Processing failed"
-              : processing
-                ? "Production processing…"
-                : geometryReady
-                  ? "Reconstruction loaded · local processing"
-                  : metadata
-                    ? "Input ready · local processing"
-                    : "Ready · local processing");
+    ?? (exporting
+      ? "Building deterministic project export…"
+      : buildingMesh
+        ? "Building persistent terrain LODs…"
+        : analysisBusy
+          ? "Sampling persisted analytical products…"
+          : projectExport
+            ? `Export ready · ${(projectExport.bundle_bytes / (1024 * 1024)).toFixed(2)} MiB`
+            : projectValidation
+              ? `Reference validation ready · RMSE ${projectValidation.elevation.rmse_m.toFixed(3)} m`
+              : projectMesh
+                ? `3D terrain ready · ${projectMesh.lods.length} LODs`
+                : projectJob?.status === "waiting_for_calibration"
+                  ? "Geometry ready · metric evidence required"
+                  : projectJob?.status === "complete"
+                    ? "Production products ready"
+                    : projectJob?.status === "failed"
+                      ? "Processing failed"
+                      : processing
+                        ? "Production processing…"
+                        : geometryReady
+                          ? "Reconstruction loaded · local processing"
+                          : metadata
+                            ? "Input ready · local processing"
+                            : "Ready · local processing");
 
   const viewAvailable = (view: (typeof views)[number]): boolean => {
     if (view === "3D Terrain") return meshReady;
@@ -542,6 +774,7 @@ export function App() {
   const chooseView = (view: (typeof views)[number]) => {
     if (!viewAvailable(view)) return;
     setActiveView(view);
+    if (view !== "3D Terrain") setAutoFlythrough(false);
     if (view === "Optical") setActiveLayer("Texture");
     if (view === "DSM") setActiveLayer("DSM");
     if (view === "Residual") setActiveLayer("Residual");
@@ -573,7 +806,9 @@ export function App() {
       ? lineStart && !lineEnd ? "Select transect endpoint B" : "Select transect endpoints A → B"
       : activeTool === "Compare"
         ? "Swipe reference against prediction · click to synchronize values"
-        : "Click raster to inspect synchronized project values";
+        : activeView === "3D Terrain"
+          ? "Click terrain to inspect synchronized project values"
+          : "Click raster to inspect synchronized project values";
 
   return (
     <main className="dw-app">
@@ -587,7 +822,7 @@ export function App() {
           <span>ISRO · SIH26175</span>
         </div>
         <div className="dw-top-actions">
-          <button className="dw-btn" onClick={importImagery} disabled={importing || processing || validatingReference}>
+          <button className="dw-btn" onClick={importImagery} disabled={importing || processing || validatingReference || buildingMesh || exporting}>
             <UploadIcon /> {importing ? "Inspecting…" : "Import imagery"}
           </button>
           {!demoMode && metadata && !projectDir && (
@@ -600,6 +835,11 @@ export function App() {
               {submittingProject ? "Starting…" : "Add DEM evidence"}
             </button>
           )}
+          {!demoMode && geometryReady && (
+            <button className="dw-btn" onClick={buildTerrain} disabled={buildingMesh || processing || Boolean(projectMesh)}>
+              {buildingMesh ? "Building 3D…" : projectMesh ? "3D terrain ready" : "Build 3D terrain"}
+            </button>
+          )}
           {!demoMode && calibrationReady && (
             <button
               className="dw-btn"
@@ -610,7 +850,14 @@ export function App() {
               {validatingReference ? "Validating…" : projectValidation ? "Reference validated" : "Validate reference"}
             </button>
           )}
-          <button className="dw-btn dw-btn--primary" disabled>Export</button>
+          <button
+            className="dw-btn dw-btn--primary"
+            onClick={exportProject}
+            disabled={demoMode || !projectDir || !geometryReady || processing || exporting}
+            title="Build and download a hash-audited ZIP. Source imagery is excluded by default."
+          >
+            {exporting ? "Packaging…" : projectExport ? "Export again" : "Export"}
+          </button>
         </div>
       </header>
 
@@ -639,17 +886,87 @@ export function App() {
               <button
                 className="dw-chip"
                 key={mode.id}
-                data-active={cameraMode === mode.id}
+                data-active={!autoFlythrough && cameraMode === mode.id}
                 disabled={!meshReady}
-                onClick={() => meshReady && setCameraMode(mode.id)}
+                onClick={() => {
+                  if (!meshReady) return;
+                  setAutoFlythrough(false);
+                  setCameraMode(mode.id);
+                }}
               >
                 {mode.label}
               </button>
             ))}
+            {activeView === "3D Terrain" && meshReady && (
+              <button
+                className="dw-chip"
+                data-active={autoFlythrough}
+                onClick={() => setAutoFlythrough((current) => !current)}
+                title="Deterministic display-only camera flythrough; project data is unchanged"
+              >
+                Flythrough
+              </button>
+            )}
+            {activeView === "3D Terrain" && meshReady && (
+              <button
+                className="dw-chip"
+                onClick={() => {
+                  setAutoFlythrough(false);
+                  setCameraMode("orbit");
+                  setCameraResetToken((current) => current + 1);
+                }}
+              >
+                Fit
+              </button>
+            )}
+            {activeView === "3D Terrain" && projectMesh && (
+              <button
+                className="dw-chip"
+                data-active={autoLod}
+                onClick={() => setAutoLod((current) => !current)}
+                title="Automatically chooses a persistent LOD from measured renderer frame rate"
+              >
+                Auto LOD
+              </button>
+            )}
+            {activeView === "3D Terrain" && projectMesh?.lods.map((lod) => (
+              <button
+                className="dw-chip"
+                key={lod.level}
+                data-active={meshLod === lod.level}
+                onClick={() => {
+                  setAutoLod(false);
+                  lodChangedAtRef.current = performance.now();
+                  setMeshLod(lod.level);
+                }}
+                title={`${lod.vertices.toLocaleString()} vertices · ${lod.faces.toLocaleString()} faces`}
+              >
+                LOD {lod.level}
+              </button>
+            ))}
+            {activeView === "3D Terrain" && meshReady && !demoMode && exaggerations.map((value) => (
+              <button
+                className="dw-chip"
+                key={value}
+                data-active={verticalExaggeration === value}
+                onClick={() => setVerticalExaggeration(value)}
+                title="Display-only vertical exaggeration; source elevation values are unchanged"
+              >
+                {value}× Z
+              </button>
+            ))}
+            {activeView === "3D Terrain" && terrainPerformance && (
+              <span className="dw-render-metric" title="Measured WebGL renderer frame rate">
+                {terrainPerformance.fps.toFixed(0)} fps
+              </span>
+            )}
+            {activeView === "3D Terrain" && projectAnalystInteractive && (
+              <span className="dw-analysis-hint">{analysisHint}</span>
+            )}
             {activeView !== "3D Terrain" && analystInteractive && (
               <span className="dw-analysis-hint">{analysisHint}</span>
             )}
-            {(lineStart || probe) && activeView !== "3D Terrain" && (
+            {(lineStart || probe) && (
               <button className="dw-chip" onClick={resetAnalysis}>Clear analysis</button>
             )}
             <span className="dw-toolbar-divider" aria-hidden="true" />
@@ -670,7 +987,18 @@ export function App() {
 
         <div className="dw-canvas">
           {activeView === "3D Terrain" && meshReady && (
-            <TerrainViewport meshUrl={meshUrl} cameraMode={cameraMode} />
+            <TerrainViewport
+              meshUrl={meshUrl}
+              cameraMode={cameraMode}
+              verticalExaggeration={verticalExaggeration}
+              cursorPoint={probe?.point}
+              analysisPath={terrainAnalysisPath}
+              overlayUrl={terrainOverlayUrl}
+              autoFlythrough={autoFlythrough}
+              resetToken={cameraResetToken}
+              onSelectPoint={projectAnalystInteractive ? analyzeRasterPoint : undefined}
+              onPerformance={setTerrainPerformance}
+            />
           )}
           {activeView !== "3D Terrain" && compareActive && previewUrl && comparisonUrl && (
             <ComparisonViewport
@@ -706,7 +1034,9 @@ export function App() {
                   {compareActive
                     ? "Prediction ↔ reference comparison"
                     : activeView === "3D Terrain"
-                      ? demoMode ? "Absolute DSM" : "Relative DSM"
+                      ? activeLayer === "Texture"
+                        ? projectMesh?.surface_product === "dsm" || demoMode ? "Absolute DSM" : "Relative DSM"
+                        : `${activeLayer} analytical overlay`
                       : previewLayer === "residual"
                         ? "Prediction − reference"
                         : previewLayer === "reference"
@@ -725,7 +1055,9 @@ export function App() {
                     : activeView === "3D Terrain"
                       ? demoMode
                         ? `${demoReport?.scene ?? "India scene"} · ${demoReport?.model ?? "DA3MONO-LARGE"}`
-                        : "DA3MONO-LARGE · textured terrain"
+                        : activeLayer === "Texture"
+                          ? `${estimatorModel(projectManifest) ?? "DA3MONO-LARGE"} · persistent textured LOD ${meshLod} · ${verticalExaggeration}× display Z`
+                          : `${terrainOverlayLoading ? "loading overlay" : "UV overlay only"} · terrain geometry unchanged · LOD ${meshLod}`
                       : previewLayer === "residual"
                         ? `${projectValidation?.valid_pixels.toLocaleString() ?? "—"} valid pixels · metres`
                         : previewLayer === "reference"
@@ -740,22 +1072,26 @@ export function App() {
                 <strong>
                   {analysisBusy
                     ? "Sampling analytical products"
-                    : previewLayer === "residual"
-                      ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
-                      : demoMode || calibrationReady ? "Metric elevation" : "Relative elevation"}
+                    : activeView === "3D Terrain" && probe?.surface.available
+                      ? `${probe.surface.value?.toFixed(2) ?? "—"} ${probe.surface.units ?? ""}`
+                      : previewLayer === "residual"
+                        ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
+                        : demoMode || calibrationReady ? "Metric elevation" : "Relative elevation"}
                 </strong>
                 <span>
-                  {previewLayer === "residual"
-                    ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
-                    : activeTool === "Measure" && measurement
-                      ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m"} · Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
-                      : activeTool === "Profiles" && profile
-                        ? `${profile.sample_count} samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m"}`
-                        : demoMode
-                          ? "DEM-calibrated · metres · engineering path"
-                          : calibrationReady
-                            ? "evidence-calibrated · metres"
-                            : "dimensionless relative surface height · not metric height"}
+                  {activeView === "3D Terrain" && projectMesh
+                    ? `LOD ${meshLod} ${autoLod ? "auto" : "manual"} · ${terrainPerformance ? `${terrainPerformance.fps.toFixed(0)} fps · ${terrainPerformance.triangles.toLocaleString()} triangles · ` : ""}${projectMesh.relief.toFixed(2)} ${projectMesh.vertical_units} relief`
+                    : previewLayer === "residual"
+                      ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
+                      : activeTool === "Measure" && measurement
+                        ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m"} · Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
+                        : activeTool === "Profiles" && profile
+                          ? `${profile.sample_count} samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m"}`
+                          : demoMode
+                            ? "DEM-calibrated · metres · engineering path"
+                            : calibrationReady
+                              ? "evidence-calibrated · metres"
+                              : "dimensionless relative surface height · not metric height"}
                 </span>
               </div>
             </>
@@ -764,30 +1100,38 @@ export function App() {
             <div className="dw-empty-canvas">
               <div className="dw-empty-card">
                 <h2>
-                  {processing
-                    ? "Reconstructing scene"
-                    : waitingForCalibration
-                      ? "Relative geometry complete"
-                      : calibrationReady
-                        ? "Metric DSM products ready"
-                        : geometryReady
-                          ? "Relative DSM ready"
-                          : metadata
-                            ? "Source accepted"
-                            : "Load a reconstruction project"}
+                  {buildingMesh
+                    ? "Building analytical terrain"
+                    : processing
+                      ? "Reconstructing scene"
+                      : waitingForCalibration
+                        ? "Relative geometry complete"
+                        : geometryReady && !projectMesh
+                          ? "Terrain products ready for 3D"
+                          : calibrationReady
+                            ? "Metric DSM products ready"
+                            : geometryReady
+                              ? "Relative DSM ready"
+                              : metadata
+                                ? "Source accepted"
+                                : "Load a reconstruction project"}
                 </h2>
                 <p>
                   {importError
                     ? importError
-                    : waitingForCalibration
-                      ? "This georeferenced project is intentionally paused before any metric-height claim. Add a DEM now; sparse GCP workflow remains an explicit calibration path."
-                      : calibrationReady
-                        ? "DepthWizard completed evidence-calibrated metric elevation. Load a separate reference DSM to create evaluation-only residuals and validation metrics."
-                        : geometryReady
-                          ? "DepthWizard completed a truthful dimensionless relative surface model. No metric elevation has been invented."
-                          : metadata
-                            ? `${metadata.crs ? "Georeferenced input detected. Reconstruct once, then DepthWizard will require DEM/GCP evidence before claiming absolute height." : "No usable CRS detected. DepthWizard will preserve this as relative elevation and will not claim metric height."}`
-                            : "Import a single-view RGB remote-sensing image. DepthWizard inspects geospatial metadata before any metric elevation claim is made."}
+                    : buildingMesh
+                      ? "Generating persistent hashed GLB LODs from the already-produced surface and source RGB. Validation reference data is not used."
+                      : geometryReady && !projectMesh
+                        ? "Build the persistent terrain LOD pyramid to enable Orbit, Fly, First Person, Top Down and synchronized 3D probing."
+                        : waitingForCalibration
+                          ? "This georeferenced project is intentionally paused before any metric-height claim. Add a DEM now; sparse GCP workflow remains an explicit calibration path."
+                          : calibrationReady
+                            ? "DepthWizard completed evidence-calibrated metric elevation. Load a separate reference DSM to create evaluation-only residuals and validation metrics."
+                            : geometryReady
+                              ? "DepthWizard completed a truthful dimensionless relative surface model. No metric elevation has been invented."
+                              : metadata
+                                ? `${metadata.crs ? "Georeferenced input detected. Reconstruct once, then DepthWizard will require DEM/GCP evidence before claiming absolute height." : "No usable CRS detected. DepthWizard will preserve this as relative elevation and will not claim metric height."}`
+                                : "Import a single-view RGB remote-sensing image. DepthWizard inspects geospatial metadata before any metric elevation claim is made."}
                 </p>
               </div>
             </div>
@@ -818,6 +1162,10 @@ export function App() {
         measurement={measurement}
         profile={profile}
         analysisBusy={analysisBusy}
+        projectExport={projectExport}
+        meshLod={meshLod}
+        autoLod={autoLod}
+        terrainPerformance={terrainPerformance}
       />
     </main>
   );

@@ -185,6 +185,76 @@ class ProjectProfileResult(BaseModel):
     semantics: str
 
 
+class ProjectMeshBuildRequest(BaseModel):
+    project_dir: Path
+    max_finest_samples: int = Field(default=512, ge=128, le=1024)
+    lod_levels: int = Field(default=4, ge=2, le=6)
+
+
+class TerrainLodArtifact(BaseModel):
+    level: int = Field(ge=0)
+    stride: int = Field(ge=1)
+    path: Path
+    sha256: str
+    vertices: int = Field(ge=3)
+    faces: int = Field(ge=1)
+    width_samples: int = Field(ge=2)
+    height_samples: int = Field(ge=2)
+
+
+class ProjectMeshReport(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    surface_product: Literal["dsm", "rdsm"]
+    surface_sha256: str
+    texture_sha256: str
+    build_config_sha256: str
+    horizontal_units: Literal["m", "px"]
+    vertical_units: Literal["m", "relative"]
+    gsd_x: float = Field(gt=0.0)
+    gsd_y: float = Field(gt=0.0)
+    raster_width: int = Field(ge=2)
+    raster_height: int = Field(ge=2)
+    valid_pixels: int = Field(ge=4)
+    minimum_elevation: float
+    maximum_elevation: float
+    relief: float = Field(ge=0.0)
+    lods: list[TerrainLodArtifact] = Field(min_length=1)
+    mesh_manifest_path: Path
+    semantics: str
+
+
+class ProjectExportRequest(BaseModel):
+    project_dir: Path
+    include_source: bool = False
+    include_mesh: bool = True
+    include_validation: bool = True
+
+
+class ProjectExportFile(BaseModel):
+    arcname: str
+    source_path: Path
+    sha256: str
+    bytes: int = Field(ge=0)
+    semantics: str
+    units: str | None = None
+
+
+class ProjectExportReport(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    bundle_path: Path
+    bundle_sha256: str
+    bundle_bytes: int = Field(ge=1)
+    project_manifest_sha256: str
+    export_manifest_path: Path
+    include_source: bool
+    include_mesh: bool
+    include_validation: bool
+    files: list[ProjectExportFile] = Field(min_length=1)
+    semantics: str
+
+
 class CalibrationResult(BaseModel):
     scale: float
     offset: float

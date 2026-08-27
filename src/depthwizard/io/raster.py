@@ -5,60 +5,209 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
-from pyproj import Geod, Transformer
+from pyproj import CRS, Geod, Transformer
+from pyproj.exceptions import CRSError, ProjError
 from rasterio.enums import Resampling
 from rasterio.io import DatasetReader
 from rasterio.warp import reproject
 
 from depthwizard.contracts import RasterMetadata
 
+ORTHOLOC_METRIC_AFFINE_ENV = "DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE"
+
+
+def ortholoc_metric_affine_override_enabled() -> bool:
+    """Return whether the dedicated OrthoLoC local-metric affine contract is enabled.
+
+    OrthoLoC publishes DOP/DSM pixel scale in metres. Some raw/unpacked TIFF representations carry
+    affine coordinates that are dataset-local even when a syntactic CRS tag is present. This opt-in
+    is intentionally dataset-specific and must never become a generic escape hatch for arbitrary
+    geospatial rasters.
+    """
+    return os.environ.get(ORTHOLOC_METRIC_AFFINE_ENV) == "1"
+
+
+def _affine_metric_spacing(transform) -> tuple[float, float] | None:
+    gsd_x = float(np.hypot(transform.a, transform.d))
+    gsd_y = float(np.hypot(transform.b, transform.e))
+    if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
+        return None
+    return gsd_x, gsd_y
+
+
+def _crs_with_authority_metadata(crs: CRS) -> CRS:
+    """Recover registry metadata lost when GDAL/Rasterio exposes an authority CRS as WKT."""
+    if crs.area_of_use is not None:
+        return crs
+    authority = crs.to_authority()
+    if authority is None:
+        return crs
+    try:
+        return CRS.from_authority(authority[0], authority[1])
+    except CRSError:
+        return crs
+
+
+def _longitude_within_bounds(longitude: float, west: float, east: float) -> bool:
+    tolerance = 1e-7
+    if west <= east:
+        return west - tolerance <= longitude <= east + tolerance
+    return longitude >= west - tolerance or longitude <= east + tolerance
+
+
+def _trusted_wgs84_coordinate(crs: CRS, x: float, y: float) -> tuple[float, float] | None:
+    """Transform one map coordinate to WGS84 and enforce the CRS area-of-use contract."""
+    try:
+        transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        longitude, latitude = transformer.transform(x, y, errcheck=True)
+    except (CRSError, ProjError):
+        return None
+    longitude = float(longitude)
+    latitude = float(latitude)
+    if not np.isfinite(longitude) or not np.isfinite(latitude):
+        return None
+    if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
+        return None
+
+    metadata_crs = _crs_with_authority_metadata(crs)
+    area = metadata_crs.area_of_use
+    if area is not None:
+        if not _longitude_within_bounds(longitude, float(area.west), float(area.east)):
+            return None
+        tolerance = 1e-7
+        if not float(area.south) - tolerance <= latitude <= float(area.north) + tolerance:
+            return None
+    return longitude, latitude
+
+
+def _projected_axis_factors_m(crs: CRS) -> tuple[float, float] | None:
+    if not crs.is_projected or len(crs.axis_info) < 2:
+        return None
+    x_factor = crs.axis_info[0].unit_conversion_factor
+    y_factor = crs.axis_info[1].unit_conversion_factor
+    if x_factor is None or y_factor is None:
+        return None
+    factors = float(x_factor), float(y_factor)
+    if not all(np.isfinite(value) and value > 0 for value in factors):
+        return None
+    return factors
+
+
+def _projected_area_bounds(crs: CRS) -> tuple[float, float, float, float] | None:
+    """Project the registered CRS area-of-use envelope for map-coordinate plausibility checks."""
+    metadata_crs = _crs_with_authority_metadata(crs)
+    area = metadata_crs.area_of_use
+    if area is None or area.west > area.east:
+        return None
+    try:
+        transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+        left, bottom, right, top = transformer.transform_bounds(
+            float(area.west),
+            float(area.south),
+            float(area.east),
+            float(area.north),
+            densify_pts=21,
+        )
+    except (CRSError, ProjError):
+        return None
+    bounds = float(left), float(bottom), float(right), float(top)
+    if not all(np.isfinite(value) for value in bounds):
+        return None
+    if bounds[0] > bounds[2] or bounds[1] > bounds[3]:
+        return None
+    return bounds
+
+
+def _projected_coordinate_within_area(
+    x: float,
+    y: float,
+    bounds: tuple[float, float, float, float],
+) -> bool:
+    left, bottom, right, top = bounds
+    span = max(right - left, top - bottom, 1.0)
+    tolerance = span * 1e-9
+    return (
+        left - tolerance <= x <= right + tolerance
+        and bottom - tolerance <= y <= top + tolerance
+    )
+
 
 def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
-    """Return centre-pixel ground spacing in metres for a georeferenced raster.
+    """Return trustworthy pixel ground spacing in metres when the raster supports it.
 
-    Affine coefficients are expressed in CRS units, which can be degrees for geographic rasters.
-    Converting neighbouring pixel centres to WGS84 and measuring geodesic distance avoids silently
-    labelling angular pixel sizes as metres.
+    Normal projected/geographic rasters use their CRS only when its spatial semantics are
+    trustworthy. The dedicated OrthoLoC acceptance/benchmark opt-in is evaluated *before* CRS
+    interpretation: the official dataset contract defines DOP/DSM pixel scale in metres, while some
+    raw/unpacked TIFF representations preserve a dataset-local metric affine even if a syntactic CRS
+    tag is present. Under that explicit opt-in the affine basis vectors are therefore the metric
+    scale and global lon/lat interpretation is intentionally not used.
 
-    The OrthoLoC unpacked benchmark is a special, explicit exception: its public dataset contract
-    defines the DOP/DSM pixel scale in metres even though some unpacked TIFFs omit a formal CRS.
-    The dedicated multiscene acceptance target opts into that interpretation with
-    ``DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1``. No other CRS-free raster is treated as metric.
+    No raster receives this treatment by default. Outside the explicit OrthoLoC contract, projected
+    rasters use affine basis vectors converted from CRS linear units after area-of-use plausibility
+    checks, and geographic rasters use WGS84 geodesic neighbour distances.
     """
     with rasterio.open(path) as src:
-        if src.crs is None:
-            allow_ortholoc_metric_affine = (
-                os.environ.get("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE") == "1"
-            )
-            if not allow_ortholoc_metric_affine or src.transform.is_identity:
-                return None
-            gsd_x = float(np.hypot(src.transform.a, src.transform.d))
-            gsd_y = float(np.hypot(src.transform.b, src.transform.e))
-            if (
-                not np.isfinite(gsd_x)
-                or not np.isfinite(gsd_y)
-                or gsd_x <= 0
-                or gsd_y <= 0
-            ):
-                raise ValueError("CRS-free OrthoLoC affine grid has invalid metric pixel spacing")
-            return gsd_x, gsd_y
         if src.transform.is_identity:
             return None
+
+        if ortholoc_metric_affine_override_enabled():
+            metric_affine = _affine_metric_spacing(src.transform)
+            if metric_affine is None:
+                raise ValueError("OrthoLoC affine grid has invalid metric pixel spacing")
+            return metric_affine
+
+        if src.crs is None:
+            return None
+
+        crs = CRS.from_user_input(src.crs)
+        metadata_crs = _crs_with_authority_metadata(crs)
+        transform = src.transform
+        representative_pixels = {
+            (0, 0),
+            (max(src.width - 1, 0), 0),
+            (0, max(src.height - 1, 0)),
+            (max(src.width - 1, 0), max(src.height - 1, 0)),
+            (max((src.width - 1) // 2, 0), max((src.height - 1) // 2, 0)),
+        }
+
+        if crs.is_projected:
+            factors = _projected_axis_factors_m(crs)
+            if factors is None:
+                return None
+            area_bounds = _projected_area_bounds(crs)
+            if metadata_crs.area_of_use is not None:
+                if area_bounds is None:
+                    return None
+                for col, row in representative_pixels:
+                    x, y = src.xy(row, col)
+                    if not _projected_coordinate_within_area(float(x), float(y), area_bounds):
+                        return None
+            x_factor, y_factor = factors
+            gsd_x = float(np.hypot(transform.a * x_factor, transform.d * y_factor))
+            gsd_y = float(np.hypot(transform.b * x_factor, transform.e * y_factor))
+            if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
+                return None
+            return gsd_x, gsd_y
+
+        if not crs.is_geographic:
+            return None
+
         col = (src.width - 1) / 2.0
         row = (src.height - 1) / 2.0
-        x0, y0 = src.transform * (col + 0.5, row + 0.5)
-        x1, y1 = src.transform * (col + 1.5, row + 0.5)
-        x2, y2 = src.transform * (col + 0.5, row + 1.5)
-        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-        lon0, lat0 = transformer.transform(x0, y0)
-        lon1, lat1 = transformer.transform(x1, y1)
-        lon2, lat2 = transformer.transform(x2, y2)
+        x0, y0 = transform * (col + 0.5, row + 0.5)
+        x1, y1 = transform * (col + 1.5, row + 0.5)
+        x2, y2 = transform * (col + 0.5, row + 1.5)
+        point0 = _trusted_wgs84_coordinate(crs, float(x0), float(y0))
+        point1 = _trusted_wgs84_coordinate(crs, float(x1), float(y1))
+        point2 = _trusted_wgs84_coordinate(crs, float(x2), float(y2))
+        if point0 is None or point1 is None or point2 is None:
+            return None
 
     geod = Geod(ellps="WGS84")
-    _, _, gsd_x = geod.inv(lon0, lat0, lon1, lat1)
-    _, _, gsd_y = geod.inv(lon0, lat0, lon2, lat2)
+    _, _, gsd_x = geod.inv(point0[0], point0[1], point1[0], point1[1])
+    _, _, gsd_y = geod.inv(point0[0], point0[1], point2[0], point2[1])
     if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
-        raise ValueError("unable to derive positive metric ground sample distance")
+        return None
     return float(abs(gsd_x)), float(abs(gsd_y))
 
 

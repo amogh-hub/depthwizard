@@ -6,7 +6,8 @@ from typing import Literal
 
 import numpy as np
 import rasterio
-from pyproj import Geod, Transformer
+from pyproj import CRS, Geod, Transformer
+from pyproj.exceptions import CRSError, ProjError
 
 from depthwizard.contracts import (
     NormalizedPoint,
@@ -16,6 +17,10 @@ from depthwizard.contracts import (
     ProjectProfileRequest,
     ProjectProfileResult,
     RasterSample,
+)
+from depthwizard.io.raster import (
+    ground_sample_distance_m,
+    ortholoc_metric_affine_override_enabled,
 )
 from depthwizard.pipeline.project import ProjectManifest
 
@@ -85,18 +90,43 @@ def _artifact_sample(manifest: ProjectManifest, name: str, point: NormalizedPoin
     )
 
 
+def _safe_geographic_coordinates(
+    crs: object,
+    x: float,
+    y: float,
+) -> tuple[float | None, float | None]:
+    try:
+        transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        longitude, latitude = transformer.transform(x, y, errcheck=True)
+    except (CRSError, ProjError):
+        return None, None
+    if not np.isfinite(longitude) or not np.isfinite(latitude):
+        return None, None
+    if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
+        return None, None
+    return float(longitude), float(latitude)
+
+
 def _spatial_coordinates(
     path: Path,
     point: NormalizedPoint,
 ) -> tuple[int, int, float | None, float | None, float | None, float | None]:
+    metric_gsd = ground_sample_distance_m(path)
     with rasterio.open(path) as src:
         col, row = _pixel_index(point, width=src.width, height=src.height)
-        if src.crs is None or src.transform.is_identity:
+        if src.transform.is_identity:
             return col, row, None, None, None, None
         x, y = src.xy(row, col)
-        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-        longitude, latitude = transformer.transform(x, y)
-        return col, row, float(x), float(y), float(longitude), float(latitude)
+        if ortholoc_metric_affine_override_enabled():
+            # Under the explicit OrthoLoC contract these are dataset-local metric map coordinates;
+            # a syntactic CRS tag is not permission to manufacture global lon/lat.
+            return col, row, float(x), float(y), None, None
+        if src.crs is None:
+            return col, row, None, None, None, None
+        if metric_gsd is None:
+            return col, row, float(x), float(y), None, None
+        longitude, latitude = _safe_geographic_coordinates(src.crs, float(x), float(y))
+        return col, row, float(x), float(y), longitude, latitude
 
 
 def probe_project(request: ProjectProbeRequest) -> ProjectProbeResult:
@@ -130,10 +160,39 @@ def probe_project(request: ProjectProbeRequest) -> ProjectProbeResult:
     )
 
 
+def _projected_distance_factors(crs: CRS) -> tuple[float, float] | None:
+    """Return projected-coordinate conversion factors to metres when the CRS declares them."""
+    if not crs.is_projected or len(crs.axis_info) < 2:
+        return None
+    x_factor = crs.axis_info[0].unit_conversion_factor
+    y_factor = crs.axis_info[1].unit_conversion_factor
+    if x_factor is None or y_factor is None:
+        return None
+    factors = (float(x_factor), float(y_factor))
+    if not all(np.isfinite(value) and value > 0 for value in factors):
+        return None
+    return factors
+
+
+def _cumulative_map_distance_m(
+    map_coordinates: list[tuple[float, float]],
+) -> list[float | None]:
+    metric_distance: list[float | None] = [0.0]
+    cumulative = 0.0
+    for (x0, y0), (x1, y1) in pairwise(map_coordinates):
+        segment = float(np.hypot(x1 - x0, y1 - y0))
+        if not np.isfinite(segment):
+            return [None for _ in map_coordinates]
+        cumulative += segment
+        metric_distance.append(cumulative)
+    return metric_distance
+
+
 def _profile_distances(
     surface_path: Path,
     points: list[NormalizedPoint],
 ) -> tuple[list[float], list[float | None]]:
+    metric_gsd = ground_sample_distance_m(surface_path)
     with rasterio.open(surface_path) as src:
         pixels = [
             _pixel_index(point, width=src.width, height=src.height)
@@ -145,20 +204,54 @@ def _profile_distances(
                 pixel_distance[-1] + float(np.hypot(col - previous_col, row - previous_row))
             )
 
-        if src.crs is None or src.transform.is_identity:
+        if src.transform.is_identity or metric_gsd is None:
             return pixel_distance, [None for _ in points]
 
-        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-        geographic: list[tuple[float, float]] = []
+        map_coordinates: list[tuple[float, float]] = []
         for col, row in pixels:
             x, y = src.xy(row, col)
-            longitude, latitude = transformer.transform(x, y)
-            geographic.append((float(longitude), float(latitude)))
+            map_coordinates.append((float(x), float(y)))
 
-    metric_distance: list[float | None] = [0.0]
+        if ortholoc_metric_affine_override_enabled():
+            # The dedicated OrthoLoC contract defines this affine coordinate space in metres. Use
+            # direct affine geometry so rotation/shear are respected and never round-trip via WGS84.
+            return pixel_distance, _cumulative_map_distance_m(map_coordinates)
+
+        if src.crs is None:
+            return pixel_distance, [None for _ in points]
+
+        crs = CRS.from_user_input(src.crs)
+        projected_factors = _projected_distance_factors(crs)
+        if projected_factors is not None:
+            x_factor, y_factor = projected_factors
+            metric_distance: list[float | None] = [0.0]
+            cumulative = 0.0
+            for (x0, y0), (x1, y1) in pairwise(map_coordinates):
+                segment = float(
+                    np.hypot((x1 - x0) * x_factor, (y1 - y0) * y_factor)
+                )
+                if not np.isfinite(segment):
+                    return pixel_distance, [None for _ in points]
+                cumulative += segment
+                metric_distance.append(cumulative)
+            return pixel_distance, metric_distance
+
+        if not crs.is_geographic:
+            return pixel_distance, [None for _ in points]
+
+        geographic: list[tuple[float, float]] = []
+        for x, y in map_coordinates:
+            longitude, latitude = _safe_geographic_coordinates(crs, x, y)
+            if longitude is None or latitude is None:
+                return pixel_distance, [None for _ in points]
+            geographic.append((longitude, latitude))
+
+    metric_distance = [0.0]
     cumulative = 0.0
     for (lon0, lat0), (lon1, lat1) in pairwise(geographic):
         _, _, segment = _GEOD.inv(lon0, lat0, lon1, lat1)
+        if not np.isfinite(segment):
+            return pixel_distance, [None for _ in points]
         cumulative += float(abs(segment))
         metric_distance.append(cumulative)
     return pixel_distance, metric_distance
@@ -245,6 +338,8 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
         samples=samples,
         semantics=(
             "Analyst-selected surface transect. Vertical delta is endpoint surface elevation "
-            "difference; it is not automatically a building-height classification."
+            "difference; it is not automatically a building-height classification. Metric horizontal "
+            "distance is emitted only when the raster's spatial scale passes the active spatial "
+            "contract, including an explicit dataset-local metric-affine contract when selected."
         ),
     )

@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -61,6 +61,20 @@ potsdam-external-acceptance:
 
 release-train-2-validation-smoke:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.release_train_2_validation_smoke
+
+release-train-3-spatial-foundation-smoke:
+	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python -m scripts.release_train_3_spatial_foundation_smoke
+
+release-train-3-mesh-smoke:
+	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 python -m scripts.release_train_3_mesh_smoke
+
+release-train-3-export-smoke:
+	python -m scripts.release_train_3_export_smoke
+
+release-train-3-workstation-smoke:
+	DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1 python -m scripts.release_train_3_workstation_smoke
+
+release-train-3-acceptance: release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py

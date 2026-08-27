@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,11 +12,16 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from depthwizard import __version__
 from depthwizard.contracts import (
     ProcessingRequest,
+    ProjectExportReport,
+    ProjectExportRequest,
+    ProjectMeshBuildRequest,
+    ProjectMeshReport,
     ProjectProbeRequest,
     ProjectProbeResult,
     ProjectProfileRequest,
@@ -27,8 +33,10 @@ from depthwizard.contracts import (
 )
 from depthwizard.evaluation.project_analysis import probe_project, sample_project_profile
 from depthwizard.evaluation.project_validation import validate_project_reference
+from depthwizard.export.project_package import build_project_export, load_project_export
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import inspect_raster
+from depthwizard.mesh.project_mesh import build_project_mesh, load_project_mesh
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.runtime import ProductionElevationRuntime
 from depthwizard.visualization.raster_preview import PreviewLayer, render_project_layer_preview
@@ -249,6 +257,119 @@ def project_profile(request: ProjectProfileRequest) -> ProjectProfileResult:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/projects/mesh",
+    response_model=ProjectMeshReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_mesh_build(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
+    try:
+        return build_project_mesh(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/projects/mesh",
+    response_model=ProjectMeshReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_mesh_report(project_dir: Path) -> ProjectMeshReport:
+    try:
+        return load_project_mesh(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/projects/mesh/lod/{level}", dependencies=[Depends(_session_guard)])
+def project_mesh_lod(project_dir: Path, level: int) -> FileResponse:
+    if level < 0:
+        raise HTTPException(status_code=422, detail="terrain LOD level must be non-negative")
+    try:
+        report = load_project_mesh(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    lod = next((item for item in report.lods if item.level == level), None)
+    if lod is None:
+        raise HTTPException(status_code=404, detail=f"terrain LOD {level} is not available")
+    return FileResponse(
+        path=lod.path,
+        media_type="model/gltf-binary",
+        filename=lod.path.name,
+        headers={
+            "Cache-Control": "no-store",
+            "ETag": f'"{lod.sha256}"',
+            "X-DepthWizard-Mesh-SHA256": lod.sha256,
+        },
+    )
+
+
+@app.post(
+    "/v1/projects/export",
+    response_model=ProjectExportReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_export_build(request: ProjectExportRequest) -> ProjectExportReport:
+    try:
+        return build_project_export(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/projects/export",
+    response_model=ProjectExportReport,
+    dependencies=[Depends(_session_guard)],
+)
+def project_export_report(project_dir: Path) -> ProjectExportReport:
+    try:
+        return load_project_export(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/projects/export/archive", dependencies=[Depends(_session_guard)])
+def project_export_archive(project_dir: Path) -> FileResponse:
+    try:
+        report = load_project_export(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FileResponse(
+        path=report.bundle_path,
+        media_type="application/zip",
+        filename=report.bundle_path.name,
+        headers={
+            "Cache-Control": "no-store",
+            "ETag": f'"{report.bundle_sha256}"',
+            "X-DepthWizard-Export-SHA256": report.bundle_sha256,
+        },
+    )
 
 
 @app.get("/v1/projects/preview", dependencies=[Depends(_session_guard)])
