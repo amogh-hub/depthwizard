@@ -18,7 +18,10 @@ RUNTIME_DIR = TAURI_DIR / "resources" / "depthwizard-core-runtime"
 BUILD_ROOT = ROOT / "artifacts" / "standalone" / "pyinstaller"
 ENTRY = ROOT / "scripts" / "depthwizard_sidecar_entry.py"
 DA3_VENDOR = ROOT / ".vendor" / "depth-anything-3" / "src"
-SELF_CHECK_TIMEOUT_SECONDS = 45.0
+# Frozen native scientific runtimes can incur a one-time macOS cold-start/dyld validation cost.
+# This watchdog is deliberately a correctness timeout, not a performance acceptance threshold.
+# Startup time is recorded as evidence and is evaluated separately by RT5/RT7 performance gates.
+SELF_CHECK_TIMEOUT_SECONDS = 120.0
 
 
 def _host_triple() -> str:
@@ -103,6 +106,7 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
             "DEPTHWIZARD_OFFLINE_CORE": "1",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "PROJ_NETWORK": "OFF",
             "NO_PROXY": "127.0.0.1,localhost",
             "no_proxy": "127.0.0.1,localhost",
         }
@@ -123,8 +127,9 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
         location = phases[-1] if phases else "before Python entrypoint"
         raise RuntimeError(
             "frozen sidecar startup qualification timed out after "
-            f"{SELF_CHECK_TIMEOUT_SECONDS:.0f}s; last_phase={location}. "
-            "The build is rejected rather than publishing an unqualified runtime."
+            f"{SELF_CHECK_TIMEOUT_SECONDS:.0f}s; last_phase={location}; "
+            f"startup_phases={phases}. The build is rejected rather than publishing an "
+            "unqualified runtime."
         ) from exc
     elapsed = time.monotonic() - started
     events = _read_trace(trace_path)
