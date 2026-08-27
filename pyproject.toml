@@ -65,6 +65,7 @@ filterwarnings = [
 ignore = [
   "src/depthwizard/baselines/rdah_model.py",
   "src/depthwizard/_pyinstaller_hooks/hook-imageio.py",
+  "src/depthwizard/_pyinstaller_hooks/hook-safetensors.py",
 ]
 
 [tool.ruff]
@@ -78,3 +79,4 @@ line-length = 100
 "scripts/setup_rdah_baseline.py" = ["TRY004"]
 # PyInstaller requires hook filenames to be `hook-{import-name}.py`; the hyphen is intentional.
 "src/depthwizard/_pyinstaller_hooks/hook-imageio.py" = ["N999"]
+"src/depthwizard/_pyinstaller_hooks/hook-safetensors.py" = ["N999"]
