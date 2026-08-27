@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance release-train-4-analytical-smoke demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build rust-verify da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance release-train-4-analytical-smoke sidecar-build release-train-5-sidecar-smoke standalone-build demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -11,6 +11,9 @@ service:
 
 frontend-build:
 	cd apps/desktop && npm install --no-audit --no-fund && npm run build
+
+rust-verify:
+	cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features
 
 da3-setup:
 	bash scripts/setup_da3_macos.sh
@@ -78,6 +81,16 @@ release-train-3-acceptance: release-train-3-spatial-foundation-smoke release-tra
 
 release-train-4-analytical-smoke:
 	python -m scripts.release_train_4_scientific_analytical_smoke
+
+sidecar-build:
+	python -m pip install -e ".[standalone]"
+	python -m scripts.build_standalone_sidecar
+
+release-train-5-sidecar-smoke:
+	python -m scripts.release_train_5_sidecar_smoke
+
+standalone-build: sidecar-build frontend-build
+	cd apps/desktop && npm run tauri build
 
 demo-rdsm:
 	PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/demo_geotiff.py

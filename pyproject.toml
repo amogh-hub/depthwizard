@@ -33,9 +33,13 @@ dev = [
   "ruff>=0.9",
   "pyright>=1.1.390",
 ]
+standalone = [
+  "pyinstaller>=6.16,<7",
+]
 
 [project.scripts]
 depthwizard = "depthwizard.cli:app"
+depthwizard-core = "depthwizard.sidecar:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/depthwizard"]
