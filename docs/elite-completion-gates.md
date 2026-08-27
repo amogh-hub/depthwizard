@@ -23,7 +23,7 @@ Evidence: estimator policy/manifest, `height_model_manifest.json`, training repo
 - Cross-sensor holdout is reported.
 - DA3-only and published reproducible baselines are run on identical evaluation inputs.
 - Required ablations are reported: refinement off, uncertainty weighting off, harmonization off, evidence calibration off and backbone substitution where feasible.
-- Error-confidence reliability and tile-seam diagnostics are included.
+- Error-confidence reliability and tile-seam diagnostics are included when the selected estimator emits a defined confidence quantity; absence of native confidence is reported explicitly and is never replaced with fabricated values.
 - Negative results remain in the evidence record and cannot be rewritten as promotions.
 
 Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablation_report.json`, `baseline_comparison.json`, frozen external benchmark records.
@@ -33,8 +33,9 @@ Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablatio
 - DEM-only calibration is operational and spatial-frequency matched to the DEM's effective resolution.
 - GCP-only calibration is operational.
 - DEM + GCP fusion is operational with GCPs receiving higher reliability.
+- Analyst-supplied GCP file identity is hash-audited from inspection through calibration; post-inspection byte changes cause an explicit abort.
 - Weak/underdetermined evidence causes an explicit abort instead of fabricated metric elevation.
-- Calibration residuals and confidence are emitted.
+- Calibration residual diagnostics and evidence provenance are emitted. Confidence/uncertainty is consumed or emitted only when its semantics are explicitly defined; undefined confidence is never fabricated.
 - High-frequency image-derived structure is preserved while only low-frequency terrain bias is corrected.
 
 Evidence: `calibration_dem_report.json`, `calibration_gcp_report.json`, `calibration_fusion_report.json`.
@@ -44,16 +45,16 @@ Evidence: `calibration_dem_report.json`, `calibration_gcp_report.json`, `calibra
 Georeferenced projects emit:
 
 - `dsm.tif`
-- `confidence.tif`
-- `slope.tif`
+- `slope.tif` when physical GSD is available
+- `confidence.tif` only when the selected estimator emits a native, defined confidence field
 - `residual.tif` when a reference is loaded
-- `metrics.json`
+- `metrics.json` when a reference is loaded
 - `calibration.json`
 - `provenance.json`
-- textured LOD mesh assets
-- human-readable validation report
+- textured LOD mesh assets when the 3D product is built
+- human-readable validation report when validation is performed
 
-Non-georeferenced projects emit a truthful dimensionless rDSM with no invented CRS or metric units, plus confidence, mesh and provenance outputs.
+Non-georeferenced projects emit a truthful dimensionless rDSM with no invented CRS or metric units, plus provenance and mesh outputs when built. A native confidence product is included only when emitted by the selected estimator. Missing confidence is an explicit unavailable state, never a reason to synthesize or mislabel one.
 
 Evidence: round-trip raster tests and complete project artifact manifest.
 
@@ -72,17 +73,17 @@ Evidence: `end_to_end_acceptance_report.json`, resumability test, malformed-inpu
 
 The final app has working, non-placeholder controls for:
 
-- Optical, DSM, Reference, Residual and Confidence views
-- Texture, DSM, Slope, Confidence and Residual layers
+- Optical, DSM, Reference, Residual and Confidence views, with Confidence enabled only when a real native confidence artifact exists
+- Texture, DSM, Slope, Confidence and Residual layers, plus display-only hillshade/contour derivatives where available
 - Orbit, Fly, First-person and Top-down cameras
 - elevation probe
 - slope probe/region inspection
-- structural-height measurement
+- structural-height measurement from an explicit analyst-selected footprint on the metric DSM
 - two-point distance
 - elevation transect/profile
 - reference comparison with split/swipe/overlay/difference
 - synchronized prediction/reference/residual cursor
-- confidence/error interpretation
+- confidence/error interpretation when native confidence exists, otherwise an explicit unavailable state
 - metadata/provenance inspection
 - export
 
