@@ -155,3 +155,33 @@ def test_crs_free_metric_affine_requires_explicit_ortholoc_opt_in(
     assert gsd is not None
     assert abs(gsd[0] - 0.2) < 1e-6
     assert abs(gsd[1] - 0.3) < 1e-6
+
+
+def test_crs_bearing_ortholoc_override_precedes_global_crs_interpretation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "ortholoc_raw_crs_tagged.tif"
+    _write(
+        path,
+        np.ones((8, 8), dtype=np.float32),
+        transform=from_origin(11.0, 48.0, 0.18, 0.22),
+        crs="EPSG:4326",
+    )
+
+    monkeypatch.delenv("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", raising=False)
+    ordinary = ground_sample_distance_m(path)
+    assert ordinary is not None
+    assert ordinary[0] > 10_000.0
+    assert ordinary[1] > 10_000.0
+
+    monkeypatch.setenv("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", "1")
+    local_metric = ground_sample_distance_m(path)
+    assert local_metric is not None
+    assert abs(local_metric[0] - 0.18) < 1e-6
+    assert abs(local_metric[1] - 0.22) < 1e-6
+
+    metadata = inspect_raster(path)
+    assert metadata.crs == "EPSG:4326"
+    assert metadata.ground_sample_distance_x is not None
+    assert abs(metadata.ground_sample_distance_x - 0.18) < 1e-6

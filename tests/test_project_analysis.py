@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import Affine, from_origin
 
@@ -158,6 +159,55 @@ def test_projected_profile_rejects_metric_xy_when_epsg_extent_is_inconsistent(
     assert profile.horizontal_distance_pixels == 10.0
     assert profile.horizontal_distance_m is None
     assert all(sample.distance_m is None for sample in profile.samples)
+    assert probe.map_x is not None
+    assert probe.map_y is not None
+    assert probe.longitude is None
+    assert probe.latitude is None
+
+
+def test_ortholoc_profile_uses_local_metric_affine_even_with_crs_tag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    source = tmp_path / "rgb.tif"
+    source.touch()
+    dsm = project / "products" / "dsm.tif"
+    values = np.arange(121, dtype=np.float32).reshape(11, 11)
+    _write_surface(
+        dsm,
+        values,
+        crs="EPSG:4326",
+        transform=from_origin(11.0, 48.0, 0.18, 0.22),
+    )
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        dsm,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(dsm),
+    )
+    monkeypatch.setenv("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE", "1")
+
+    profile = sample_project_profile(
+        ProjectProfileRequest(
+            project_dir=project,
+            start=NormalizedPoint(x=0.0, y=0.5),
+            end=NormalizedPoint(x=1.0, y=0.5),
+            samples=11,
+        )
+    )
+    probe = probe_project(
+        ProjectProbeRequest(
+            project_dir=project,
+            point=NormalizedPoint(x=0.5, y=0.5),
+        )
+    )
+
+    assert profile.horizontal_distance_m is not None
+    assert abs(profile.horizontal_distance_m - 1.8) < 1e-6
+    assert abs(profile.samples[-1].distance_m - 1.8) < 1e-6
     assert probe.map_x is not None
     assert probe.map_y is not None
     assert probe.longitude is None

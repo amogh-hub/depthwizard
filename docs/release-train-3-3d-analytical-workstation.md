@@ -41,68 +41,91 @@ continue to come from the persisted raster products rather than approximated mes
 3. The GLB is a visualization derivative. Numerical values shown to an analyst come from the
    persisted raster products through the probe/profile subsystem, not from interpolating display
    geometry.
-4. Metric DSM projects use physical horizontal GSD in metres. Relative/non-georeferenced projects
-   retain pixel horizontal units and relative vertical units rather than inventing metres.
-5. Nodata pixels remove terrain faces. Nodata values are sanitized only for unreferenced vertices so
+4. Metric horizontal units are used only under a trusted spatial-scale contract. Generic projected
+   and geographic rasters use CRS-aware scale checks. OrthoLoC acceptance/benchmark data may use the
+   explicit dataset-local metric-affine contract because the official dataset defines DOP/DSM pixel
+   scale in metres. That opt-in is never applied to arbitrary rasters.
+5. Under the OrthoLoC local-metric affine contract, affine map coordinates are treated as local
+   metres and are **not** converted into global longitude/latitude merely because a syntactic CRS tag
+   exists on a raw TIFF representation.
+6. Relative/non-georeferenced projects retain pixel horizontal units and relative vertical units
+   rather than inventing metres.
+7. Nodata pixels remove terrain faces. Nodata values are sanitized only for unreferenced vertices so
    they cannot corrupt scene bounds; they are not turned into valid terrain.
-6. Vertical exaggeration is a renderer transform only. The project DSM/rDSM, mesh manifest and
+8. Vertical exaggeration is a renderer transform only. The project DSM/rDSM, mesh manifest and
    analyst-reported elevations remain unchanged.
-7. LOD switching may change displayed triangle density but not the underlying project coordinate
+9. LOD switching may change displayed triangle density but not the underlying project coordinate
    contract or analytical sampling result. Automatic LOD responds only to measured rendering
    performance and selects among already-persisted LOD products.
-8. A 3D click is converted through GLB UV coordinates to the same normalized image coordinate used
-   by the 2D analytical workspace.
-9. Terrain analytical overlays use colorized preview rasters as UV display textures only. Residual,
-   slope, confidence or DSM overlays do not feed terrain geometry and do not alter persisted rasters.
-10. Profile and measurement lines shown on the terrain are display derivatives of raster-backed
+10. A 3D click is converted through GLB UV coordinates to the same normalized image coordinate used
+    by the 2D analytical workspace.
+11. Terrain analytical overlays use colorized preview rasters as UV display textures only. Residual,
+    slope, confidence or DSM overlays do not feed terrain geometry and do not alter persisted rasters.
+12. Profile and measurement lines shown on the terrain are display derivatives of raster-backed
     analysis samples. Their numerical values remain the service response from persisted products.
-11. Terrain products are hash-addressed in the project manifest and revalidated when reloaded.
-12. A mesh build failure is recorded as a mesh-stage failure and cannot rewrite reconstruction,
+13. Terrain products are hash-addressed in the project manifest and revalidated when reloaded.
+14. A mesh build failure is recorded as a mesh-stage failure and cannot rewrite reconstruction,
     calibration or validation evidence.
-13. Export packaging re-hashes every included registered artifact before copying it. A hash mismatch
+15. Export packaging re-hashes every included registered artifact before copying it. A hash mismatch
     aborts export instead of silently packaging modified evidence.
-14. The ZIP is a transport derivative. Export does not rerun reconstruction, calibration, validation,
+16. The ZIP is a transport derivative. Export does not rerun reconstruction, calibration, validation,
     mesh generation or analyst measurements.
 
-## Accepted mesh slice evidence
+## Superseded provisional RT3 acceptance evidence
 
-The first RT3 local acceptance on the already-accepted RT2 OrthoLoC engineering project completed
-without rerunning model inference:
+Early RT3 mesh/export/workstation smokes reused the RT2 OrthoLoC engineering project. The visual and
+hash-integrity paths passed, but a later workstation check exposed an impossible horizontal profile
+of roughly 16,325 km and a roughly 29,136 km scene diagonal for the 1024 × 1024 demo raster. The
+scene-diagonal guard had been derived from the same incorrect horizontal scale, so the two numbers
+were self-consistent without being physically valid.
 
-- `make verify`: 109 tests passed, Ruff clean and Pyright clean;
-- desktop TypeScript/Vite production build passed;
-- 1,048,576 valid DSM pixels;
-- 28.123 m recorded terrain relief;
-- LOD 0 stride 2: 263,169 vertices and 524,288 faces;
-- LOD 1 stride 4: 66,049 vertices and 131,072 faces;
-- LOD 2 stride 8: 16,641 vertices and 32,768 faces;
-- LOD 3 stride 16: 4,225 vertices and 8,192 faces;
-- project manifest recorded `reference_data_used: false` for mesh geometry;
-- exact mesh head passed GitHub Python 3.12, Python 3.13 and desktop CI jobs.
+Those RT3 smoke results and their export hashes are **superseded** and are not final RT3 acceptance
+evidence. They remain useful as a record of the bug discovery, but they must not be cited as proof of
+scientifically correct 3D scale.
 
-This is visualization/product acceptance, not new elevation-accuracy evidence.
+Root cause: the raw OrthoLoC TIFF representation can carry a syntactic CRS while its DOP/DSM affine
+is dataset-local. The official OrthoLoC dataset contract states that `scale` is the scale of one DOP
+or DSM pixel in metres. DepthWizard already had an explicit OrthoLoC metric-affine opt-in for
+CRS-free unpacked data, but the opt-in was evaluated only after checking for a missing CRS. A
+CRS-bearing demo TIFF could therefore be interpreted through global CRS/geodesic semantics and turn
+a local pixel scale into tens of kilometres per pixel.
 
-## Accepted export slice evidence
+## Corrected RT3 spatial foundation
 
-The deterministic export acceptance on the same persisted project also completed without rerunning
-reconstruction or validation:
+RT3 now closes that ambiguity before final workstation acceptance:
 
-- `make verify`: 113 tests passed, Ruff clean and Pyright clean;
-- desktop TypeScript/Vite production build passed;
-- generated bundle size: 24.13 MiB;
-- bundle SHA-256: `cf494b337ab2d63033a6112f6f564c4cede7ce90ebd7c4b2acdfcbe06d9438d8`;
-- 14 registered artifacts packaged;
-- original source imagery bytes excluded by default;
-- export smoke verified archive membership and hashes;
-- exact export head `d6681eabe11b396f53db12a6e6f391e59db1fb1e` passed GitHub Python 3.12,
-  Python 3.13 and desktop CI jobs.
+- the explicit `DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1` contract is evaluated before CRS interpretation;
+- under that contract, affine basis-vector lengths are metric pixel spacing regardless of whether the
+  raw OrthoLoC TIFF also carries a syntactic CRS tag;
+- analyst profiles use direct affine-coordinate distances, including rotation/shear, rather than a
+  WGS84 round-trip;
+- global longitude/latitude is withheld for the OrthoLoC local-metric override;
+- generic non-OrthoLoC raster behavior remains unchanged and requires trustworthy CRS semantics;
+- a new project directory, `artifacts/acceptance/release-train-3-ortholoc-spatial`, is used so the
+  previous RT2 project and its historical evidence are preserved rather than silently rewritten;
+- the fresh spatial-foundation run regenerates DSM-dependent slope and reference-validation slope
+  products under the corrected scale contract;
+- reference cache chronology is recorded truthfully: a reference already present from RT2 is not
+  deleted merely to claim it was downloaded after reconstruction; the enforced boundary is that it
+  is not supplied to reconstruction/calibration and validation is invoked only after runtime completion;
+- mesh acceptance independently checks reported GSD against the persisted raster affine;
+- workstation acceptance independently recomputes the full sampled profile distance from raster
+  affine coordinates instead of comparing two quantities derived from the same GSD scalar.
 
-The bundle is a transport derivative and carries no new scientific accuracy claim.
+This clean rebuild is product/geospatial-correctness acceptance only. It is not a rerun of Potsdam,
+frozen holdouts, Joshimath, or any consumed model-promotion benchmark, and it creates no new model
+promotion claim.
 
-## Current workstation closure target
+## Final RT3 acceptance order
 
-Before RT3 can close, the integrated workstation head must pass static verification and desktop build
-with the new terrain analytical overlays, 3D profile/measurement visualization, deterministic
-flythrough, adaptive LOD telemetry and desktop export interaction. A final local workstation smoke/UI
-acceptance will then verify these judge-facing controls against the accepted project without touching
-consumed benchmark protocols or rerunning model-promotion evidence.
+The final local closure order is:
+
+1. `make verify`
+2. `make release-train-3-spatial-foundation-smoke`
+3. `make release-train-3-mesh-smoke`
+4. `make release-train-3-export-smoke`
+5. `make release-train-3-workstation-smoke`
+
+PR #4 stays draft until the fresh spatial-foundation, mesh, export and workstation artifacts are all
+coherent and the exact latest head is green on Python 3.12, Python 3.13 and the desktop production
+build.

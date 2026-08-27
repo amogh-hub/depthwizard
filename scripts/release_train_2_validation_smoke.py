@@ -47,9 +47,9 @@ def _download(url: str, path: Path) -> bytes:
 def _prepare_source_and_calibration_source() -> tuple[Path, Path]:
     """Cache only the production source and calibration lineage before reconstruction.
 
-    The evaluation DSM is intentionally not downloaded here. The acceptance gate fetches that file
-    only after the production runtime has completed so the downstream evidence boundary is enforced
-    operationally, not merely documented.
+    The evaluation DSM is not requested by this helper. It may already exist in the shared local
+    cache from an earlier run; the scientifically enforced boundary is that it is never supplied to
+    reconstruction/calibration and reference validation is invoked only after production completes.
     """
     dop_path = DATA_DIR / "urban_residential_DOP.tif"
     xdsm_path = DATA_DIR / "urban_residential_xDSM.tif"
@@ -138,17 +138,23 @@ def _artifact_evidence(manifest: ProjectManifest) -> dict[str, dict[str, object]
 
 
 def main() -> None:
-    """Run the RT2 local integration gate with an enforced downstream reference boundary.
+    """Run the historical RT2 local integration gate with a downstream reference boundary.
 
-    This smoke intentionally does not create new scientific model-promotion evidence. The public
-    OrthoLoC cross-domain xDSM is downsampled into a coarse calibration surrogate, while the regular
-    OrthoLoC DSM is not downloaded until after the production DSM is complete. Because both belong to
-    the same scene/dataset lineage, the acceptance report explicitly records that calibration and
-    evaluation are not lineage-independent.
+    This smoke intentionally does not create scientific model-promotion evidence. The public
+    OrthoLoC cross-domain xDSM is downsampled into a coarse calibration surrogate and the regular
+    OrthoLoC DSM is supplied to validation only after the production runtime has completed. Because
+    both belong to the same scene/dataset lineage, the acceptance report explicitly records that
+    calibration and evaluation are not lineage-independent.
+
+    Reference cache chronology is recorded rather than manufactured: if the DSM already exists from
+    a prior run, the report says so instead of claiming that its bytes were downloaded later.
     """
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
+
+    reference_path = DATA_DIR / "urban_residential_DSM.tif"
+    reference_cached_before_runtime = reference_path.is_file() and reference_path.stat().st_size > 0
 
     print("DepthWizard Release Train 2 acceptance")
     print("Purpose: integrated production validation smoke; NOT model promotion or unseen Gate B evidence")
@@ -176,8 +182,7 @@ def main() -> None:
     if runtime_result.status is not ProjectRunStatus.COMPLETE:
         raise RuntimeError(f"production runtime did not complete: {runtime_result.status.value}")
 
-    print("Production DSM complete. Fetching TUM OrthoLoC DSM as downstream evaluation-only evidence...")
-    reference_path = DATA_DIR / "urban_residential_DSM.tif"
+    print("Production DSM complete. Supplying TUM OrthoLoC DSM as downstream evaluation-only evidence...")
     _download(DSM_URL, reference_path)
     reference_sha = sha256_file(reference_path)
     if dem_sha == reference_sha:
@@ -196,7 +201,7 @@ def main() -> None:
     manifest = ProjectManifest.load(PROJECT_DIR)
 
     acceptance = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS_INTEGRATED_VALIDATION_PATH",
         "purpose": (
             "Release Train 2 production integration acceptance; not an unseen benchmark and not "
@@ -204,12 +209,15 @@ def main() -> None:
         ),
         "scientific_separation": {
             "reference_boundary_enforced": True,
-            "evaluation_reference_fetched_after_runtime": True,
+            "reference_supplied_to_reconstruction_or_calibration": False,
+            "validation_invoked_after_runtime_completion": True,
+            "evaluation_reference_cached_before_runtime": reference_cached_before_runtime,
+            "evaluation_reference_downloaded_after_runtime": not reference_cached_before_runtime,
             "calibration": (
                 "coarse surrogate downsampled from TUM OrthoLoC urban_residential_xDSM.tif"
             ),
             "evaluation": (
-                "TUM OrthoLoC urban_residential_DSM.tif supplied only after production DSM completion"
+                "TUM OrthoLoC urban_residential_DSM.tif supplied only to downstream validation"
             ),
             "lineage_independent": False,
             "calibration_source_sha256": calibration_source_sha,
@@ -218,8 +226,8 @@ def main() -> None:
             "distinct_file_sha256": dem_sha != reference_sha and calibration_source_sha != reference_sha,
             "note": (
                 "The calibration surrogate and evaluation DSM are distinct files but share the same "
-                "OrthoLoC scene/dataset lineage. This smoke validates software integration and the "
-                "downstream reference boundary only; it is not independent accuracy evidence."
+                "OrthoLoC scene/dataset lineage. Cache state is recorded truthfully; this smoke "
+                "validates software integration and the downstream reference boundary only."
             ),
         },
         "source": {
@@ -241,7 +249,8 @@ def main() -> None:
             "path": str(reference_path.resolve()),
             "sha256": reference_sha,
             "source": "TUM OrthoLoC urban_residential_DSM.tif",
-            "fetched_after_runtime": True,
+            "cached_before_runtime": reference_cached_before_runtime,
+            "supplied_to_validation_after_runtime": True,
         },
         "runtime": runtime_result.as_dict(),
         "validation": validation.model_dump(mode="json"),
@@ -259,6 +268,7 @@ def main() -> None:
     print(f"Calibration source SHA-256: {calibration_source_sha}")
     print(f"Coarse calibration DEM SHA-256: {dem_sha}")
     print(f"Evaluation DSM SHA-256: {reference_sha}")
+    print(f"Reference cached before runtime: {'YES' if reference_cached_before_runtime else 'NO'}")
     print(f"Valid evaluation pixels: {validation.valid_pixels:,}")
     print(
         f"Elevation: RMSE {validation.elevation.rmse_m:.3f} m | "

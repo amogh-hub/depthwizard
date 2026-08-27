@@ -13,6 +13,27 @@ from rasterio.warp import reproject
 
 from depthwizard.contracts import RasterMetadata
 
+ORTHOLOC_METRIC_AFFINE_ENV = "DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE"
+
+
+def ortholoc_metric_affine_override_enabled() -> bool:
+    """Return whether the dedicated OrthoLoC local-metric affine contract is enabled.
+
+    OrthoLoC publishes DOP/DSM pixel scale in metres. Some raw/unpacked TIFF representations carry
+    affine coordinates that are dataset-local even when a syntactic CRS tag is present. This opt-in
+    is intentionally dataset-specific and must never become a generic escape hatch for arbitrary
+    geospatial rasters.
+    """
+    return os.environ.get(ORTHOLOC_METRIC_AFFINE_ENV) == "1"
+
+
+def _affine_metric_spacing(transform) -> tuple[float, float] | None:
+    gsd_x = float(np.hypot(transform.a, transform.d))
+    gsd_y = float(np.hypot(transform.b, transform.e))
+    if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
+        return None
+    return gsd_x, gsd_y
+
 
 def _crs_with_authority_metadata(crs: CRS) -> CRS:
     """Recover registry metadata lost when GDAL/Rasterio exposes an authority CRS as WKT."""
@@ -114,34 +135,28 @@ def _projected_coordinate_within_area(
 def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
     """Return trustworthy pixel ground spacing in metres when the raster supports it.
 
-    Projected rasters use the affine pixel basis converted from declared CRS linear units, but only
-    when representative scene coordinates are consistent with the registered CRS area of use.
-    Geographic rasters use WGS84 geodesic neighbour distances. This prevents syntactically present
-    but dataset-local or otherwise inconsistent CRS metadata from manufacturing absurd metric scale.
+    Normal projected/geographic rasters use their CRS only when its spatial semantics are
+    trustworthy. The dedicated OrthoLoC acceptance/benchmark opt-in is evaluated *before* CRS
+    interpretation: the official dataset contract defines DOP/DSM pixel scale in metres, while some
+    raw/unpacked TIFF representations preserve a dataset-local metric affine even if a syntactic CRS
+    tag is present. Under that explicit opt-in the affine basis vectors are therefore the metric
+    scale and global lon/lat interpretation is intentionally not used.
 
-    The OrthoLoC unpacked benchmark is a special, explicit exception: its public dataset contract
-    defines the DOP/DSM pixel scale in metres even though some unpacked TIFFs omit a formal CRS.
-    The dedicated multiscene acceptance target opts into that interpretation with
-    ``DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE=1``. No other CRS-free raster is treated as metric.
+    No raster receives this treatment by default. Outside the explicit OrthoLoC contract, projected
+    rasters use affine basis vectors converted from CRS linear units after area-of-use plausibility
+    checks, and geographic rasters use WGS84 geodesic neighbour distances.
     """
     with rasterio.open(path) as src:
-        if src.crs is None:
-            allow_ortholoc_metric_affine = (
-                os.environ.get("DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE") == "1"
-            )
-            if not allow_ortholoc_metric_affine or src.transform.is_identity:
-                return None
-            gsd_x = float(np.hypot(src.transform.a, src.transform.d))
-            gsd_y = float(np.hypot(src.transform.b, src.transform.e))
-            if (
-                not np.isfinite(gsd_x)
-                or not np.isfinite(gsd_y)
-                or gsd_x <= 0
-                or gsd_y <= 0
-            ):
-                raise ValueError("CRS-free OrthoLoC affine grid has invalid metric pixel spacing")
-            return gsd_x, gsd_y
         if src.transform.is_identity:
+            return None
+
+        if ortholoc_metric_affine_override_enabled():
+            metric_affine = _affine_metric_spacing(src.transform)
+            if metric_affine is None:
+                raise ValueError("OrthoLoC affine grid has invalid metric pixel spacing")
+            return metric_affine
+
+        if src.crs is None:
             return None
 
         crs = CRS.from_user_input(src.crs)
