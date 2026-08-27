@@ -1,4 +1,4 @@
-type StageState = "complete" | "active" | "pending";
+export type StageState = "complete" | "active" | "pending" | "failed";
 
 type Stage = {
   label: string;
@@ -13,7 +13,7 @@ export function StatusPipeline({ stages }: { stages: Stage[] }) {
         <div className="dw-stage" data-state={stage.state} key={stage.label}>
           <span className="dw-stage-dot" />
           <span>{stage.label}</span>
-          <small>{stage.detail ?? ""}</small>
+          <small title={stage.detail}>{stage.detail ?? ""}</small>
         </div>
       ))}
     </div>
