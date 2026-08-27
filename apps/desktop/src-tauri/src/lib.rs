@@ -41,6 +41,7 @@ struct AcceptanceBootReport<'a> {
     session_token_exported: bool,
     strict_python_egress_guard: bool,
     ephemeral_acceptance_control_enabled: bool,
+    build_git_sha: &'static str,
 }
 
 #[derive(Serialize)]
@@ -146,6 +147,7 @@ fn write_acceptance_boot_report(runtime: &RuntimeConfig) -> io::Result<()> {
         strict_python_egress_guard: runtime.offline_core,
         ephemeral_acceptance_control_enabled: env::var_os("DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH")
             .is_some(),
+        build_git_sha: env!("DEPTHWIZARD_BUILD_GIT_SHA"),
     };
     let payload = serde_json::to_string_pretty(&report).map_err(io::Error::other)?;
     fs::write(path, format!("{payload}\n"))
