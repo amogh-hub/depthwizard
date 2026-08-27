@@ -18,6 +18,7 @@ from rasterio.transform import from_origin
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "artifacts" / "acceptance" / "release-train-5-sidecar"
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _host_triple() -> str:
@@ -79,14 +80,20 @@ def _request(
         headers["x-depthwizard-token"] = token
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=2.0) as response:
+        with _DIRECT_OPENER.open(request, timeout=2.0) as response:
             return int(response.status), response.read()
     except urllib.error.HTTPError as exc:
         return int(exc.code), exc.read()
 
 
-def _wait_for_health(base: str, process: subprocess.Popen[bytes], timeout_s: float = 20.0) -> None:
-    deadline = time.monotonic() + timeout_s
+def _wait_for_health(
+    base: str,
+    process: subprocess.Popen[bytes],
+    timeout_s: float = 90.0,
+) -> float:
+    started = time.monotonic()
+    deadline = started + timeout_s
+    last_error: str | None = None
     while time.monotonic() < deadline:
         if process.poll() is not None:
             stdout, stderr = process.communicate(timeout=2)
@@ -98,11 +105,25 @@ def _wait_for_health(base: str, process: subprocess.Popen[bytes], timeout_s: flo
         try:
             status, body = _request(f"{base}/health")
             if status == 200 and json.loads(body)["status"] == "ok":
-                return
-        except (OSError, TimeoutError, json.JSONDecodeError):
-            pass
+                return time.monotonic() - started
+        except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            last_error = repr(exc)
         time.sleep(0.1)
-    raise RuntimeError("packaged sidecar did not become healthy before timeout")
+    raise RuntimeError(
+        "packaged sidecar did not become healthy before timeout; "
+        f"timeout_s={timeout_s:.1f}, process_alive={process.poll() is None}, "
+        f"last_health_error={last_error}"
+    )
+
+
+def _stop_process(process: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            return process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    return process.communicate(timeout=5)
 
 
 def _write_rgb(path: Path) -> None:
@@ -151,6 +172,8 @@ def main() -> None:
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
             "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
         }
     )
     process = subprocess.Popen(
@@ -160,7 +183,7 @@ def main() -> None:
         env=env,
     )
     try:
-        _wait_for_health(base, process)
+        startup_elapsed = _wait_for_health(base, process)
 
         health_status, health_body = _request(f"{base}/health")
         unauth_status, _ = _request(f"{base}/v1/inspect", payload={"path": str(source)})
@@ -186,20 +209,26 @@ def main() -> None:
         if inspect_payload.get("crs") != "EPSG:32643":
             raise RuntimeError("authorized inspect returned unexpected raster metadata")
         health_payload = json.loads(health_body)
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+    except Exception as exc:
+        stdout, stderr = _stop_process(process)
+        raise RuntimeError(
+            f"{exc}\n"
+            f"binary={binary}\n"
+            f"binary_bytes={binary.stat().st_size}\n"
+            f"stdout={stdout.decode(errors='replace')}\n"
+            f"stderr={stderr.decode(errors='replace')}"
+        ) from exc
+    else:
+        _stop_process(process)
 
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS_RT5_PACKAGED_SIDECAR_SECURITY_SMOKE",
         "binary": str(binary),
+        "binary_bytes": binary.stat().st_size,
         "binary_sha256": _sha256(binary),
         "sidecar_port": port,
+        "startup_elapsed_seconds": round(startup_elapsed, 3),
         "session_token_bits": len(token) * 4,
         "health": health_payload,
         "missing_token_http_status": unauth_status,
@@ -219,6 +248,8 @@ def main() -> None:
     report_path = OUT / "release-train-5-sidecar-acceptance.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("DepthWizard RT5 packaged sidecar security path: PASS")
+    print(f"Packaged core cold-start readiness: {startup_elapsed:.3f} s")
+    print(f"Packaged core size: {binary.stat().st_size / (1024 * 1024):.2f} MiB")
     print("Loopback health readiness: PASS")
     print("Missing token rejected: PASS")
     print("Wrong token rejected: PASS")

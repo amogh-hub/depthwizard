@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -52,13 +53,11 @@ def main() -> None:
         raise RuntimeError(
             "pinned Depth Anything 3 source is missing; run `make da3-setup` before sidecar packaging"
         )
-    try:
-        import PyInstaller  # noqa: F401
-    except ImportError as exc:
+    if importlib.util.find_spec("PyInstaller") is None:
         raise RuntimeError(
             "PyInstaller is missing; install the standalone extra with "
             "`python -m pip install -e '.[standalone]'`"
-        ) from exc
+        )
 
     triple = _host_triple()
     extension = ".exe" if os.name == "nt" else ""
@@ -127,6 +126,7 @@ def main() -> None:
     print("DepthWizard packaged scientific sidecar build: PASS")
     print(f"Target: {triple}")
     print(f"Binary: {target}")
+    print(f"Size: {report['bytes'] / (1024 * 1024):.2f} MiB")
     print(f"SHA-256: {report['sha256']}")
     print(f"Report: {report_path}")
 

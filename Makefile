@@ -13,6 +13,7 @@ frontend-build:
 	cd apps/desktop && npm install --no-audit --no-fund && npm run build
 
 rust-verify:
+	python -m scripts.ensure_tauri_sidecar_stub
 	cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features
 
 da3-setup:
