@@ -26,6 +26,11 @@ export type GroundControlPoint = {
   weight?: number;
 };
 
+export type GroundControlPointEvidence = {
+  source_path: string;
+  sha256: string;
+};
+
 export type GroundControlPointFileReport = {
   source_path: string;
   sha256: string;
@@ -41,6 +46,7 @@ export type ProcessingRequest = {
   output_dir: string;
   dem_path?: string | null;
   gcps?: GroundControlPoint[];
+  gcp_evidence?: GroundControlPointEvidence | null;
   requested_output?: "rdsm" | "dsm" | null;
   band_indices?: [number, number, number];
   tile_size?: number;
