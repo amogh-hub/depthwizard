@@ -13,7 +13,12 @@ from depthwizard.geometry_prior.base import GeometryPrior, GeometryPriorOutput
 DeviceName = Literal["auto", "cuda", "mps", "cpu"]
 
 
-def depth_to_relative_height(depth: np.ndarray, *, low_percentile: float = 1.0, high_percentile: float = 99.0) -> np.ndarray:
+def depth_to_relative_height(
+    depth: np.ndarray,
+    *,
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+) -> np.ndarray:
     """Convert camera depth into a stable dimensionless relative-height convention.
 
     In nadir/near-nadir optical imagery, smaller camera depth corresponds to a higher surface.
@@ -48,11 +53,20 @@ class DA3MonocularPrior(GeometryPrior):
         try:
             torch: Any = importlib.import_module("torch")
             da3_api: Any = importlib.import_module("depth_anything_3.api")
-            depth_anything_3: Any = da3_api.DepthAnything3
-        except (ImportError, AttributeError) as exc:
+        except ImportError as exc:
+            missing = getattr(exc, "name", None)
             raise RuntimeError(
-                "DA3 is not installed in this environment. Install the pinned Depth Anything 3 "
-                "runtime in the model environment before using DA3MonocularPrior."
+                "Depth Anything 3 runtime import failed before model loading: "
+                f"{type(exc).__name__}: {exc}; missing_module={missing!r}. "
+                "The packaged runtime is incomplete or the pinned DA3 environment is unavailable."
+            ) from exc
+
+        try:
+            depth_anything_3: Any = da3_api.DepthAnything3
+        except AttributeError as exc:
+            raise RuntimeError(
+                "Depth Anything 3 runtime import completed, but depth_anything_3.api does not expose "
+                "DepthAnything3. The pinned DA3 API contract is incompatible with this runtime."
             ) from exc
 
         if self._model is None:
