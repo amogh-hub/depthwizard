@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from typing import Any
+from typing import Any, cast
 
 _ORIGINAL_CONNECT = socket.socket.connect
 _ORIGINAL_CONNECT_EX = socket.socket.connect_ex
@@ -54,8 +54,9 @@ def install_strict_offline_network_guard() -> bool:
             assert_loopback_destination(address)
         return int(_ORIGINAL_CONNECT_EX(sock, address))
 
-    setattr(socket.socket, "connect", guarded_connect)
-    setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    socket_type = cast(Any, socket.socket)
+    socket_type.connect = guarded_connect
+    socket_type.connect_ex = guarded_connect_ex
     _INSTALLED = True
     return True
 
