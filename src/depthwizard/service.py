@@ -44,6 +44,7 @@ from depthwizard.io.raster import inspect_raster
 from depthwizard.mesh.project_mesh import build_project_mesh, load_project_mesh
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.runtime import ProductionElevationRuntime
+from depthwizard.visualization.layer_legend import project_layer_legend
 from depthwizard.visualization.raster_preview import PreviewLayer, render_project_layer_preview
 
 
@@ -445,3 +446,28 @@ def project_preview(
         media_type="image/png",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.get("/v1/projects/preview/legend", dependencies=[Depends(_session_guard)])
+def project_preview_legend(project_dir: Path, layer: str) -> dict[str, object]:
+    allowed = {
+        "optical",
+        "rdsm",
+        "dsm",
+        "slope",
+        "reference",
+        "residual",
+        "confidence",
+        "hillshade",
+        "contours",
+    }
+    if layer not in allowed:
+        raise HTTPException(status_code=422, detail=f"unsupported project preview layer: {layer}")
+    if not (project_dir / "project-manifest.json").is_file():
+        raise HTTPException(status_code=404, detail="project manifest does not exist")
+    try:
+        return cast(dict[str, object], project_layer_legend(project_dir, cast(PreviewLayer, layer)))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"unable to derive project layer legend: {exc}") from exc
