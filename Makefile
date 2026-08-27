@@ -98,12 +98,14 @@ release-train-5-full-smoke:
 
 release-train-5-standalone-acceptance: release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke
 
-# Final RT5 qualification must rebuild the frozen scientific runtime from the exact checked-out
-# source head before bundling the app. Reusing a previously staged onedir tree could otherwise
-# produce a valid-looking app whose scientific payload predates the source commit under test.
+# Final RT5 qualification is intentionally self-preparing: a git pull may change editable-project
+# metadata (for example PyInstaller entry points) while the active venv still reflects the prior
+# checkout. Synchronize the exact checked-out metadata first, verify that source, then build the
+# frozen runtime directly so the scientific payload and app bundle are guaranteed to match HEAD.
 release-train-5-final-qualification:
+	python -m pip install -e ".[dev,standalone]"
 	$(MAKE) verify
-	$(MAKE) sidecar-build
+	python -m scripts.build_standalone_sidecar
 	cd apps/desktop && npm run tauri build
 	$(MAKE) release-train-5-standalone-acceptance
 
