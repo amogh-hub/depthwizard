@@ -5,6 +5,7 @@ import { bootstrapStandaloneRuntime } from "./standalone";
 import "./styles/tokens.css";
 import "./styles/app.css";
 import "./styles/validation.css";
+import "./styles/workstation.css";
 
 const root = createRoot(document.getElementById("root")!);
 
