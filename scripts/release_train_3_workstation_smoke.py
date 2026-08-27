@@ -88,8 +88,11 @@ def main() -> None:
     mesh_details = mesh_stage.get("details", {}) if isinstance(mesh_stage, dict) else {}
     if not isinstance(mesh_details, dict) or mesh_details.get("reference_data_used") is not False:
         raise RuntimeError("mesh stage no longer preserves reference_data_used=false")
-    if mesh.surface_product != "dsm" or mesh.vertical_units != "m" or mesh.horizontal_units != "m":
-        raise RuntimeError("accepted workstation project is no longer a metric DSM terrain")
+    if mesh.surface_product != "dsm" or mesh.vertical_units != "m":
+        raise RuntimeError("accepted workstation project is no longer backed by a metric DSM surface")
+    metric_horizontal_scale_trusted = mesh.horizontal_units == "m"
+    if mesh_details.get("metric_horizontal_scale_trusted") is not metric_horizontal_scale_trusted:
+        raise RuntimeError("mesh report and project manifest disagree on horizontal metric-scale trust")
 
     lod_contracts: list[dict[str, object]] = []
     for lod in mesh.lods:
@@ -126,23 +129,37 @@ def main() -> None:
         )
     )
     available_surface_samples = sum(1 for sample in profile.samples if sample.surface.available)
-    if profile.horizontal_distance_m is None or profile.horizontal_distance_m <= 0:
-        raise RuntimeError("metric profile did not preserve a physical horizontal distance")
     if available_surface_samples < 2:
         raise RuntimeError("profile has insufficient raster-backed surface samples")
 
-    scene_diagonal_m = float(
-        np.hypot(
-            max(mesh.raster_width - 1, 0) * abs(mesh.gsd_x),
-            max(mesh.raster_height - 1, 0) * abs(mesh.gsd_y),
-        )
+    scene_diagonal_pixels = float(
+        np.hypot(max(mesh.raster_width - 1, 0), max(mesh.raster_height - 1, 0))
     )
-    if not np.isfinite(scene_diagonal_m) or scene_diagonal_m <= 0:
-        raise RuntimeError("mesh report does not preserve a finite positive metric scene extent")
-    if profile.horizontal_distance_m > scene_diagonal_m * 1.01:
+    if not np.isfinite(scene_diagonal_pixels) or scene_diagonal_pixels <= 0:
+        raise RuntimeError("mesh report does not preserve a finite positive pixel-grid scene extent")
+    if profile.horizontal_distance_pixels > scene_diagonal_pixels * 1.01:
+        raise RuntimeError("profile pixel distance exceeds the full scene pixel-grid diagonal")
+
+    scene_diagonal_m: float | None = None
+    if metric_horizontal_scale_trusted:
+        if profile.horizontal_distance_m is None or profile.horizontal_distance_m <= 0:
+            raise RuntimeError("trusted metric-XY terrain did not preserve a physical profile distance")
+        scene_diagonal_m = float(
+            np.hypot(
+                max(mesh.raster_width - 1, 0) * abs(mesh.gsd_x),
+                max(mesh.raster_height - 1, 0) * abs(mesh.gsd_y),
+            )
+        )
+        if not np.isfinite(scene_diagonal_m) or scene_diagonal_m <= 0:
+            raise RuntimeError("mesh report does not preserve a finite positive metric scene extent")
+        if profile.horizontal_distance_m > scene_diagonal_m * 1.01:
+            raise RuntimeError(
+                "profile distance exceeds the full metric scene diagonal; projected-coordinate "
+                "distance semantics are inconsistent with the persisted mesh/raster scale"
+            )
+    elif profile.horizontal_distance_m is not None:
         raise RuntimeError(
-            "profile distance exceeds the full metric scene diagonal; projected-coordinate "
-            "distance semantics are inconsistent with the persisted mesh/raster scale"
+            "workstation emitted metric horizontal distance even though CRS/GSD scale is untrusted"
         )
 
     if not export.bundle_path.is_file() or sha256_file(export.bundle_path) != export.bundle_sha256:
@@ -151,7 +168,7 @@ def main() -> None:
         raise RuntimeError("default accepted export unexpectedly includes original source imagery bytes")
 
     acceptance = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_RT3_WORKSTATION_PATH",
         "purpose": (
             "Release Train 3 integrated analyst workstation acceptance; visualization/runtime closure "
@@ -161,6 +178,9 @@ def main() -> None:
         "project_manifest_sha256": sha256_file(manifest_path),
         "surface_product": mesh.surface_product,
         "surface_sha256": mesh.surface_sha256,
+        "horizontal_units": mesh.horizontal_units,
+        "vertical_units": mesh.vertical_units,
+        "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
         "reference_data_used_for_mesh_geometry": False,
         "mesh_lods": lod_contracts,
         "preview_layers": preview_contracts,
@@ -174,13 +194,17 @@ def main() -> None:
             "reference_available": centre.reference.available,
             "residual_available": centre.residual.available,
             "confidence_available": centre.confidence.available,
+            "longitude": centre.longitude,
+            "latitude": centre.latitude,
         },
         "profile": {
             "samples": profile.sample_count,
             "available_surface_samples": available_surface_samples,
+            "horizontal_distance_pixels": profile.horizontal_distance_pixels,
+            "scene_diagonal_pixels": scene_diagonal_pixels,
             "horizontal_distance_m": profile.horizontal_distance_m,
             "scene_diagonal_m": scene_diagonal_m,
-            "distance_within_scene_extent": True,
+            "metric_distance_available": profile.horizontal_distance_m is not None,
             "vertical_delta": profile.vertical_delta,
             "vertical_units": profile.vertical_units,
         },
@@ -194,9 +218,10 @@ def main() -> None:
         "scientific_boundary": (
             "Terrain LODs, UV analytical overlays, camera flythroughs, renderer LOD selection and "
             "3D analysis graphics are display derivatives. Numeric probe/profile values remain "
-            "raster-backed. Projected CRS profiles use declared linear coordinate units converted "
-            "to metres rather than requiring a potentially invalid global WGS84 round-trip. "
-            "Export remains a transport derivative. No sealed benchmark was rerun."
+            "raster-backed. Metric horizontal distances are emitted only when CRS/GSD scale passes "
+            "the production consistency contract; otherwise the workstation remains in pixel-grid XY "
+            "without inventing metres. Export remains a transport derivative. No sealed benchmark "
+            "was rerun."
         ),
     }
     output_dir = PROJECT_DIR / "workstation"
@@ -209,11 +234,22 @@ def main() -> None:
     print(f"Terrain LODs with normalized UV contract: {len(lod_contracts)}")
     print(f"Rendered persisted analytical preview layers: {len(preview_contracts)}")
     print(f"Centre raster-backed surface probe: {centre.surface.value:.3f} m")
-    print(
-        f"Metric profile: {profile.sample_count} samples · "
-        f"{profile.horizontal_distance_m:.2f} m · {available_surface_samples} available surface samples"
-    )
-    print(f"Metric scene diagonal guard: {scene_diagonal_m:.2f} m")
+    if metric_horizontal_scale_trusted:
+        assert profile.horizontal_distance_m is not None
+        assert scene_diagonal_m is not None
+        print(
+            f"Metric profile: {profile.sample_count} samples · "
+            f"{profile.horizontal_distance_m:.2f} m · {available_surface_samples} available surface samples"
+        )
+        print(f"Metric scene diagonal guard: {scene_diagonal_m:.2f} m")
+    else:
+        print(
+            f"Pixel-grid profile: {profile.sample_count} samples · "
+            f"{profile.horizontal_distance_pixels:.2f} px · "
+            f"{available_surface_samples} available surface samples"
+        )
+        print("Metric horizontal distance: UNAVAILABLE — CRS/GSD scale not trusted; no metres fabricated")
+        print(f"Pixel-grid scene diagonal guard: {scene_diagonal_pixels:.2f} px")
     print(f"Accepted export SHA-256 preserved: {export.bundle_sha256}")
     print("Reference data used for mesh geometry: NO")
     print("Consumed benchmark/model-promotion protocols rerun: NO")

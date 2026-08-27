@@ -5,7 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
-from pyproj import Geod, Transformer
+from pyproj import CRS, Geod, Transformer
+from pyproj.exceptions import CRSError, ProjError
 from rasterio.enums import Resampling
 from rasterio.io import DatasetReader
 from rasterio.warp import reproject
@@ -13,12 +14,57 @@ from rasterio.warp import reproject
 from depthwizard.contracts import RasterMetadata
 
 
-def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
-    """Return centre-pixel ground spacing in metres for a georeferenced raster.
+def _longitude_within_bounds(longitude: float, west: float, east: float) -> bool:
+    tolerance = 1e-7
+    if west <= east:
+        return west - tolerance <= longitude <= east + tolerance
+    return longitude >= west - tolerance or longitude <= east + tolerance
 
-    Affine coefficients are expressed in CRS units, which can be degrees for geographic rasters.
-    Converting neighbouring pixel centres to WGS84 and measuring geodesic distance avoids silently
-    labelling angular pixel sizes as metres.
+
+def _trusted_wgs84_coordinate(crs: CRS, x: float, y: float) -> tuple[float, float] | None:
+    """Transform one map coordinate to WGS84 and enforce the CRS area-of-use contract."""
+    try:
+        transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        longitude, latitude = transformer.transform(x, y, errcheck=True)
+    except (CRSError, ProjError):
+        return None
+    longitude = float(longitude)
+    latitude = float(latitude)
+    if not np.isfinite(longitude) or not np.isfinite(latitude):
+        return None
+    if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
+        return None
+
+    area = crs.area_of_use
+    if area is not None:
+        if not _longitude_within_bounds(longitude, float(area.west), float(area.east)):
+            return None
+        tolerance = 1e-7
+        if not float(area.south) - tolerance <= latitude <= float(area.north) + tolerance:
+            return None
+    return longitude, latitude
+
+
+def _projected_axis_factors_m(crs: CRS) -> tuple[float, float] | None:
+    if not crs.is_projected or len(crs.axis_info) < 2:
+        return None
+    x_factor = crs.axis_info[0].unit_conversion_factor
+    y_factor = crs.axis_info[1].unit_conversion_factor
+    if x_factor is None or y_factor is None:
+        return None
+    factors = float(x_factor), float(y_factor)
+    if not all(np.isfinite(value) and value > 0 for value in factors):
+        return None
+    return factors
+
+
+def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
+    """Return trustworthy pixel ground spacing in metres when the raster supports it.
+
+    Projected rasters use the affine pixel basis converted from declared CRS linear units, but only
+    when representative scene coordinates are consistent with the CRS area of use. Geographic
+    rasters use WGS84 geodesic neighbour distances. This prevents a syntactically present but
+    dataset-local or otherwise inconsistent CRS from manufacturing absurd metric scale.
 
     The OrthoLoC unpacked benchmark is a special, explicit exception: its public dataset contract
     defines the DOP/DSM pixel scale in metres even though some unpacked TIFFs omit a formal CRS.
@@ -44,21 +90,52 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
             return gsd_x, gsd_y
         if src.transform.is_identity:
             return None
+
+        crs = CRS.from_user_input(src.crs)
+        transform = src.transform
+        representative_pixels = {
+            (0, 0),
+            (max(src.width - 1, 0), 0),
+            (0, max(src.height - 1, 0)),
+            (max(src.width - 1, 0), max(src.height - 1, 0)),
+            (max((src.width - 1) // 2, 0), max((src.height - 1) // 2, 0)),
+        }
+
+        if crs.is_projected:
+            factors = _projected_axis_factors_m(crs)
+            if factors is None:
+                return None
+            if crs.area_of_use is not None:
+                for col, row in representative_pixels:
+                    x, y = src.xy(row, col)
+                    if _trusted_wgs84_coordinate(crs, float(x), float(y)) is None:
+                        return None
+            x_factor, y_factor = factors
+            gsd_x = float(np.hypot(transform.a * x_factor, transform.d * y_factor))
+            gsd_y = float(np.hypot(transform.b * x_factor, transform.e * y_factor))
+            if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
+                return None
+            return gsd_x, gsd_y
+
+        if not crs.is_geographic:
+            return None
+
         col = (src.width - 1) / 2.0
         row = (src.height - 1) / 2.0
-        x0, y0 = src.transform * (col + 0.5, row + 0.5)
-        x1, y1 = src.transform * (col + 1.5, row + 0.5)
-        x2, y2 = src.transform * (col + 0.5, row + 1.5)
-        transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-        lon0, lat0 = transformer.transform(x0, y0)
-        lon1, lat1 = transformer.transform(x1, y1)
-        lon2, lat2 = transformer.transform(x2, y2)
+        x0, y0 = transform * (col + 0.5, row + 0.5)
+        x1, y1 = transform * (col + 1.5, row + 0.5)
+        x2, y2 = transform * (col + 0.5, row + 1.5)
+        point0 = _trusted_wgs84_coordinate(crs, float(x0), float(y0))
+        point1 = _trusted_wgs84_coordinate(crs, float(x1), float(y1))
+        point2 = _trusted_wgs84_coordinate(crs, float(x2), float(y2))
+        if point0 is None or point1 is None or point2 is None:
+            return None
 
     geod = Geod(ellps="WGS84")
-    _, _, gsd_x = geod.inv(lon0, lat0, lon1, lat1)
-    _, _, gsd_y = geod.inv(lon0, lat0, lon2, lat2)
+    _, _, gsd_x = geod.inv(point0[0], point0[1], point1[0], point1[1])
+    _, _, gsd_y = geod.inv(point0[0], point0[1], point2[0], point2[1])
     if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
-        raise ValueError("unable to derive positive metric ground sample distance")
+        return None
     return float(abs(gsd_x)), float(abs(gsd_y))
 
 

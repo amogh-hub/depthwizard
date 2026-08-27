@@ -116,7 +116,7 @@ def test_profile_reports_metric_distance_and_surface_delta(tmp_path: Path) -> No
     assert result.samples[-1].reference.value == 119.0
 
 
-def test_projected_profile_uses_declared_linear_units_without_global_roundtrip(
+def test_projected_profile_rejects_metric_xy_when_epsg_extent_is_inconsistent(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "project"
@@ -155,7 +155,9 @@ def test_projected_profile_uses_declared_linear_units_without_global_roundtrip(
         )
     )
 
-    assert profile.horizontal_distance_m == 10.0
+    assert profile.horizontal_distance_pixels == 10.0
+    assert profile.horizontal_distance_m is None
+    assert all(sample.distance_m is None for sample in profile.samples)
     assert probe.map_x is not None
     assert probe.map_y is not None
     assert probe.longitude is None

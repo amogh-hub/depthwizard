@@ -120,12 +120,27 @@ def load_project_mesh(project_dir: str | Path) -> ProjectMeshReport:
     return report
 
 
+def _surface_semantics(
+    surface_product: SurfaceProduct,
+    horizontal_units: HorizontalUnits,
+) -> str:
+    if surface_product == "dsm" and horizontal_units == "m":
+        return "textured_metric_dsm_terrain_metric_xy"
+    if surface_product == "dsm":
+        return "textured_metric_dsm_terrain_pixel_xy_untrusted_spatial_scale"
+    if horizontal_units == "m":
+        return "textured_relative_surface_terrain_metric_xy"
+    return "textured_relative_surface_terrain_pixel_xy"
+
+
 def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
     """Build and persist a deterministic textured terrain LOD pyramid for one project.
 
     This is a derivative visualization stage. It consumes only the already-persisted project
     surface and source RGB, never reference DSM values or validation residuals, so generating a 3D
-    view cannot feed evaluation evidence back into reconstruction or calibration.
+    view cannot feed evaluation evidence back into reconstruction or calibration. Horizontal metric
+    scale is used only when the persisted raster passes the shared CRS/GSD trust contract; otherwise
+    the mesh falls back to a pixel XY grid instead of manufacturing metres.
     """
     project_dir = request.project_dir
     if not (project_dir / "project-manifest.json").is_file():
@@ -139,14 +154,29 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
     if manifest.source_sha256 is not None and texture_sha != manifest.source_sha256:
         raise RuntimeError("project source raster SHA-256 no longer matches the manifest")
 
+    metric_gsd = ground_sample_distance_m(surface_path)
+    horizontal_units: HorizontalUnits
+    if metric_gsd is None:
+        gsd_x = 1.0
+        gsd_y = 1.0
+        horizontal_units = "px"
+    else:
+        gsd_x, gsd_y = metric_gsd
+        horizontal_units = "m"
+    metric_horizontal_scale_trusted = horizontal_units == "m"
+
     build_config_sha = _canonical_sha256(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "max_finest_samples": request.max_finest_samples,
             "lod_levels": request.lod_levels,
             "surface_product": surface_product,
             "surface_sha256": surface_sha,
             "texture_sha256": texture_sha,
+            "horizontal_units": horizontal_units,
+            "gsd_x": gsd_x,
+            "gsd_y": gsd_y,
+            "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
         }
     )
     mesh_dir = project_dir / "mesh"
@@ -171,6 +201,10 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             "texture_sha256": texture_sha,
             "build_config_sha256": build_config_sha,
             "reference_data_used": False,
+            "horizontal_units": horizontal_units,
+            "gsd_x": gsd_x,
+            "gsd_y": gsd_y,
+            "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
         },
     )
     try:
@@ -181,15 +215,6 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
                 "project source RGB and persisted elevation grid differ; refusing texture/grid guess"
             )
 
-        metric_gsd = ground_sample_distance_m(surface_path)
-        horizontal_units: HorizontalUnits
-        if metric_gsd is None:
-            gsd_x = 1.0
-            gsd_y = 1.0
-            horizontal_units = "px"
-        else:
-            gsd_x, gsd_y = metric_gsd
-            horizontal_units = "m"
         vertical_units: VerticalUnits = "m" if surface_product == "dsm" else "relative"
         raster_shape = (int(elevation.shape[0]), int(elevation.shape[1]))
         strides = _lod_strides(raster_shape, request.max_finest_samples, request.lod_levels)
@@ -238,10 +263,7 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             relief=float(np.max(valid_values) - np.min(valid_values)),
             lods=lods,
             mesh_manifest_path=report_path.resolve(strict=False),
-            semantics=(
-                "textured_metric_dsm_terrain" if surface_product == "dsm"
-                else "textured_relative_surface_terrain"
-            ),
+            semantics=_surface_semantics(surface_product, horizontal_units),
         )
         temporary = report_path.with_suffix(".json.tmp")
         temporary.write_text(
@@ -280,6 +302,9 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
                 "reference_data_used": False,
                 "horizontal_units": horizontal_units,
                 "vertical_units": vertical_units,
+                "gsd_x": gsd_x,
+                "gsd_y": gsd_y,
+                "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
                 "lod_strides": list(strides),
                 "valid_pixels": int(valid.sum()),
             },
@@ -297,6 +322,10 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
                 "texture_sha256": texture_sha,
                 "build_config_sha256": build_config_sha,
                 "reference_data_used": False,
+                "horizontal_units": horizontal_units,
+                "gsd_x": gsd_x,
+                "gsd_y": gsd_y,
+                "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
                 "error": str(exc),
             },
             elapsed_seconds=time.perf_counter() - started,

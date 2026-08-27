@@ -18,6 +18,7 @@ from depthwizard.contracts import (
     ProjectProfileResult,
     RasterSample,
 )
+from depthwizard.io.raster import ground_sample_distance_m
 from depthwizard.pipeline.project import ProjectManifest
 
 _GEOD = Geod(ellps="WGS84")
@@ -93,7 +94,7 @@ def _safe_geographic_coordinates(
 ) -> tuple[float | None, float | None]:
     try:
         transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
-        longitude, latitude = transformer.transform(x, y)
+        longitude, latitude = transformer.transform(x, y, errcheck=True)
     except (CRSError, ProjError):
         return None, None
     if not np.isfinite(longitude) or not np.isfinite(latitude):
@@ -107,11 +108,14 @@ def _spatial_coordinates(
     path: Path,
     point: NormalizedPoint,
 ) -> tuple[int, int, float | None, float | None, float | None, float | None]:
+    metric_gsd = ground_sample_distance_m(path)
     with rasterio.open(path) as src:
         col, row = _pixel_index(point, width=src.width, height=src.height)
         if src.crs is None or src.transform.is_identity:
             return col, row, None, None, None, None
         x, y = src.xy(row, col)
+        if metric_gsd is None:
+            return col, row, float(x), float(y), None, None
         longitude, latitude = _safe_geographic_coordinates(src.crs, float(x), float(y))
         return col, row, float(x), float(y), longitude, latitude
 
@@ -165,6 +169,7 @@ def _profile_distances(
     surface_path: Path,
     points: list[NormalizedPoint],
 ) -> tuple[list[float], list[float | None]]:
+    metric_gsd = ground_sample_distance_m(surface_path)
     with rasterio.open(surface_path) as src:
         pixels = [
             _pixel_index(point, width=src.width, height=src.height)
@@ -176,7 +181,7 @@ def _profile_distances(
                 pixel_distance[-1] + float(np.hypot(col - previous_col, row - previous_row))
             )
 
-        if src.crs is None or src.transform.is_identity:
+        if src.crs is None or src.transform.is_identity or metric_gsd is None:
             return pixel_distance, [None for _ in points]
 
         crs = CRS.from_user_input(src.crs)
@@ -302,6 +307,7 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
         samples=samples,
         semantics=(
             "Analyst-selected surface transect. Vertical delta is endpoint surface elevation "
-            "difference; it is not automatically a building-height classification."
+            "difference; it is not automatically a building-height classification. Metric horizontal "
+            "distance is emitted only when the raster's spatial scale passes CRS consistency checks."
         ),
     )

@@ -102,6 +102,24 @@ def test_ground_sample_distance_is_metric_for_projected_crs(tmp_path: Path) -> N
     assert abs(metadata.ground_sample_distance_x - 10.0) < 0.05
 
 
+def test_ground_sample_distance_rejects_projected_extent_outside_crs_area(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dataset_local_but_epsg_tagged.tif"
+    _write(
+        path,
+        np.ones((8, 8), dtype=np.float32),
+        transform=from_origin(100_000_000.0, 100_000_000.0, 1.0, 1.0),
+        crs="EPSG:32632",
+    )
+
+    assert ground_sample_distance_m(path) is None
+    metadata = inspect_raster(path)
+    assert metadata.crs == "EPSG:32632"
+    assert metadata.ground_sample_distance_x is None
+    assert metadata.ground_sample_distance_y is None
+
+
 def test_ground_sample_distance_converts_geographic_degrees_to_metres(tmp_path: Path) -> None:
     path = tmp_path / "geographic.tif"
     _write(
