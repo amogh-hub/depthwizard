@@ -207,10 +207,10 @@ def _profile_distances(
         if src.transform.is_identity or metric_gsd is None:
             return pixel_distance, [None for _ in points]
 
-        map_coordinates = [
-            tuple(float(value) for value in src.xy(row, col))
-            for col, row in pixels
-        ]
+        map_coordinates: list[tuple[float, float]] = []
+        for col, row in pixels:
+            x, y = src.xy(row, col)
+            map_coordinates.append((float(x), float(y)))
 
         if ortholoc_metric_affine_override_enabled():
             # The dedicated OrthoLoC contract defines this affine coordinate space in metres. Use

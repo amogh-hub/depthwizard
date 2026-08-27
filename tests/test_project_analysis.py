@@ -207,7 +207,9 @@ def test_ortholoc_profile_uses_local_metric_affine_even_with_crs_tag(
 
     assert profile.horizontal_distance_m is not None
     assert abs(profile.horizontal_distance_m - 1.8) < 1e-6
-    assert abs(profile.samples[-1].distance_m - 1.8) < 1e-6
+    final_distance_m = profile.samples[-1].distance_m
+    assert final_distance_m is not None
+    assert abs(final_distance_m - 1.8) < 1e-6
     assert probe.map_x is not None
     assert probe.map_y is not None
     assert probe.longitude is None
