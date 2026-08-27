@@ -15,7 +15,10 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, RunEvent, State};
 
 const SIDECAR_RESOURCE_PATH: &str = "depthwizard-core-runtime/depthwizard-core";
-const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(30);
+// The qualified Apple Silicon ONEDIR runtime currently needs ~41 s on a true cold launch. This
+// watchdog is a correctness/liveness bound, not the RT7 performance target, so keep enough margin
+// for first-launch dyld/filesystem work while still failing closed on a genuinely stuck sidecar.
+const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,6 +217,7 @@ fn launch_sidecar(
         .env("DEPTHWIZARD_OFFLINE_CORE", "1")
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
+        .env("PROJ_NETWORK", "OFF")
         .env("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         .env("NO_PROXY", "127.0.0.1,localhost")
         .env("no_proxy", "127.0.0.1,localhost")
