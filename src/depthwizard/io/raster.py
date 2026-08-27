@@ -58,6 +58,44 @@ def _projected_axis_factors_m(crs: CRS) -> tuple[float, float] | None:
     return factors
 
 
+def _projected_area_bounds(crs: CRS) -> tuple[float, float, float, float] | None:
+    """Project the CRS area-of-use envelope for direct map-coordinate plausibility checks."""
+    area = crs.area_of_use
+    if area is None or area.west > area.east:
+        return None
+    try:
+        transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+        left, bottom, right, top = transformer.transform_bounds(
+            float(area.west),
+            float(area.south),
+            float(area.east),
+            float(area.north),
+            densify_pts=21,
+        )
+    except (CRSError, ProjError):
+        return None
+    bounds = float(left), float(bottom), float(right), float(top)
+    if not all(np.isfinite(value) for value in bounds):
+        return None
+    if bounds[0] > bounds[2] or bounds[1] > bounds[3]:
+        return None
+    return bounds
+
+
+def _projected_coordinate_within_area(
+    x: float,
+    y: float,
+    bounds: tuple[float, float, float, float],
+) -> bool:
+    left, bottom, right, top = bounds
+    span = max(right - left, top - bottom, 1.0)
+    tolerance = span * 1e-9
+    return (
+        left - tolerance <= x <= right + tolerance
+        and bottom - tolerance <= y <= top + tolerance
+    )
+
+
 def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
     """Return trustworthy pixel ground spacing in metres when the raster supports it.
 
@@ -105,10 +143,13 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
             factors = _projected_axis_factors_m(crs)
             if factors is None:
                 return None
+            area_bounds = _projected_area_bounds(crs)
             if crs.area_of_use is not None:
+                if area_bounds is None:
+                    return None
                 for col, row in representative_pixels:
                     x, y = src.xy(row, col)
-                    if _trusted_wgs84_coordinate(crs, float(x), float(y)) is None:
+                    if not _projected_coordinate_within_area(float(x), float(y), area_bounds):
                         return None
             x_factor, y_factor = factors
             gsd_x = float(np.hypot(transform.a * x_factor, transform.d * y_factor))
