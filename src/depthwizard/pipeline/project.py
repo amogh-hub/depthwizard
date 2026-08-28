@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -11,9 +12,47 @@ from depthwizard.contracts import ProjectRunStatus
 from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
 
+_ArtifactSignature = tuple[int, int, int]
+_ARTIFACT_INTEGRITY_CACHE: dict[tuple[str, str], _ArtifactSignature] = {}
+_ARTIFACT_INTEGRITY_LOCK = RLock()
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _artifact_signature(path: Path) -> _ArtifactSignature:
+    stat = path.stat()
+    return int(stat.st_size), int(stat.st_mtime_ns), int(stat.st_ctime_ns)
+
+
+def _verify_file_sha256_cached(path: Path, expected_sha256: str, *, context: str) -> None:
+    """Verify immutable project bytes once per unchanged filesystem identity.
+
+    Repeated analyst probes should not re-hash a large DSM on every click. The cache is keyed by
+    resolved path + expected digest and invalidated whenever size, mtime or ctime changes. The first
+    access after process start still performs a full SHA-256 verification; a file that changes while
+    it is being hashed is rejected rather than cached.
+    """
+    signature_before = _artifact_signature(path)
+    key = (str(path), expected_sha256)
+    with _ARTIFACT_INTEGRITY_LOCK:
+        if _ARTIFACT_INTEGRITY_CACHE.get(key) == signature_before:
+            return
+
+    actual = sha256_file(path)
+    signature_after = _artifact_signature(path)
+    if signature_after != signature_before:
+        raise RuntimeError(f"{context} changed during SHA-256 integrity verification")
+    if actual != expected_sha256:
+        with _ARTIFACT_INTEGRITY_LOCK:
+            _ARTIFACT_INTEGRITY_CACHE.pop(key, None)
+        raise RuntimeError(
+            f"{context} hash mismatch; expected {expected_sha256}, got {actual}. "
+            "DepthWizard will not consume mutated or stale scientific products."
+        )
+    with _ARTIFACT_INTEGRITY_LOCK:
+        _ARTIFACT_INTEGRITY_CACHE[key] = signature_after
 
 
 @dataclass
@@ -26,8 +65,9 @@ class ProjectManifest:
 
     Registered artifacts are project-owned state. Their resolved paths must remain beneath the
     project directory and their persisted bytes must match the SHA-256 identity recorded at
-    registration. This prevents a malformed or edited manifest from turning analytical/export paths
-    into arbitrary filesystem reads while preserving the source/evidence paths as external inputs.
+    registration. Project load performs an integrity pass, cached against filesystem change
+    metadata, so downstream analysis cannot bypass the immutable-artifact contract by reading a raw
+    manifest path directly.
     """
 
     project_dir: Path
@@ -75,6 +115,10 @@ class ProjectManifest:
             if not isinstance(raw, str):
                 raise RuntimeError(f"project manifest {name} artifact path is malformed")
             self._confined_artifact_path(name, raw)
+
+    def _validate_registered_artifact_integrity(self) -> None:
+        for name in self.artifacts:
+            self.verified_artifact_path(name)
 
     @classmethod
     def create_or_load(cls, project_dir: str | Path, source_path: str | Path) -> ProjectManifest:
@@ -163,12 +207,7 @@ class ProjectManifest:
         path = self._confined_artifact_path(name, raw)
         if not path.is_file():
             raise FileNotFoundError(f"persisted {name} artifact does not exist: {path}")
-        actual = sha256_file(path)
-        if actual != expected:
-            raise RuntimeError(
-                f"persisted {name} artifact hash mismatch; expected {expected}, got {actual}. "
-                "DepthWizard will not reuse mutated or stale scientific products."
-            )
+        _verify_file_sha256_cached(path, expected, context=f"persisted {name} artifact")
         return path
 
     def stage_completed(self, stage: ProcessingStage) -> bool:
@@ -196,16 +235,16 @@ class ProjectManifest:
         artifact_path = self._confined_artifact_path(name, path)
         if not artifact_path.is_file():
             raise FileNotFoundError(f"cannot register missing project artifact {name}: {artifact_path}")
-        actual_sha256 = sha256_file(artifact_path)
-        if actual_sha256 != sha256:
-            raise RuntimeError(
-                f"cannot register project artifact {name}: supplied SHA-256 does not match bytes"
-            )
+        _verify_file_sha256_cached(
+            artifact_path,
+            sha256,
+            context=f"project artifact {name} registration",
+        )
         self.artifacts[name] = {
             "path": str(artifact_path),
             "semantics": semantics,
             "units": units,
-            "sha256": actual_sha256,
+            "sha256": sha256,
         }
         self.updated_at_utc = _utc_now()
         self.save()
@@ -306,4 +345,5 @@ class ProjectManifest:
             errors=payload.get("errors", []),
         )
         manifest._validate_registered_artifact_paths()
+        manifest._validate_registered_artifact_integrity()
         return manifest
