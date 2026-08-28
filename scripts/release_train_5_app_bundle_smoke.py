@@ -169,6 +169,8 @@ def main() -> None:
     try:
         _wait_for_file(boot_report, process, timeout_s=APP_BOOT_ACCEPTANCE_TIMEOUT_SECONDS)
         payload = _read_json(boot_report)
+        if payload.get("schemaVersion") != 3:
+            raise RuntimeError("Tauri boot report does not use the identity-bound schema v3")
         if payload.get("status") != "PASS_TAURI_SIDECAR_BOOT":
             raise RuntimeError("Tauri boot report did not record a passing sidecar startup")
         build_git_sha = payload.get("buildGitSha")
@@ -181,6 +183,10 @@ def main() -> None:
             )
         if payload.get("sessionTokenBits") != 256 or payload.get("sessionTokenExported") is not False:
             raise RuntimeError("Tauri boot report violates the session-token secrecy contract")
+        if payload.get("bootIdentityBound") is not True or payload.get("bootIdentityBits") != 256:
+            raise RuntimeError(
+                "Tauri boot report did not prove a 256-bit per-process sidecar boot identity"
+            )
         if payload.get("offlineCore") is not True:
             raise RuntimeError("Tauri boot report did not enforce offline-after-install mode")
         if payload.get("strictPythonEgressGuard") is not True:
@@ -208,7 +214,7 @@ def main() -> None:
             process.wait(timeout=5)
 
     report = {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": "PASS_RT5_REAL_TAURI_BUNDLE_LIFECYCLE",
         "source_git_sha": expected_git_sha,
         "application_build_git_sha": build_git_sha,
@@ -226,6 +232,8 @@ def main() -> None:
         "health": health,
         "session_token_bits": 256,
         "session_token_exported": False,
+        "sidecar_boot_identity_bound": True,
+        "sidecar_boot_identity_bits": 256,
         "offline_after_model_install": True,
         "strict_python_egress_guard": True,
         "sidecar_terminated_with_app": True,
@@ -234,8 +242,10 @@ def main() -> None:
         "model_promotion_claim": False,
         "scientific_boundary": (
             "Real packaged Tauri lifecycle/security acceptance only. The runtime must already carry "
-            "its passing frozen geospatial self-check. This does not run DA3 inference and is not "
-            "clean-machine, DSM-accuracy, generalization, FPS, soak, or model-promotion evidence."
+            "its passing frozen geospatial self-check. Identity-bound readiness proves Tauri spoke "
+            "to the sidecar process it launched despite the ephemeral-port handoff. This does not "
+            "run DA3 inference and is not clean-machine, DSM-accuracy, generalization, FPS, soak, "
+            "or model-promotion evidence."
         ),
     }
     report_path = OUT / "release-train-5-app-bundle-acceptance.json"
@@ -248,6 +258,7 @@ def main() -> None:
     print("Packaging mode: qualified PyInstaller onedir Tauri resource")
     print("Frozen geospatial self-check carried into bundle: PASS")
     print("Loopback scientific core readiness: PASS")
+    print("256-bit child-process boot identity: PASS")
     print("256-bit session token exported to evidence: NO")
     print("Offline-after-install mode: YES")
     print("Strict Python non-loopback egress guard: YES")
