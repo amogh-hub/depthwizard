@@ -1,3 +1,8 @@
+import {
+  staleRuntimeMessage,
+  workstationApiProbePasses,
+} from "./workspace/runtimeContract";
+
 export type StandaloneRuntimeConfig = {
   apiBase: string;
   sessionToken: string;
@@ -30,6 +35,47 @@ function validateRuntimeConfig(config: StandaloneRuntimeConfig): StandaloneRunti
   return config;
 }
 
+async function readDetail(response: Response): Promise<unknown> {
+  try {
+    const payload = await response.json() as { detail?: unknown };
+    return payload.detail;
+  } catch {
+    return undefined;
+  }
+}
+
+async function assertWorkstationApiContract(config: StandaloneRuntimeConfig): Promise<void> {
+  const headers = { "x-depthwizard-token": config.sessionToken };
+  const projectDir = "__depthwizard_workstation_contract_probe__";
+  const probes = [
+    {
+      name: "project preview",
+      path: `/v1/projects/preview?project_dir=${encodeURIComponent(projectDir)}&layer=optical&max_side=64`,
+    },
+    {
+      name: "project legend",
+      path: `/v1/projects/preview/legend?project_dir=${encodeURIComponent(projectDir)}&layer=dsm`,
+    },
+  ];
+
+  for (const probe of probes) {
+    let response: Response;
+    try {
+      response = await fetch(`${config.apiBase}${probe.path}`, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      });
+    } catch (error) {
+      throw new Error(`Unable to verify packaged scientific runtime compatibility at ${probe.name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const detail = await readDetail(response);
+    if (!workstationApiProbePasses(response.status, detail)) {
+      throw new Error(staleRuntimeMessage(probe.name, response.status, detail));
+    }
+  }
+}
+
 export async function bootstrapStandaloneRuntime(): Promise<StandaloneRuntimeConfig | null> {
   if (!isTauriRuntime()) {
     return null;
@@ -45,5 +91,6 @@ export async function bootstrapStandaloneRuntime(): Promise<StandaloneRuntimeCon
     apiBase: config.apiBase,
     sessionToken: config.sessionToken,
   };
+  await assertWorkstationApiContract(config);
   return config;
 }
