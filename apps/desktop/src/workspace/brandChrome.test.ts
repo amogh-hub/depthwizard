@@ -12,6 +12,7 @@ describe("DepthWizard product identity chrome", () => {
     expect(css).toContain(".dw-brand > span:not(.dw-mark)");
     expect(css).toContain("width: 38px");
     expect(css).toContain("height: 38px");
+    expect(css).toContain("transform: translateX(2px)");
     expect(css).toContain("display: none");
     expect(css).toContain('url(\"/depthwizard-mark.png\")');
     expect(css).toContain("justify-self: center");

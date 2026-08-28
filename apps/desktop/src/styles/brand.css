@@ -25,6 +25,7 @@
   font-size: 0;
   line-height: 0;
   overflow: hidden;
+  transform: translateX(2px);
 }
 
 .dw-project-title {
