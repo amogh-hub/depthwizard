@@ -18,6 +18,14 @@ function distanceLabel(profile: ProjectProfileResult): string {
   return `${profile.horizontal_distance_pixels.toFixed(2)} px`;
 }
 
+function fractionalDistanceLabel(profile: ProjectProfileResult, fraction: number): string {
+  if (profile.horizontal_distance_m !== null) {
+    const value = profile.horizontal_distance_m * fraction;
+    return value >= 1000 ? `${(value / 1000).toFixed(2)} km` : `${value.toFixed(0)} m`;
+  }
+  return `${(profile.horizontal_distance_pixels * fraction).toFixed(1)} px`;
+}
+
 function ProfileChart({ profile }: { profile: ProjectProfileResult }) {
   const surface = profile.samples.filter((sample) => sample.surface.available && sample.surface.value !== null);
   if (surface.length < 2) return null;
@@ -31,32 +39,39 @@ function ProfileChart({ profile }: { profile: ProjectProfileResult }) {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(max - min, 1e-9);
+  const yFor = (value: number) => 54 - ((value - min) / span) * 46;
   const points = surface
-    .map((sample) => {
-      const x = sample.fraction * 100;
-      const y = 94 - ((sample.surface.value as number) - min) / span * 82;
-      return `${x.toFixed(2)},${Math.min(98, Math.max(2, y)).toFixed(2)}`;
-    })
+    .map((sample) => `${(sample.fraction * 100).toFixed(2)},${yFor(sample.surface.value as number).toFixed(2)}`)
     .join(" ");
   const referencePoints = reference
-    .map((sample) => {
-      const x = sample.fraction * 100;
-      const y = 94 - ((sample.reference.value as number) - min) / span * 82;
-      return `${x.toFixed(2)},${Math.min(98, Math.max(2, y)).toFixed(2)}`;
-    })
+    .map((sample) => `${(sample.fraction * 100).toFixed(2)},${yFor(sample.reference.value as number).toFixed(2)}`)
     .join(" ");
+  const midpoint = min + span / 2;
 
   return (
     <div className="dw-profile-chart" aria-label="Elevation profile chart">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-        <line x1="0" y1="94" x2="100" y2="94" className="dw-profile-axis" />
-        <polyline points={points} className="dw-profile-line" />
-        {referencePoints && <polyline points={referencePoints} className="dw-profile-reference-line" />}
-      </svg>
-      <div className="dw-profile-range">
-        <span>{valueLabel(max, profile.vertical_units)}</span>
-        <span>{valueLabel(min, profile.vertical_units)}</span>
+      <div className="dw-profile-plot">
+        <svg viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label="Elevation along selected transect">
+          <line x1="0" y1="8" x2="100" y2="8" className="dw-profile-grid" />
+          <line x1="0" y1="31" x2="100" y2="31" className="dw-profile-grid" />
+          <line x1="0" y1="54" x2="100" y2="54" className="dw-profile-axis" />
+          <polyline points={points} className="dw-profile-line" />
+          {referencePoints && <polyline points={referencePoints} className="dw-profile-reference-line" />}
+        </svg>
+        <div className="dw-profile-y-axis" aria-hidden="true">
+          <span>{valueLabel(max, profile.vertical_units)}</span>
+          <span>{valueLabel(midpoint, profile.vertical_units)}</span>
+          <span>{valueLabel(min, profile.vertical_units)}</span>
+        </div>
       </div>
+      <div className="dw-profile-x-axis" aria-hidden="true">
+        <span>A · {fractionalDistanceLabel(profile, 0)}</span>
+        <span>{fractionalDistanceLabel(profile, 0.5)}</span>
+        <span>B · {fractionalDistanceLabel(profile, 1)}</span>
+      </div>
+      {referencePoints && (
+        <div className="dw-profile-key"><span className="dw-profile-key-swatch" />Prediction <span className="dw-profile-key-swatch dw-profile-key-swatch--reference" />Reference</div>
+      )}
     </div>
   );
 }
@@ -92,8 +107,8 @@ export function AnalysisInspector({
             <strong>{probe ? "Select endpoint B" : "Select endpoint A"}</strong>
             <p>
               {measureMode
-                ? "Click two registered surface locations. DepthWizard reports plan distance and endpoint elevation change; hold Space while dragging to pan without placing a point."
-                : "Click the start and end of a transect. The canvas previews the line before endpoint B is committed, then samples the persisted elevation surface along the path."}
+                ? "Click two registered surface locations. DepthWizard reports geodesic ground distance when trustworthy plus signed endpoint elevation change; hold Space while dragging to pan without placing a point."
+                : "Click the start and end of a transect. The canvas previews the line before endpoint B is committed, then samples the persisted elevation surface at subpixel positions along the path."}
             </p>
           </div>
         </section>
@@ -123,14 +138,14 @@ export function AnalysisInspector({
         <section className="dw-section">
           <div className="dw-section-title">Two-point measurement</div>
           <dl className="dw-property-list">
-            <div className="dw-property"><dt>Plan distance</dt><dd>{distanceLabel(measurement)}</dd></div>
-            <div className="dw-property"><dt>Surface Δz</dt><dd>{valueLabel(measurement.vertical_delta, measurement.vertical_units)}</dd></div>
-            <div className="dw-property"><dt>Minimum</dt><dd>{valueLabel(measurement.minimum_surface, measurement.vertical_units)}</dd></div>
-            <div className="dw-property"><dt>Maximum</dt><dd>{valueLabel(measurement.maximum_surface, measurement.vertical_units)}</dd></div>
+            <div className="dw-property"><dt>{measurement.horizontal_distance_m !== null ? "Ground distance" : "Pixel distance"}</dt><dd>{distanceLabel(measurement)}</dd></div>
+            <div className="dw-property"><dt>Endpoint A</dt><dd>{sampleLabel(measurement.samples[0]?.surface.available ?? false, measurement.samples[0]?.surface.value ?? null, measurement.vertical_units)}</dd></div>
+            <div className="dw-property"><dt>Endpoint B</dt><dd>{sampleLabel(measurement.samples.at(-1)?.surface.available ?? false, measurement.samples.at(-1)?.surface.value ?? null, measurement.vertical_units)}</dd></div>
+            <div className="dw-property"><dt>Signed Δz (B − A)</dt><dd>{valueLabel(measurement.vertical_delta, measurement.vertical_units)}</dd></div>
           </dl>
           <div className="dw-validation-empty dw-analysis-note">
-            <strong>Manual surface-height interpretation</strong>
-            <p>Δz is the selected endpoint surface-elevation difference. DepthWizard does not automatically label it as building height.</p>
+            <strong>Surface-to-surface measurement</strong>
+            <p>Δz is endpoint B surface elevation minus endpoint A surface elevation. It is not automatically a building height; use Structures for a footprint-versus-local-ground estimate.</p>
           </div>
         </section>
       )}
@@ -140,12 +155,13 @@ export function AnalysisInspector({
           <div className="dw-section-title">Elevation transect</div>
           <ProfileChart profile={profile} />
           <dl className="dw-property-list dw-profile-properties">
-            <div className="dw-property"><dt>Length</dt><dd>{distanceLabel(profile)}</dd></div>
+            <div className="dw-property"><dt>{profile.horizontal_distance_m !== null ? "Ground length" : "Pixel length"}</dt><dd>{distanceLabel(profile)}</dd></div>
             <div className="dw-property"><dt>Endpoint Δz</dt><dd>{valueLabel(profile.vertical_delta, profile.vertical_units)}</dd></div>
-            <div className="dw-property"><dt>Gain</dt><dd>{valueLabel(profile.elevation_gain, profile.vertical_units)}</dd></div>
-            <div className="dw-property"><dt>Loss</dt><dd>{valueLabel(profile.elevation_loss, profile.vertical_units)}</dd></div>
+            <div className="dw-property"><dt>Cumulative gain</dt><dd>{valueLabel(profile.elevation_gain, profile.vertical_units)}</dd></div>
+            <div className="dw-property"><dt>Cumulative loss</dt><dd>{valueLabel(profile.elevation_loss, profile.vertical_units)}</dd></div>
             <div className="dw-property"><dt>Samples</dt><dd>{profile.sample_count}</dd></div>
           </dl>
+          <div className="dw-profile-note">Gain/loss is accumulated over the sampled DSM transect and is resolution-dependent; endpoint Δz is simply B − A.</div>
         </section>
       )}
     </>
