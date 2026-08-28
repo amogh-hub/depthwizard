@@ -21,7 +21,7 @@ describe("workstation truthfulness policy", () => {
     expect(terrainControlsEnabled("ready")).toBe(true);
   });
 
-  it("keeps 2D status contextual instead of leaking 3D readiness", () => {
+  it("keeps 2D status contextual instead of leaking 3D or old export readiness", () => {
     expect(activeWorkspaceStatus({
       activeView: "DSM",
       previewLoading: false,
@@ -33,6 +33,7 @@ describe("workstation truthfulness policy", () => {
       analysisBusy: false,
       exporting: false,
       buildingMesh: false,
+      projectExportMiB: 24.2,
     })).toBe("DSM ready · metric DSM");
   });
 
