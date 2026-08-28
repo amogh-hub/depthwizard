@@ -55,28 +55,16 @@ PY
 # fails closed rather than being guessed.
 "$PYTHON" -m scripts.da3_frozen_compat "$DA3_DIR/src"
 
-# Keep only the dependencies required by the monocular inference path. DA3 and DepthWizard both
-# require NumPy < 2; OpenCV is constrained below the release line that would force NumPy 2.x.
-"$PYTHON" -m pip install \
-  "numpy==1.26.4" \
-  "opencv-python>=4.10,<4.12" \
-  "addict>=2.4,<3" \
-  "einops>=0.8" \
-  "huggingface_hub>=0.34" \
-  "imageio>=2.37" \
-  "omegaconf>=2.3" \
-  "requests>=2.32" \
-  "safetensors>=0.5" \
-  "tqdm>=4.67" \
-  "evo>=1.31" \
-  "e3nn>=0.5"
+# DepthWizard's `ml` extra is the single source of truth for the narrowed DA3 monocular runtime.
+# It includes torch/vision plus the exact Python packages needed by the pinned production path while
+# deliberately excluding DA3's export-only native stacks. Release qualification resolves this same
+# contract through uv.lock; this setup path uses the declared project extra rather than maintaining
+# a second hand-written dependency list that can drift from packaging.
+"$PYTHON" -m pip install -e ".[ml,dev]"
 
 # Export-only native packages from earlier setup attempts are not needed for DepthWizard's DA3
 # prior and are deliberately removed to prevent accidental OpenMP/native-library collisions.
-"$PYTHON" -m pip uninstall -y pycolmap moviepy pillow-heif plyfile >/dev/null 2>&1 || true
-
-# Re-assert DepthWizard's own declared environment after vendor resolution.
-"$PYTHON" -m pip install -e ".[ml,dev]"
+"$PYTHON" -m pip uninstall -y pycolmap moviepy pillow-heif plyfile open3d xformers >/dev/null 2>&1 || true
 
 SITE_PACKAGES="$($PYTHON - <<'PY'
 import site
@@ -102,7 +90,10 @@ import numpy as np
 import torch
 from depth_anything_3.api import DepthAnything3
 from depth_anything_3.utils.geometry import affine_inverse
+from depthwizard.geometry_prior.da3_runtime_contract import verify_da3_runtime_dependencies
 
+imports = verify_da3_runtime_dependencies()
+print("DA3 dependency closure:", len(imports), "modules")
 print("Depth Anything 3 import: OK")
 print("Architecture:", platform.machine())
 print("NumPy:", np.__version__)
