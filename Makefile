@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build rust-verify da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance release-train-4-analytical-smoke sidecar-build release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke release-train-5-standalone-acceptance release-train-5-workstation-build release-train-5-final-qualification standalone-build demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build rust-verify dependency-locks reproducibility-audit da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance release-train-4-analytical-smoke sidecar-build release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke release-train-5-standalone-acceptance release-train-5-workstation-build release-train-5-final-qualification standalone-build demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -15,6 +15,18 @@ frontend-build:
 rust-verify:
 	python -m scripts.ensure_tauri_sidecar_stub
 	cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features
+
+# Generate resolver outputs from the exact checked-out manifests. These files are release inputs and
+# must be reviewed/committed before the strict reproducibility audit can pass. This target resolves
+# dependencies; it is intentionally separate from ordinary verification so source tests never
+# silently mutate release dependency state.
+dependency-locks:
+	uv lock
+	cd apps/desktop && npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+	cd apps/desktop/src-tauri && cargo generate-lockfile
+
+reproducibility-audit:
+	python -m scripts.check_release_reproducibility --strict
 
 da3-setup:
 	bash scripts/setup_da3_macos.sh
@@ -112,6 +124,8 @@ release-train-5-workstation-build:
 # metadata (for example PyInstaller entry points) while the active venv still reflects the prior
 # checkout. Synchronize the exact checked-out metadata first, verify that source, then build the
 # frozen runtime directly so the scientific payload and app bundle are guaranteed to match HEAD.
+# The strict reproducibility audit is a separate prerequisite until the three resolver locks are
+# committed; once they exist, the release command must be promoted to locked package-manager modes.
 release-train-5-final-qualification:
 	python -m pip install -e ".[dev,standalone]"
 	$(MAKE) verify
