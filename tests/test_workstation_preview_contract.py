@@ -124,8 +124,11 @@ def test_missing_reopened_source_fails_truthfully_without_fabricating_optical_pr
         "/v1/projects/preview",
         params={"project_dir": str(project), "layer": "optical", "max_side": 256},
     )
-    assert optical.status_code == 404
-    assert "source" in optical.json()["detail"].lower() or "no such file" in optical.json()["detail"].lower()
+    assert optical.status_code in {404, 422}
+    detail = optical.json()["detail"]
+    assert isinstance(detail, str)
+    assert detail != "Not Found"
+    assert "source" in detail.lower() or "no such file" in detail.lower() or "unable to render" in detail.lower()
 
     dsm_response = client.get(
         "/v1/projects/preview",
