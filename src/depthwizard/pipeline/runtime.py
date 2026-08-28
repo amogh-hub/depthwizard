@@ -5,10 +5,16 @@ from pathlib import Path
 import numpy as np
 
 from depthwizard.calibration.confidence import model_confidence_to_uncertainty
-from depthwizard.calibration.evidence import EvidenceCalibrationOutput, calibrate_relative_height_with_dem
+from depthwizard.calibration.evidence import (
+    EvidenceCalibrationOutput,
+    calibrate_relative_height_with_dem,
+)
 from depthwizard.contracts import ProcessingRequest
 from depthwizard.io.raster import ground_sample_distance_m, reproject_to_match
 from depthwizard.pipeline.project import ProjectManifest
+from depthwizard.pipeline.runtime_base import (
+    ProductionElevationRuntime as _BaseProductionElevationRuntime,
+)
 from depthwizard.pipeline.runtime_base import (
     ProjectRunResult,
     SceneRefiner,
@@ -16,7 +22,6 @@ from depthwizard.pipeline.runtime_base import (
     _GeometryState,
     _mean_gsd,
 )
-from depthwizard.pipeline.runtime_base import ProductionElevationRuntime as _BaseProductionElevationRuntime
 
 __all__ = ["ProductionElevationRuntime", "ProjectRunResult", "SceneRefiner"]
 
