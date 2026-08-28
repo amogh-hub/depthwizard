@@ -12,6 +12,12 @@ from depthwizard.geometry_prior.base import GeometryPrior, GeometryPriorOutput
 
 DeviceName = Literal["auto", "cuda", "mps", "cpu"]
 
+DA3_MODEL_ID = "DA3MONO-LARGE"
+DA3_MODEL_SOURCE = "depth-anything/DA3MONO-LARGE"
+DA3_HF_REVISION = "f465978e618db8cc79c83b8bbf24964857db1875"
+DA3_CHECKPOINT_SHA256 = "7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960"
+DA3_UPSTREAM_SOURCE_COMMIT = "3d835ec1a5802d64a8b8b15f817a1ab54809bfe4"
+
 
 def depth_to_relative_height(
     depth: np.ndarray,
@@ -41,13 +47,15 @@ class DA3MonocularPrior(GeometryPrior):
     """Depth Anything 3 monocular geometry prior adapter.
 
     This adapter intentionally exposes relative height only. Absolute geospatial elevation remains
-    the responsibility of DepthWizard's evidence-calibration subsystem.
+    the responsibility of DepthWizard's evidence-calibration subsystem. The production Hub source
+    is revision-pinned so a moving ``main`` branch can never silently change scientific behavior.
     """
 
-    model_source: str | Path = "depth-anything/DA3MONO-LARGE"
+    model_source: str | Path = DA3_MODEL_SOURCE
     device: DeviceName = "auto"
     _model: Any | None = None
     _resolved_device: str | None = None
+    _resolved_model_revision: str | None = None
 
     def _load(self) -> tuple[Any, Any, str]:
         try:
@@ -79,7 +87,29 @@ class DA3MonocularPrior(GeometryPrior):
                     resolved = "cpu"
             else:
                 resolved = self.device
-            model = depth_anything_3.from_pretrained(str(self.model_source))
+
+            source = str(self.model_source)
+            if source == DA3_MODEL_SOURCE:
+                model = depth_anything_3.from_pretrained(source, revision=DA3_HF_REVISION)
+            else:
+                # Explicit local/custom sources remain supported for controlled tests and research.
+                # They do not inherit the production Hub revision because that would be misleading.
+                model = depth_anything_3.from_pretrained(source)
+
+            loaded_revision = getattr(model, "_commit_hash", None)
+            if source == DA3_MODEL_SOURCE and loaded_revision is not None:
+                loaded_revision = str(loaded_revision)
+                if loaded_revision != DA3_HF_REVISION:
+                    raise RuntimeError(
+                        "Depth Anything 3 resolved an unexpected model revision: "
+                        f"{loaded_revision}; expected {DA3_HF_REVISION}"
+                    )
+                self._resolved_model_revision = loaded_revision
+            elif source == DA3_MODEL_SOURCE:
+                # The revision argument still pins Hub resolution even when a particular Hub mixin
+                # version does not expose its private commit-hash field after loading.
+                self._resolved_model_revision = DA3_HF_REVISION
+
             model = model.to(device=torch.device(resolved))
             model.eval()
             self._model = model
@@ -123,11 +153,19 @@ class DA3MonocularPrior(GeometryPrior):
         return GeometryPriorOutput(
             relative_height=relative_height,
             confidence=confidence,
-            model_id="DA3MONO-LARGE",
+            model_id=DA3_MODEL_ID,
             metadata={
                 "model_source": str(self.model_source),
+                "model_revision": self._resolved_model_revision or "custom_or_local_source",
+                "checkpoint_sha256": (
+                    DA3_CHECKPOINT_SHA256
+                    if str(self.model_source) == DA3_MODEL_SOURCE
+                    else "custom_or_local_source"
+                ),
+                "upstream_source_commit": DA3_UPSTREAM_SOURCE_COMMIT,
                 "device": device,
                 "output_semantics": "dimensionless_relative_surface_height",
+                "confidence_semantics": "model_native_not_probability_calibrated",
                 "license": "Apache-2.0",
             },
         )
