@@ -130,7 +130,8 @@ release-train-5-final-qualification:
 	test -f uv.lock
 	test -f apps/desktop/package-lock.json
 	test -f apps/desktop/src-tauri/Cargo.lock
-	git diff --quiet && git diff --cached --quiet
+	git ls-files --error-unmatch uv.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock >/dev/null
+	test -z "$$(git status --porcelain)"
 	uv sync --frozen --python 3.12 --extra dev --extra standalone
 	.venv/bin/python -m scripts.check_release_reproducibility --strict
 	.venv/bin/python scripts/verify.py
