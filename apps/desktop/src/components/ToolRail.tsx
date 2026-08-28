@@ -1,7 +1,6 @@
 import {
   CompareIcon,
   ExportIcon,
-  LayersIcon,
   MeasureIcon,
   ProfileIcon,
   ProjectIcon,
@@ -11,7 +10,6 @@ import {
 
 const tools = [
   { id: "Project", label: "Navigate", icon: ProjectIcon },
-  { id: "Layers", label: "Layers", icon: LayersIcon },
   { id: "Measure", label: "Measure", icon: MeasureIcon },
   { id: "Structures", label: "Structures", icon: StructureIcon },
   { id: "Profiles", label: "Profiles", icon: ProfileIcon },
