@@ -82,6 +82,8 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
         "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
         in target
     )
+    assert "import torch, torchvision; from torch import nn" in target
+    assert "Scientific runtime imports PASS:" in target
     assert "npm ci --no-audit --no-fund" in target
     assert "cargo clippy --locked" in target
     assert "cargo test --locked" in target
