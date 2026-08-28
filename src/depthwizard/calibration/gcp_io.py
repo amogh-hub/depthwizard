@@ -7,14 +7,22 @@ from pathlib import Path
 from depthwizard.contracts import GroundControlPoint, GroundControlPointFileReport
 from depthwizard.provenance.manifest import sha256_file
 
+_MAX_GCP_FILE_BYTES = 16 * 1024 * 1024
+_MAX_GCP_POINTS = 10_000
+
 
 def inspect_ground_control_point_file(path: str | Path) -> GroundControlPointFileReport:
-    """Parse a deterministic CSV GCP interchange file for desktop calibration workflows."""
+    """Parse a bounded deterministic CSV GCP interchange file for desktop calibration workflows."""
     source = Path(path)
     if not source.is_file():
         raise FileNotFoundError("GCP file does not exist")
     if source.suffix.lower() != ".csv":
         raise ValueError("GCP import currently requires a CSV file")
+    size_bytes = source.stat().st_size
+    if size_bytes > _MAX_GCP_FILE_BYTES:
+        raise ValueError(
+            f"GCP CSV exceeds the {_MAX_GCP_FILE_BYTES // (1024 * 1024)} MiB ingestion limit"
+        )
 
     try:
         with source.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -34,11 +42,19 @@ def inspect_ground_control_point_file(path: str | Path) -> GroundControlPointFil
 
             points: list[GroundControlPoint] = []
             for line_number, row in enumerate(reader, start=2):
+                if len(points) >= _MAX_GCP_POINTS:
+                    raise ValueError(
+                        f"GCP CSV exceeds the {_MAX_GCP_POINTS:,}-point ingestion limit"
+                    )
                 try:
                     x = float(row[fields["x"]])
                     y = float(row[fields["y"]])
                     elevation_m = float(row[fields[elevation_key]])
-                    weight = float(row[weight_key]) if weight_key and row.get(weight_key) not in (None, "") else 1.0
+                    weight = (
+                        float(row[weight_key])
+                        if weight_key and row.get(weight_key) not in (None, "")
+                        else 1.0
+                    )
                 except (KeyError, TypeError, ValueError) as exc:
                     raise ValueError(f"invalid numeric GCP value on CSV line {line_number}") from exc
                 if not all(isfinite(value) for value in (x, y, elevation_m, weight)):
