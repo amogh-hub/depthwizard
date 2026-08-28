@@ -11,7 +11,8 @@ DepthWizard is a unified scientific geospatial workstation that converts one opt
 - georeferenced **metric DSM** calibration from low-resolution DEM, sparse GCPs, or DEM + GCP fusion;
 - DA3MONO-LARGE relative-geometry prior with exact upstream source commit, Hugging Face revision and checkpoint SHA identity pinned in source/model manifest;
 - robust polarity diagnosis, Huber/IRLS scale-offset fitting, coarse-DEM frequency matching, independent-support anchor sampling and low-frequency terrain-bias correction;
-- conservative model-native confidence weighting for DEM calibration when usable, explicitly **not probability calibrated**, with truthful DEM-only fallback when confidence is missing/degenerate;
+- DEM calibration fails closed when trustworthy physical ground support cannot be derived for both the optical target and DEM, rather than treating resampled pixels as independent evidence;
+- conservative model-native confidence weighting for DEM calibration when usable, explicitly **not probability calibrated**, with truthful DEM-only weighting fallback when confidence is missing/degenerate;
 - local-ground/geodesic spatial scale handling, including Web-Mercator correction for ground distance, slope spacing, mesh XY scale and analyst measurements;
 - overlap-aware tiled inference/harmonization plus an objective seam-to-interior discontinuity evaluator for final large-scene evidence;
 - RMSE, MAE, Pearson correlation, bias, percentile errors, slope metrics, aligned reference DSM and residual products;
@@ -21,6 +22,7 @@ DepthWizard is a unified scientific geospatial workstation that converts one opt
 - evidence-native 3D analyst interaction: registered surface probing, Measure, Profiles and Structures remain tied to authoritative raster coordinates;
 - immutable project/product SHA identities, source/evidence provenance, fail-closed artifact reuse and hash-audited export bundles;
 - packaged Tauri + React + Three.js workstation with PyInstaller ONEDIR scientific sidecar, loopback-only authenticated IPC, owned lifecycle and offline-after-model-install operation;
+- Tauri startup binds readiness to the exact spawned sidecar with an independent 256-bit per-process boot nonce before the API session token is exposed to React;
 - standalone recovery/error paths, malformed-input rejection and no-terminal packaged processing acceptance;
 - exact problem-statement traceability in `docs/requirements-traceability.yaml`.
 
@@ -28,18 +30,26 @@ DepthWizard is a unified scientific geospatial workstation that converts one opt
 
 DA3MONO-LARGE is used as a **relative monocular geometry prior**, not as an absolute satellite-height oracle. Metric elevation is claimed only after explicit geodetic evidence calibration. Model-native confidence is a monotonic reliability signal, not a calibrated probability of correctness. Learned refinement remains unpromoted unless independent evidence beats the production path under the frozen protocol.
 
-Engineering and standalone acceptance already earned remain valid. The final four-terrain geographically disjoint/cross-sensor science campaign, same-input published baselines/ablations, finale-hardware FPS and two-hour soak, clean-machine reproducibility and final submission evidence are separate frozen RT6/RT7 qualification gates; they must not be inferred from integration fixtures.
+Previously earned RT5 engineering/standalone evidence remains historical evidence for the exact commits that produced it; it is never silently transferred to a newer source head. Any source-changing hardening after that evidence requires exact-head verification before the newer head inherits an RT5 pass. The final four-terrain geographically disjoint/cross-sensor science campaign, same-input published baselines/ablations, finale-hardware FPS and two-hour soak, clean-machine reproducibility and final submission evidence remain separate frozen RT6/RT7 qualification gates; they must not be inferred from integration fixtures.
 
-## Python verification
+## Verification
+
+Python source verification:
 
 ```bash
 python -m pip install -e ".[dev]"
-pytest
-ruff check src tests scripts
-pyright src
+python scripts/verify.py
 ```
 
 The suite covers calibration, confidence weighting, geospatial scale/reprojection/export, rDSM semantics, metrics, slope, analyst profiles, structural height, tiling/seams, mesh geometry, project integrity, dataset split integrity, service APIs and standalone architecture contracts.
+
+Release dependency reproducibility is independently audited:
+
+```bash
+python -m scripts.check_release_reproducibility --strict
+```
+
+That gate requires exact top-level npm versions and committed resolver locks for npm (`apps/desktop/package-lock.json`), Cargo (`apps/desktop/src-tauri/Cargo.lock`) and Python (`uv.lock`). Passing the lock audit is necessary but does not replace clean-machine RT7 qualification.
 
 ## Core CLI
 
@@ -50,21 +60,22 @@ depthwizard validate-dsm dsm.tif reference_lidar.tif evidence/
 depthwizard serve --host 127.0.0.1 --port 8765
 ```
 
+`calibrate-dem` refuses to claim metric calibration unless physical ground sample distance can be established for both the target grid and the DEM. `validate-dsm` uses local-ground/geodesic spacing for slope diagnostics rather than assuming projected map units are physical metres.
+
 ## Desktop application
 
-`apps/desktop` is the permanent Tauri + React + Three.js scientific workstation. The packaged application owns the local scientific sidecar, ephemeral loopback endpoint and per-session token; users do not need to start a terminal service. Scientific layers and controls are enabled only when their corresponding persisted artifacts actually exist.
+`apps/desktop` is the permanent Tauri + React + Three.js scientific workstation. The packaged application owns the local scientific sidecar, ephemeral loopback endpoint, per-process boot identity and per-session API token; users do not need to start a terminal service. Scientific layers and controls are enabled only when their corresponding persisted artifacts actually exist.
 
-Developer build:
+Developer bootstrap before the committed npm lock exists:
 
 ```bash
 cd apps/desktop
 npm install
-npm run build
 npm run test
-npm run tauri build
+npm run build
 ```
 
-Release packaging must use the repository's standalone qualification scripts/targets rather than treating a frontend-only build as standalone scientific acceptance.
+Once the release lock is committed, deterministic CI/release builds must use `npm ci` rather than resolving a new dependency graph. Tauri release packaging must use the repository's standalone qualification scripts/targets rather than treating a frontend-only build as standalone scientific acceptance.
 
 ## Architecture authority
 
