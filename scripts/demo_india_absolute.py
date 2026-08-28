@@ -15,7 +15,12 @@ from rasterio.transform import from_bounds
 
 from depthwizard.calibration.evidence import calibrate_relative_height_with_dem
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
-from depthwizard.io.raster import read_rgb, reproject_to_match, write_float_geotiff
+from depthwizard.io.raster import (
+    ground_sample_distance_m,
+    read_rgb,
+    reproject_to_match,
+    write_float_geotiff,
+)
 from depthwizard.mesh.terrain import export_lod_pyramid
 from depthwizard.pipeline.geometry import infer_geometry_scene
 
@@ -40,6 +45,12 @@ TERRARIUM_TEMPLATE = (
     "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 )
 USER_AGENT = "DepthWizard-SIH26175/0.2 educational-demo"
+
+
+def _mean_gsd(gsd: tuple[float, float] | None) -> float | None:
+    if gsd is None:
+        return None
+    return float((gsd[0] + gsd[1]) / 2.0)
 
 
 def lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
@@ -229,6 +240,16 @@ def run_demo() -> None:
         },
     )
 
+    target_gsd = ground_sample_distance_m(rdsm_path)
+    dem_gsd = ground_sample_distance_m(dem_path)
+    target_gsd_m = _mean_gsd(target_gsd)
+    dem_effective_gsd_m = _mean_gsd(dem_gsd)
+    if target_gsd is None or dem_gsd is None or target_gsd_m is None or dem_effective_gsd_m is None:
+        raise RuntimeError(
+            "Joshimath engineering demo could not derive trustworthy local-ground GSD for both "
+            "the optical grid and DEM; metric calibration was not guessed"
+        )
+
     print(
         "Calibrating relative surface height to metric elevation using "
         "lower-resolution DEM evidence..."
@@ -253,6 +274,8 @@ def run_demo() -> None:
         aligned_dem,
         dem_valid=valid,
         low_frequency_sigma_px=48.0,
+        target_gsd_m=target_gsd_m,
+        dem_effective_gsd_m=dem_effective_gsd_m,
     )
     calibration_seconds = time.perf_counter() - calibration_started
     evidence_consistency = dem_consistency_diagnostics(calibrated.dsm, aligned_dem, valid)
@@ -268,18 +291,22 @@ def run_demo() -> None:
             "CALIBRATION_METHOD": calibrated.calibration.method,
             "CALIBRATION_EVIDENCE": "lower_resolution_terrarium_dem",
             "VALIDATION_STATUS": "engineering_demo_not_independent_accuracy_benchmark",
+            "GROUND_SCALE_SEMANTICS": "local_ground_geodesic_metres_per_pixel",
         },
     )
 
-    print("Exporting metric-coordinate textured 3D terrain LODs...")
+    print("Exporting local-ground-metric textured 3D terrain LODs...")
     rgb = read_rgb(rgb_path)
+    dsm_gsd = ground_sample_distance_m(dsm_path)
+    if dsm_gsd is None:
+        raise RuntimeError("metric DSM lost trustworthy local-ground scale before 3D export")
+    gsd_x, gsd_y = dsm_gsd
     with rasterio.open(dsm_path) as src:
         dsm = src.read(1).astype(np.float32)
-        valid_dsm = np.isfinite(dsm)
-        if src.nodata is not None:
-            valid_dsm &= dsm != src.nodata
-        gsd_x = abs(float(src.transform.a))
-        gsd_y = abs(float(src.transform.e))
+        valid_dsm = src.read_masks(1) > 0
+        valid_dsm &= np.isfinite(dsm)
+        if src.nodata is not None and np.isfinite(src.nodata):
+            valid_dsm &= dsm != np.float32(src.nodata)
         crs = src.crs.to_string() if src.crs is not None else None
     mesh_started = time.perf_counter()
     lods = export_lod_pyramid(
@@ -299,6 +326,10 @@ def run_demo() -> None:
             "dem_source": str(dem_path.resolve()),
             "dem_dynamic_range_p01_p99_m": dem_dynamic_range,
             "low_frequency_sigma_px": 48.0,
+            "target_ground_gsd_m": target_gsd_m,
+            "dem_effective_ground_gsd_m": dem_effective_gsd_m,
+            "frequency_match_sigma_px": calibrated.frequency_match_sigma_px,
+            "anchor_stride_px": calibrated.anchor_stride_px,
             "orientation_flipped": calibrated.orientation_flipped,
             "anchor_correlation_before": calibrated.anchor_correlation_before,
             "anchor_correlation_after": calibrated.anchor_correlation_after,
@@ -326,12 +357,16 @@ def run_demo() -> None:
             ),
             "path": str(rgb_path.resolve()),
             "zoom": RGB_ZOOM,
+            "ground_gsd_x_m": target_gsd[0],
+            "ground_gsd_y_m": target_gsd[1],
         },
         "dem_evidence": {
             "source": "AWS Terrain Tiles / Mapzen Terrarium",
             "path": str(dem_path.resolve()),
             "zoom": DEM_ZOOM,
             "dynamic_range_p01_p99_m": dem_dynamic_range,
+            "effective_ground_gsd_x_m": dem_gsd[0],
+            "effective_ground_gsd_y_m": dem_gsd[1],
         },
         "model": scene.model_id,
         "device": prior._resolved_device or "unknown",
@@ -346,6 +381,7 @@ def run_demo() -> None:
         "crs": crs,
         "gsd_x_m": gsd_x,
         "gsd_y_m": gsd_y,
+        "gsd_semantics": "local_ground_geodesic_metres_per_pixel",
         "mesh_seconds": mesh_seconds,
         "mesh_lods": [
             {
@@ -364,6 +400,10 @@ def run_demo() -> None:
     print("Scene: Joshimath, Uttarakhand, India")
     print(f"Model/device: {scene.model_id} / {prior._resolved_device or 'unknown'}")
     print(f"Tiles: {scene.tile_count} ({scene.harmonized_tiles} overlap-harmonized)")
+    print(
+        "Local-ground GSD (optical / DEM): "
+        f"{target_gsd_m:.2f} m / {dem_effective_gsd_m:.2f} m"
+    )
     print(f"DEM range (p01-p99): {dem_dynamic_range:.1f} m")
     print(
         "Anchor polarity/correlation: "
