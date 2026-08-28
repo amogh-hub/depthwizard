@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 from scripts.check_release_reproducibility import build_report
@@ -78,10 +79,13 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
 
     assert "git ls-files --error-unmatch uv.lock" in target
     assert 'test -z "$$(git status --porcelain)"' in target
+    assert "uv lock --check" in target
     assert (
         "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
         in target
     )
+    assert "verify_da3_runtime_dependencies" in target
+    assert "DA3 runtime dependency imports PASS:" in target
     assert "import torch, torchvision; from torch import nn" in target
     assert "Scientific runtime imports PASS:" in target
     assert "npm ci --no-audit --no-fund" in target
@@ -92,6 +96,41 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
         "apps/desktop/src-tauri/Cargo.lock"
     ) in target
     assert 'pip install -e ".[dev,standalone]"' not in target
+
+
+def test_ml_extra_declares_complete_curated_da3_runtime() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    ml = payload["project"]["optional-dependencies"]["ml"]
+    normalized = {str(spec).lower().replace("_", "-") for spec in ml}
+    required_prefixes = {
+        "torch",
+        "torchvision",
+        "opencv-python",
+        "addict",
+        "einops",
+        "huggingface-hub",
+        "imageio",
+        "omegaconf",
+        "requests",
+        "safetensors",
+        "tqdm",
+        "evo",
+        "e3nn",
+    }
+    for package in required_prefixes:
+        assert any(spec.startswith(package) for spec in normalized), package
+
+
+def test_standalone_build_requires_frozen_da3_import_probe() -> None:
+    root = Path(__file__).resolve().parents[1]
+    build_script = (root / "scripts" / "build_standalone_sidecar.py").read_text(encoding="utf-8")
+
+    assert "verify_da3_runtime_dependencies()" in build_script
+    assert '"--self-check-da3"' in build_script
+    assert "_qualify_frozen_da3_imports" in build_script
+    assert '"--collect-submodules",\n        "huggingface_hub"' in build_script
+    assert '"--collect-submodules",\n        "safetensors"' in build_script
 
 
 def test_verify_pins_pyright_to_invoking_python() -> None:
