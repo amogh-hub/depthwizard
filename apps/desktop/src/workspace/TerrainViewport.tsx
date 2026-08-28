@@ -23,6 +23,11 @@ export type TerrainRenderState = {
   drawCalls: number;
 };
 
+type TerrainOverlayState = {
+  phase: "idle" | "loading" | "ready" | "error";
+  message: string;
+};
+
 type TerrainViewportProps = {
   meshUrl?: string;
   cameraMode: CameraMode;
@@ -43,6 +48,19 @@ const EMPTY_RENDER_STATE: TerrainRenderState = {
   triangles: 0,
   drawCalls: 0,
 };
+
+const EMPTY_OVERLAY_STATE: TerrainOverlayState = {
+  phase: "idle",
+  message: "Source texture active",
+};
+
+function navigationHelp(cameraMode: CameraMode, autoFlythrough: boolean): string {
+  if (autoFlythrough) return "Flythrough active · deterministic camera tour · click Flythrough again to stop";
+  if (cameraMode === "orbit") return "Orbit · drag to rotate · Shift/right-drag to pan · wheel to dolly";
+  if (cameraMode === "topDown") return "Top down · drag to pan · wheel to zoom · Fit restores the scene";
+  if (cameraMode === "fly") return "Fly · W/S forward/back · A/D left/right · R/F rise/fall · drag to look · Shift accelerates";
+  return "First person · WASD move · R/F rise/fall · drag to look · Shift accelerates · choose Orbit to exit";
+}
 
 export function TerrainViewport({
   meshUrl,
@@ -70,6 +88,8 @@ export function TerrainViewport({
   const renderStateRef = useRef(onRenderState);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [renderState, setRenderState] = useState<TerrainRenderState>(EMPTY_RENDER_STATE);
+  const [overlayState, setOverlayState] = useState<TerrainOverlayState>(EMPTY_OVERLAY_STATE);
+
   modeRef.current = cameraMode;
   exaggerationRef.current = verticalExaggeration;
   cursorRef.current = cursorPoint;
@@ -90,6 +110,7 @@ export function TerrainViewport({
     const host = hostRef.current;
     if (!host || !meshUrl) {
       publishState(EMPTY_RENDER_STATE);
+      setOverlayState(EMPTY_OVERLAY_STATE);
       return;
     }
 
@@ -107,6 +128,7 @@ export function TerrainViewport({
       triangles: 0,
       drawCalls: 0,
     });
+    setOverlayState(EMPTY_OVERLAY_STATE);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xebeff3);
@@ -118,6 +140,8 @@ export function TerrainViewport({
       renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.domElement.tabIndex = 0;
+      renderer.domElement.setAttribute("aria-label", "Interactive 3D terrain canvas");
       host.appendChild(renderer.domElement);
     } catch (error) {
       fail(`WebGL renderer initialization failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -142,7 +166,7 @@ export function TerrainViewport({
     orbit.screenSpacePanning = false;
 
     const fly = new FlyControls(camera, renderer.domElement);
-    fly.movementSpeed = 50;
+    fly.movementSpeed = 80;
     fly.rollSpeed = 0.35;
     fly.dragToLook = true;
 
@@ -198,6 +222,9 @@ export function TerrainViewport({
     let overlayLoadGeneration = 0;
     let modelLoadedAt = 0;
     let rendererReady = false;
+    let shiftBoost = false;
+    let flyBaseSpeed = 80;
+    let firstPersonBaseSpeed = 35;
 
     const refreshBounds = () => {
       if (!loaded) return;
@@ -208,22 +235,28 @@ export function TerrainViewport({
 
     const footprint = () => Math.max(sceneSize.x, sceneSize.z, 1);
 
+    const updateNavigationSpeeds = () => {
+      const multiplier = shiftBoost ? 4 : 1;
+      fly.movementSpeed = flyBaseSpeed * multiplier;
+      firstPerson.movementSpeed = firstPersonBaseSpeed * multiplier;
+    };
+
     const fitView = () => {
       if (!loaded) return;
       refreshBounds();
       const width = footprint();
-      const distance = Math.max(width, sceneSize.y * 2) * 0.82;
+      const distance = Math.max(width, sceneSize.y * 2) * 0.88;
       const viewTarget = sceneCenter.clone();
-      viewTarget.y -= Math.max(sceneSize.y, width * 0.08) * 0.20;
+      viewTarget.y -= Math.max(sceneSize.y, width * 0.08) * 0.16;
       orbit.target.copy(viewTarget);
       camera.up.set(0, 1, 0);
       camera.position.set(
-        sceneCenter.x + distance * 0.52,
-        sceneCenter.y + distance * 0.48,
-        sceneCenter.z + distance * 0.78,
+        sceneCenter.x + distance * 0.50,
+        sceneCenter.y + distance * 0.52,
+        sceneCenter.z + distance * 0.80,
       );
       camera.near = Math.max(distance / 10000, 0.01);
-      camera.far = Math.max(distance * 20, 1000);
+      camera.far = Math.max(distance * 24, 1000);
       camera.updateProjectionMatrix();
       camera.lookAt(viewTarget);
       orbit.update();
@@ -322,11 +355,15 @@ export function TerrainViewport({
       overlayLoadGeneration += 1;
       const generation = overlayLoadGeneration;
       restoreOriginalMaterials();
-      if (!normalizedUrl || terrainMeshes.length === 0) return;
+      if (!normalizedUrl || terrainMeshes.length === 0) {
+        if (!disposed) setOverlayState(EMPTY_OVERLAY_STATE);
+        return;
+      }
+      if (!disposed) setOverlayState({ phase: "loading", message: "Loading analytical terrain overlay…" });
       textureLoader.load(
         normalizedUrl,
         (texture) => {
-          if (generation !== overlayLoadGeneration || overlayRef.current !== normalizedUrl) {
+          if (generation !== overlayLoadGeneration || overlayRef.current !== normalizedUrl || disposed) {
             texture.dispose();
             return;
           }
@@ -336,10 +373,16 @@ export function TerrainViewport({
           overlayTexture = texture;
           overlayMaterial = new THREE.MeshBasicMaterial({ map: texture });
           for (const mesh of terrainMeshes) mesh.material = overlayMaterial;
+          setOverlayState({ phase: "ready", message: "Analytical overlay rendered" });
         },
         undefined,
-        () => {
-          if (generation === overlayLoadGeneration) restoreOriginalMaterials();
+        (error) => {
+          if (generation !== overlayLoadGeneration || disposed) return;
+          restoreOriginalMaterials();
+          setOverlayState({
+            phase: "error",
+            message: `Analytical overlay could not be rendered: ${error instanceof Error ? error.message : String(error)}`,
+          });
         },
       );
     };
@@ -369,6 +412,9 @@ export function TerrainViewport({
         appliedExaggeration = 1;
         applyExaggeration();
         refreshBounds();
+        flyBaseSpeed = THREE.MathUtils.clamp(footprint() * 0.04, 80, 3000);
+        firstPersonBaseSpeed = THREE.MathUtils.clamp(footprint() * 0.015, 35, 1200);
+        updateNavigationSpeeds();
         fitView();
         positionMarker(cursorRef.current);
         refreshAnalysisPath();
@@ -384,7 +430,12 @@ export function TerrainViewport({
       (progress) => {
         if (disposed || fatal || !progress.total) return;
         const percent = Math.min(100, Math.max(0, Math.round((progress.loaded / progress.total) * 100)));
-        publishState({ phase: "loading", message: `Loading persistent terrain LOD… ${percent}%`, triangles: 0, drawCalls: 0 });
+        publishState({
+          phase: "loading",
+          message: percent >= 100 ? "Terrain bytes received · preparing GPU resources…" : `Loading persistent terrain LOD… ${percent}%`,
+          triangles: 0,
+          drawCalls: 0,
+        });
       },
       (error) => {
         fail(`Terrain GLB could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
@@ -406,6 +457,7 @@ export function TerrainViewport({
     let pointerDown: { x: number; y: number } | null = null;
     let shiftPan = false;
     const onPointerDown = (event: PointerEvent) => {
+      renderer.domElement.focus({ preventScroll: true });
       if (event.button !== 0) return;
       pointerDown = { x: event.clientX, y: event.clientY };
       shiftPan = event.shiftKey;
@@ -420,7 +472,7 @@ export function TerrainViewport({
       }
       const movement = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
       pointerDown = null;
-      if (movement > 5) return;
+      if (movement > 5 || autoFlythroughRef.current || !["orbit", "topDown"].includes(modeRef.current)) return;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1;
@@ -436,6 +488,21 @@ export function TerrainViewport({
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Shift" && !shiftBoost) {
+        shiftBoost = true;
+        updateNavigationSpeeds();
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Shift" && shiftBoost) {
+        shiftBoost = false;
+        updateNavigationSpeeds();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
 
     const clock = new THREE.Clock();
     let previousMode: CameraMode | null = null;
@@ -561,6 +628,8 @@ export function TerrainViewport({
       disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
       renderer.domElement.removeEventListener("webglcontextlost", contextLost);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
@@ -585,6 +654,18 @@ export function TerrainViewport({
   return (
     <div className="dw-terrain-viewport">
       <div ref={hostRef} className="dw-terrain-render-host" aria-label="3D terrain viewport" />
+      {renderState.phase === "ready" && (
+        <div className="dw-terrain-mode-help" role="status">{navigationHelp(cameraMode, autoFlythrough)}</div>
+      )}
+      {overlayState.phase === "loading" && overlayUrl && (
+        <div className="dw-terrain-overlay-state" role="status">Loading analytical overlay…</div>
+      )}
+      {overlayState.phase === "error" && overlayUrl && (
+        <div className="dw-terrain-overlay-state dw-terrain-overlay-state--error" role="alert">
+          <strong>Analytical overlay unavailable</strong>
+          <span>{overlayState.message}</span>
+        </div>
+      )}
       {renderState.phase === "loading" && (
         <div className="dw-render-state" role="status">
           <span className="dw-spinner" aria-hidden="true" />
