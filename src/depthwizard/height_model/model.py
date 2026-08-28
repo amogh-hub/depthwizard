@@ -321,11 +321,12 @@ class DepthWizardHeightModel(nn.Module):
 
         self.correction_gate_head: nn.Conv2d | None = None
         if self.config.architecture_version == "confidence-gated-v2":
-            self.correction_gate_head = nn.Conv2d(head_channels, 1, kernel_size=1)
-            nn.init.zeros_(self.correction_gate_head.weight)
-            if self.correction_gate_head.bias is not None:
+            correction_gate_head = nn.Conv2d(head_channels, 1, kernel_size=1)
+            self.correction_gate_head = correction_gate_head
+            nn.init.zeros_(correction_gate_head.weight)
+            if correction_gate_head.bias is not None:
                 initial_gate_probability = 0.10
-                self.correction_gate_head.bias.data.fill_(
+                correction_gate_head.bias.data.fill_(
                     math.log(initial_gate_probability / (1.0 - initial_gate_probability))
                 )
 
