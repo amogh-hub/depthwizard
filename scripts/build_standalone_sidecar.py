@@ -10,6 +10,10 @@ import sys
 import time
 from pathlib import Path
 
+from depthwizard.geometry_prior.da3_runtime_contract import (
+    DA3_RUNTIME_DEPENDENCY_MODULES,
+    verify_da3_runtime_dependencies,
+)
 from scripts.da3_frozen_compat import apply_da3_frozen_compat
 from scripts.standalone_integrity import sha256_file, tree_identity
 
@@ -20,10 +24,10 @@ BUILD_ROOT = ROOT / "artifacts" / "standalone" / "pyinstaller"
 ENTRY = ROOT / "scripts" / "depthwizard_sidecar_entry.py"
 DA3_VENDOR = ROOT / ".vendor" / "depth-anything-3" / "src"
 RUNTIME_MANIFEST_NAME = "runtime-manifest.json"
-# The build-time frozen self-check validates the small deterministic geospatial bootstrap surface.
-# Heavy DA3/PyTorch cold-start is deliberately exercised by the later full packaged inference gate,
-# where the watchdog is sized for a real model job rather than a startup probe.
 SELF_CHECK_TIMEOUT_SECONDS = 120.0
+# Importing the complete frozen DA3/PyTorch closure is intentionally slower than the geospatial
+# bootstrap probe, but it must still complete before a runtime can be staged into the desktop app.
+DA3_IMPORT_CHECK_TIMEOUT_SECONDS = 300.0
 
 
 def _source_git_sha() -> str:
@@ -81,17 +85,7 @@ def _read_trace(path: Path) -> list[dict[str, object]]:
     return events
 
 
-def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float, list[str]]:
-    """Qualify deterministic frozen geospatial startup before publishing the runtime tree.
-
-    DA3 is intentionally not imported here. The final RT5 acceptance launches the packaged Tauri
-    application offline and performs a real DA3 reconstruction with a 1200-second model-job budget.
-    That end-to-end inference is stronger evidence than an import-only probe and prevents a heavy
-    PyTorch/vision cold-start from being mistaken for a packaging startup failure.
-    """
-    trace_path = BUILD_ROOT.parent / "frozen-self-check-startup-trace.jsonl"
-    if trace_path.exists():
-        trace_path.unlink()
+def _offline_environment(trace_path: Path) -> dict[str, str]:
     environment = os.environ.copy()
     environment.update(
         {
@@ -104,6 +98,41 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
             "no_proxy": "127.0.0.1,localhost",
         }
     )
+    return environment
+
+
+def _parse_self_check_result(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    context: str,
+) -> dict[str, object]:
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"{context} failed\nreturncode={completed.returncode}\n"
+            f"stdout={completed.stdout}\nstderr={completed.stderr}"
+        )
+    output_lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if not output_lines:
+        raise RuntimeError(f"{context} produced no machine-readable result")
+    try:
+        payload = json.loads(output_lines[-1])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{context} did not end with valid JSON\n"
+            f"stdout={completed.stdout}\nstderr={completed.stderr}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise TypeError(f"{context} JSON root must be an object")
+    if payload.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
+        raise RuntimeError(f"{context} returned non-passing status: {payload}")
+    return payload
+
+
+def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float, list[str]]:
+    """Qualify deterministic frozen geospatial startup before publishing the runtime tree."""
+    trace_path = BUILD_ROOT.parent / "frozen-self-check-startup-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    environment = _offline_environment(trace_path)
     started = time.monotonic()
     try:
         completed = subprocess.run(
@@ -125,30 +154,8 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
             "unqualified geospatial runtime."
         ) from exc
     elapsed = time.monotonic() - started
-    events = _read_trace(trace_path)
-    phases = [str(event.get("phase", "unknown")) for event in events]
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "frozen sidecar geospatial self-check failed\n"
-            f"returncode={completed.returncode}\n"
-            f"startup_phases={phases}\n"
-            f"stdout={completed.stdout}\n"
-            f"stderr={completed.stderr}"
-        )
-    output_lines = [line for line in completed.stdout.splitlines() if line.strip()]
-    if not output_lines:
-        raise RuntimeError("frozen sidecar self-check produced no machine-readable result")
-    try:
-        payload = json.loads(output_lines[-1])
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "frozen sidecar self-check did not end with valid JSON\n"
-            f"stdout={completed.stdout}\nstderr={completed.stderr}"
-        ) from exc
-    if not isinstance(payload, dict):
-        raise TypeError("frozen sidecar self-check JSON root must be an object")
-    if payload.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
-        raise RuntimeError(f"frozen sidecar self-check returned non-passing status: {payload}")
+    phases = [str(event.get("phase", "unknown")) for event in _read_trace(trace_path)]
+    payload = _parse_self_check_result(completed, context="frozen sidecar geospatial self-check")
     required_phases = {
         "python_entry",
         "self_check_import_complete",
@@ -166,11 +173,62 @@ def _qualify_frozen_runtime(executable: Path) -> tuple[dict[str, object], float,
     if payload.get("epsg_roundtrip") != 32643:
         raise RuntimeError("frozen sidecar did not preserve the EPSG:32643 CRS round-trip")
     if payload.get("da3_probe_required") is not False:
-        raise RuntimeError("build-time self-check unexpectedly forced heavy DA3 initialization")
+        raise RuntimeError("lightweight build self-check unexpectedly forced DA3 initialization")
     if payload.get("network_used") is not False:
         raise RuntimeError("frozen geospatial qualification unexpectedly used the network")
     if payload.get("model_loaded") is not False or payload.get("model_weights_loaded") is not False:
         raise RuntimeError("build-time geospatial qualification unexpectedly loaded model weights")
+    return payload, elapsed, phases
+
+
+def _qualify_frozen_da3_imports(
+    executable: Path,
+) -> tuple[dict[str, object], float, list[str]]:
+    """Prove the packaged DA3 dependency/module closure before Tauri can consume the runtime."""
+    trace_path = BUILD_ROOT.parent / "frozen-da3-import-startup-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    environment = _offline_environment(trace_path)
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            [str(executable), "--self-check-da3"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=DA3_IMPORT_CHECK_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        phases = [str(event.get("phase", "unknown")) for event in _read_trace(trace_path)]
+        location = phases[-1] if phases else "before Python entrypoint"
+        raise RuntimeError(
+            "frozen DA3 import qualification timed out after "
+            f"{DA3_IMPORT_CHECK_TIMEOUT_SECONDS:.0f}s; last_phase={location}; "
+            f"startup_phases={phases}. The runtime is rejected before Tauri packaging."
+        ) from exc
+    elapsed = time.monotonic() - started
+    phases = [str(event.get("phase", "unknown")) for event in _read_trace(trace_path)]
+    payload = _parse_self_check_result(completed, context="frozen DA3 import self-check")
+    if payload.get("da3_probe_required") is not True:
+        raise RuntimeError("frozen DA3 import self-check did not enable the DA3 closure probe")
+    required_dependencies = list(DA3_RUNTIME_DEPENDENCY_MODULES)
+    if payload.get("da3_dependency_modules_required") != required_dependencies:
+        raise RuntimeError("frozen DA3 import self-check reported the wrong dependency contract")
+    if payload.get("da3_dependency_modules_imported") != required_dependencies:
+        raise RuntimeError("frozen DA3 dependency closure did not import completely")
+    required_modules = payload.get("da3_runtime_modules_required")
+    if not isinstance(required_modules, list) or payload.get("da3_runtime_modules_imported") != required_modules:
+        raise RuntimeError("frozen DA3 production module closure did not import completely")
+    if payload.get("da3_api_imported") is not True:
+        raise RuntimeError("frozen DA3 API import was not proven")
+    if payload.get("da3_geometry_imported") is not True:
+        raise RuntimeError("frozen DA3 geometry helper import was not proven")
+    if payload.get("da3_affine_inverse_probe") != "PASS":
+        raise RuntimeError("frozen DA3 affine_inverse compatibility probe did not pass")
+    if payload.get("network_used") is not False:
+        raise RuntimeError("frozen DA3 import qualification unexpectedly used the network")
+    if payload.get("model_loaded") is not False or payload.get("model_weights_loaded") is not False:
+        raise RuntimeError("frozen DA3 import qualification unexpectedly loaded model weights")
     return payload, elapsed, phases
 
 
@@ -185,6 +243,10 @@ def main() -> None:
             "PyInstaller is missing; install the standalone extra with "
             "`python -m pip install -e '.[standalone]'`"
         )
+
+    # Fail before a 90-second PyInstaller build if the locked Python environment does not contain
+    # the complete curated DA3 monocular dependency closure.
+    build_dependency_modules = verify_da3_runtime_dependencies()
 
     # The pinned upstream DA3 geometry helper uses import-time torch.jit.script, which cannot
     # compile inside a normal PyInstaller frozen loader because source retrieval is intentionally
@@ -228,8 +290,6 @@ def main() -> None:
         "--paths",
         str(DA3_VENDOR),
         "--hidden-import",
-        "torch",
-        "--hidden-import",
         "depth_anything_3.api",
         # DA3 builds the production network from YAML object paths through importlib. PyInstaller
         # cannot infer those modules from static imports, so freeze the exact DA3MONO-LARGE closure.
@@ -239,18 +299,15 @@ def main() -> None:
         "depth_anything_3.model.dinov2.dinov2",
         "--hidden-import",
         "depth_anything_3.model.dpt",
-        # Hugging Face exposes PyTorchModelHubMixin through a lazy module. Bundle its implementation
-        # explicitly so depth_anything_3.api can import in a frozen process. Safetensors is the
-        # production local-weight path used by the pinned DA3 checkpoint.
-        "--hidden-import",
-        "huggingface_hub.hub_mixin",
-        "--hidden-import",
-        "safetensors.torch",
+        # Hugging Face and safetensors both contain lazy/dynamic import surfaces. Collect their
+        # Python submodules in addition to the exact runtime imports below.
+        "--collect-submodules",
+        "huggingface_hub",
+        "--collect-submodules",
+        "safetensors",
         "--hidden-import",
         "rasterio.serde",
         # Rasterio's C extensions dynamically import Python helpers such as rasterio.sample.
-        # Data/binary collection alone is therefore insufficient for a frozen runtime. Collect the
-        # package's Python submodules explicitly so the packaged import graph matches normal Python.
         "--collect-submodules",
         "rasterio",
         "--collect-data",
@@ -263,8 +320,10 @@ def main() -> None:
         "pyproj",
         "--collect-data",
         "depth_anything_3",
-        str(ENTRY),
     ]
+    for module_name in DA3_RUNTIME_DEPENDENCY_MODULES:
+        command.extend(("--hidden-import", module_name))
+    command.append(str(ENTRY))
     subprocess.run(command, cwd=ROOT, check=True)
 
     built_runtime = dist_dir / "depthwizard-core"
@@ -285,10 +344,13 @@ def main() -> None:
         staged_executable.chmod(staged_executable.stat().st_mode | 0o111)
 
     self_check, self_check_elapsed, startup_phases = _qualify_frozen_runtime(staged_executable)
+    da3_import_check, da3_import_elapsed, da3_import_phases = _qualify_frozen_da3_imports(
+        staged_executable
+    )
     executable_sha = sha256_file(staged_executable)
     payload_sha, payload_files, payload_symlinks, payload_bytes = tree_identity(RUNTIME_DIR)
     runtime_manifest = {
-        "schema_version": 5,
+        "schema_version": 6,
         "status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -300,9 +362,13 @@ def main() -> None:
         "payload_symlinks": payload_symlinks,
         "payload_logical_bytes": payload_bytes,
         "da3_frozen_compatibility": da3_compatibility,
+        "build_da3_dependency_modules": list(build_dependency_modules),
         "frozen_self_check": self_check,
         "frozen_self_check_elapsed_seconds": round(self_check_elapsed, 3),
         "startup_phases": startup_phases,
+        "frozen_da3_import_check": da3_import_check,
+        "frozen_da3_import_check_elapsed_seconds": round(da3_import_elapsed, 3),
+        "da3_import_startup_phases": da3_import_phases,
         "da3_runtime_execution_gate": "release_train_5_full_acceptance",
         "model_weights_loaded_during_packaging_check": False,
         "network_used_during_packaging_check": False,
@@ -321,7 +387,7 @@ def main() -> None:
         raise RuntimeError("runtime payload identity changed while writing qualification manifest")
 
     report = {
-        "schema_version": 7,
+        "schema_version": 8,
         "status": "PASS_QUALIFIED_SIDECAR_BUILD",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -340,10 +406,13 @@ def main() -> None:
         "da3_vendor_source": str(DA3_VENDOR.resolve()),
         "da3_frozen_compatibility": da3_compatibility,
         "da3_packaging": {
+            "dependency_contract": list(DA3_RUNTIME_DEPENDENCY_MODULES),
+            "build_dependency_import_check": "passed",
+            "frozen_dependency_import_check": "passed",
             "public_api_hidden_import": True,
             "da3mono_large_config_modules_hidden": True,
-            "huggingface_hub_mixin_hidden_import": True,
-            "safetensors_torch_hidden_import": True,
+            "huggingface_hub_submodules_collected": True,
+            "safetensors_submodules_collected": True,
             "package_data_collected": True,
             "runtime_execution_gate": "release_train_5_full_acceptance",
         },
@@ -359,15 +428,18 @@ def main() -> None:
         "frozen_self_check": self_check,
         "frozen_self_check_elapsed_seconds": round(self_check_elapsed, 3),
         "startup_phases": startup_phases,
+        "frozen_da3_import_check": da3_import_check,
+        "frozen_da3_import_check_elapsed_seconds": round(da3_import_elapsed, 3),
+        "da3_import_startup_phases": da3_import_phases,
         "offline_after_model_install": True,
         "scientific_boundary": (
-            "Packaging and frozen-runtime integrity evidence only. The build-time self-check proves "
-            "bundled Rasterio/GDAL/PROJ and exact frozen geospatial startup without loading the ML "
-            "stack. PyInstaller still freezes the explicit DA3MONO-LARGE runtime closure and applies "
-            "the audited TorchScript compatibility patch. Actual packaged DA3 correctness is not "
-            "claimed here: release_train_5_full_acceptance must launch the real application offline "
-            "and complete an end-to-end DA3 reconstruction before RT5 can pass. This build report "
-            "does not establish DSM accuracy, model promotion, clean-machine success, FPS, or soak."
+            "Packaging and frozen-runtime integrity evidence only. The build proves bundled "
+            "Rasterio/GDAL/PROJ plus the complete curated DA3 monocular dependency/module closure "
+            "inside the actual frozen executable, without loading model weights or using network "
+            "access. Actual packaged DA3 correctness is still gated by "
+            "release_train_5_full_acceptance, which must launch the real application offline and "
+            "complete an end-to-end DA3 reconstruction. This build report does not establish DSM "
+            "accuracy, model promotion, clean-machine success, FPS, or soak."
         ),
     }
     report_path = BUILD_ROOT.parent / "sidecar-build-report.json"
@@ -384,8 +456,9 @@ def main() -> None:
     print(f"Runtime payload SHA-256: {payload_sha}")
     print(f"Runtime tree SHA-256: {runtime_sha}")
     print("DA3 frozen TorchScript compatibility patch: APPLIED AND AUDITED")
-    print("DA3 production runtime packaging: FROZEN; execution deferred to full RT5 inference gate")
     print(f"Frozen geospatial self-check: PASS in {self_check_elapsed:.3f} s")
+    print(f"Frozen DA3 dependency/import self-check: PASS in {da3_import_elapsed:.3f} s")
+    print("DA3 model-weight execution remains gated by full RT5 packaged inference")
     print(f"Report: {report_path}")
 
 
