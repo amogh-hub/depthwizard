@@ -22,7 +22,7 @@ export type TerrainRenderState = {
   drawCalls: number;
 };
 
-type TerrainOverlayState = {
+export type TerrainOverlayState = {
   phase: "idle" | "loading" | "ready" | "error";
   message: string;
 };
@@ -40,6 +40,7 @@ type TerrainViewportProps = {
   onSelectPoint?: (point: NormalizedPoint) => void;
   onPerformance?: (metrics: TerrainPerformance) => void;
   onRenderState?: (state: TerrainRenderState) => void;
+  onOverlayState?: (state: TerrainOverlayState) => void;
 };
 
 const EMPTY_RENDER_STATE: TerrainRenderState = {
@@ -59,7 +60,7 @@ function navigationHelp(cameraMode: CameraMode, autoFlythrough: boolean): string
   if (cameraMode === "orbit") return "Orbit · drag to rotate · Shift/right-drag to pan · wheel to dolly";
   if (cameraMode === "topDown") return "Top down · drag to pan · wheel to zoom · Fit restores the scene";
   if (cameraMode === "fly") return "Fly · click terrain · WASD move · R/F rise/fall · drag to look · Shift accelerates";
-  return "First person · WASD move · R/F rise/fall · drag to look · terrain clearance enforced · Shift accelerates · choose Orbit to exit";
+  return "First person · click terrain · WASD move · R/F rise/fall · drag to look · terrain clearance enforced · Shift accelerates · choose Orbit to exit";
 }
 
 function materialArray(material: THREE.Material | THREE.Material[]): THREE.Material[] {
@@ -79,6 +80,7 @@ export function TerrainViewport({
   onSelectPoint,
   onPerformance,
   onRenderState,
+  onOverlayState,
 }: TerrainViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modeRef = useRef(cameraMode);
@@ -91,6 +93,7 @@ export function TerrainViewport({
   const selectRef = useRef(onSelectPoint);
   const performanceRef = useRef(onPerformance);
   const renderStateRef = useRef(onRenderState);
+  const overlayStateRef = useRef(onOverlayState);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [overlayRetryGeneration, setOverlayRetryGeneration] = useState(0);
   const [renderState, setRenderState] = useState<TerrainRenderState>(EMPTY_RENDER_STATE);
@@ -106,17 +109,23 @@ export function TerrainViewport({
   selectRef.current = onSelectPoint;
   performanceRef.current = onPerformance;
   renderStateRef.current = onRenderState;
+  overlayStateRef.current = onOverlayState;
 
   const publishState = (state: TerrainRenderState) => {
     setRenderState(state);
     renderStateRef.current?.(state);
   };
 
+  const publishOverlayState = (state: TerrainOverlayState) => {
+    setOverlayState(state);
+    overlayStateRef.current?.(state);
+  };
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !meshUrl) {
       publishState(EMPTY_RENDER_STATE);
-      setOverlayState(EMPTY_OVERLAY_STATE);
+      publishOverlayState(EMPTY_OVERLAY_STATE);
       return;
     }
 
@@ -134,7 +143,7 @@ export function TerrainViewport({
       triangles: 0,
       drawCalls: 0,
     });
-    setOverlayState(EMPTY_OVERLAY_STATE);
+    publishOverlayState(EMPTY_OVERLAY_STATE);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xebeff3);
@@ -433,10 +442,10 @@ export function TerrainViewport({
       const generation = overlayLoadGeneration;
       restoreOriginalMaterials();
       if (!normalizedUrl || terrainMeshes.length === 0) {
-        if (!disposed) setOverlayState(EMPTY_OVERLAY_STATE);
+        if (!disposed) publishOverlayState(EMPTY_OVERLAY_STATE);
         return;
       }
-      if (!disposed) setOverlayState({ phase: "loading", message: "Loading analytical terrain overlay…" });
+      if (!disposed) publishOverlayState({ phase: "loading", message: "Loading analytical terrain overlay…" });
       textureLoader.load(
         normalizedUrl,
         (texture) => {
@@ -448,13 +457,13 @@ export function TerrainViewport({
           if (!image?.width || !image?.height) {
             texture.dispose();
             appliedOverlayUrl = null;
-            setOverlayState({ phase: "error", message: "Analytical texture decoded without valid image dimensions." });
+            publishOverlayState({ phase: "error", message: "Analytical texture decoded without valid image dimensions." });
             return;
           }
           if (terrainMeshes.some((mesh) => !mesh.geometry.getAttribute("uv"))) {
             texture.dispose();
             appliedOverlayUrl = null;
-            setOverlayState({ phase: "error", message: "Terrain mesh has no UV coordinates required for analytical projection." });
+            publishOverlayState({ phase: "error", message: "Terrain mesh has no UV coordinates required for analytical projection." });
             return;
           }
           texture.colorSpace = THREE.SRGBColorSpace;
@@ -475,14 +484,14 @@ export function TerrainViewport({
           pendingOverlayGeneration = generation;
           pendingOverlayFrames = 0;
           pendingOverlayStartedAt = performance.now();
-          setOverlayState({ phase: "loading", message: "Analytical material applied · validating rendered frame…" });
+          publishOverlayState({ phase: "loading", message: "Analytical material applied · validating rendered frame…" });
         },
         undefined,
         (error) => {
           if (generation !== overlayLoadGeneration || disposed) return;
           restoreOriginalMaterials();
           appliedOverlayUrl = null;
-          setOverlayState({
+          publishOverlayState({
             phase: "error",
             message: `Analytical overlay could not be rendered: ${error instanceof Error ? error.message : String(error)}`,
           });
@@ -745,12 +754,12 @@ export function TerrainViewport({
           pendingOverlayFrames += 1;
           if (pendingOverlayFrames >= 2) {
             pendingOverlayGeneration = null;
-            setOverlayState({ phase: "ready", message: "Analytical overlay rendered and frame-validated" });
+            publishOverlayState({ phase: "ready", message: "Analytical overlay rendered and frame-validated" });
           }
         } else if (performance.now() - pendingOverlayStartedAt > 3000) {
           restoreOriginalMaterials();
           appliedOverlayUrl = null;
-          setOverlayState({
+          publishOverlayState({
             phase: "error",
             message: "Analytical material was applied but did not produce a valid rendered terrain frame; source texture restored.",
           });
