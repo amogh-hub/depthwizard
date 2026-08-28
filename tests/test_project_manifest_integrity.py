@@ -263,3 +263,25 @@ def test_save_rejects_invalid_in_memory_state_without_replacing_manifest(tmp_pat
         manifest.save()
 
     assert manifest.path.read_bytes() == before
+
+
+def test_load_rejects_stage_artifact_pointer_outside_project(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    source.write_bytes(b"source")
+    project = tmp_path / "project"
+    outside = tmp_path / "outside-stage-artifact.tif"
+    outside.write_bytes(b"not project owned")
+    manifest = ProjectManifest.create_or_load(project, source)
+    _rewrite_manifest(
+        manifest,
+        stages={
+            "geometry": {
+                "status": "completed",
+                "artifacts": {"rdsm": str(outside.resolve())},
+                "details": {},
+            }
+        },
+    )
+
+    with pytest.raises(ProjectIntegrityError, match="escapes the project directory"):
+        ProjectManifest.load(project)
