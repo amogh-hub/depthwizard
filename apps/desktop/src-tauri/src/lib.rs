@@ -15,6 +15,7 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, RunEvent, State};
 
 const SIDECAR_RESOURCE_PATH: &str = "depthwizard-core-runtime/depthwizard-core";
+const BOOT_RESPONSE_MAX_BYTES: usize = 8 * 1024;
 // The qualified Apple Silicon ONEDIR runtime currently needs ~41 s on a true cold launch. This
 // watchdog is a correctness/liveness bound, not the RT7 performance target, so keep enough margin
 // for first-launch dyld/filesystem work while still failing closed on a genuinely stuck sidecar.
@@ -107,6 +108,89 @@ fn reserve_loopback_port() -> io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+fn http_header_end(response: &[u8]) -> Option<usize> {
+    response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+}
+
+fn declared_content_length(response: &[u8]) -> io::Result<Option<usize>> {
+    let Some(header_end) = http_header_end(response) else {
+        return Ok(None);
+    };
+    let headers = std::str::from_utf8(&response[..header_end]).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("DepthWizard sidecar returned non-UTF8 HTTP headers: {error}"),
+        )
+    })?;
+    for line in headers.split("\r\n").skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case("content-length") {
+            let length = value.trim().parse::<usize>().map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("DepthWizard sidecar returned invalid Content-Length: {error}"),
+                )
+            })?;
+            return Ok(Some(length));
+        }
+    }
+    Ok(None)
+}
+
+fn read_boot_response<R: Read>(reader: &mut R) -> io::Result<Vec<u8>> {
+    let mut response = Vec::with_capacity(512);
+    let mut chunk = [0_u8; 512];
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        response.extend_from_slice(&chunk[..count]);
+        if response.len() > BOOT_RESPONSE_MAX_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "DepthWizard sidecar boot response exceeded the bounded 8 KiB contract",
+            ));
+        }
+        if let Some(header_end) = http_header_end(&response) {
+            if let Some(content_length) = declared_content_length(&response)? {
+                if content_length > BOOT_RESPONSE_MAX_BYTES.saturating_sub(header_end) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "DepthWizard sidecar declared an oversized boot response body",
+                    ));
+                }
+                if response.len().saturating_sub(header_end) >= content_length {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(response)
+}
+
+fn boot_response_proves_identity(response: &[u8], expected_boot_nonce: &str) -> bool {
+    let Some(header_end) = http_header_end(response) else {
+        return false;
+    };
+    let Ok(headers) = std::str::from_utf8(&response[..header_end]) else {
+        return false;
+    };
+    let success = headers.starts_with("HTTP/1.1 200") || headers.starts_with("HTTP/1.0 200");
+    if !success {
+        return false;
+    }
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&response[header_end..]) else {
+        return false;
+    };
+    payload.get("boot_nonce").and_then(serde_json::Value::as_str) == Some(expected_boot_nonce)
+}
+
 fn health_check(port: u16, expected_boot_nonce: &str) -> io::Result<bool> {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(300))?;
@@ -115,11 +199,11 @@ fn health_check(port: u16, expected_boot_nonce: &str) -> io::Result<bool> {
     stream.write_all(
         b"GET /_depthwizard/boot HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
     )?;
-    let mut response = [0_u8; 2048];
-    let count = stream.read(&mut response)?;
-    let head = String::from_utf8_lossy(&response[..count]);
-    let success = head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200");
-    Ok(success && head.contains(expected_boot_nonce))
+    let response = read_boot_response(&mut stream)?;
+    Ok(boot_response_proves_identity(
+        &response,
+        expected_boot_nonce,
+    ))
 }
 
 fn wait_for_health(
@@ -431,8 +515,31 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_boot_nonce, generate_session_token, reserve_loopback_port};
+    use super::{
+        boot_response_proves_identity, generate_boot_nonce, generate_session_token,
+        read_boot_response, reserve_loopback_port, BOOT_RESPONSE_MAX_BYTES,
+    };
+    use std::io::{self, Read};
     use std::net::TcpListener;
+
+    struct ChunkedReader {
+        bytes: Vec<u8>,
+        position: usize,
+        chunk_size: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            if self.position >= self.bytes.len() {
+                return Ok(0);
+            }
+            let remaining = self.bytes.len() - self.position;
+            let count = remaining.min(self.chunk_size).min(output.len());
+            output[..count].copy_from_slice(&self.bytes[self.position..self.position + count]);
+            self.position += count;
+            Ok(count)
+        }
+    }
 
     #[test]
     fn session_token_has_256_bits_of_hex_material() {
@@ -448,6 +555,55 @@ mod tests {
         assert_eq!(nonce.len(), 64);
         assert!(nonce.chars().all(|character| character.is_ascii_hexdigit()));
         assert_ne!(nonce, token);
+    }
+
+    #[test]
+    fn boot_response_reader_handles_segmented_tcp_payload() {
+        let nonce = "a".repeat(64);
+        let body = format!("{{\"boot_nonce\":\"{nonce}\"}}");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let mut reader = ChunkedReader {
+            bytes: response.into_bytes(),
+            position: 0,
+            chunk_size: 3,
+        };
+
+        let collected = read_boot_response(&mut reader).expect("read segmented boot response");
+        assert!(boot_response_proves_identity(&collected, &nonce));
+    }
+
+    #[test]
+    fn boot_response_identity_requires_exact_json_nonce_field() {
+        let nonce = "b".repeat(64);
+        let body = format!("{{\"message\":\"{nonce}\"}}");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        assert!(!boot_response_proves_identity(response.as_bytes(), &nonce));
+    }
+
+    #[test]
+    fn boot_response_reader_rejects_oversized_payload() {
+        let body = "x".repeat(BOOT_RESPONSE_MAX_BYTES);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let mut reader = ChunkedReader {
+            bytes: response.into_bytes(),
+            position: 0,
+            chunk_size: 512,
+        };
+
+        let error = read_boot_response(&mut reader).expect_err("oversized response must fail");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
