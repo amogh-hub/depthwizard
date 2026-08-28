@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
@@ -48,15 +50,18 @@ def test_legacy_validation_uses_local_ground_geodesic_spacing(tmp_path: Path) ->
     assert 4.0 < gsd[1] < 6.0
 
     payload = validate_geospatial_dsm(prediction, reference, tmp_path / "evidence")
-    recorded = payload["diagnostics"]["ground_sample_distance_m"]
+    diagnostics = payload["diagnostics"]
+    assert isinstance(diagnostics, dict)
+    recorded = diagnostics["ground_sample_distance_m"]
+    assert isinstance(recorded, dict)
     assert recorded["semantics"] == "local_ground_geodesic_spacing"
-    assert np.isclose(recorded["x"], gsd[0])
-    assert np.isclose(recorded["y"], gsd[1])
+    assert np.isclose(float(recorded["x"]), gsd[0])
+    assert np.isclose(float(recorded["y"]), gsd[1])
 
 
 def test_cli_mesh_uses_ground_spacing_not_projected_affine_units(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rdsm = tmp_path / "rdsm.tif"
     texture = tmp_path / "texture.tif"
@@ -73,7 +78,7 @@ def test_cli_mesh_uses_ground_spacing_not_projected_affine_units(
 
     captured: dict[str, float] = {}
 
-    def fake_export(*args, **kwargs):
+    def fake_export(*args: object, **kwargs: Any) -> list[object]:
         del args
         captured["x"] = float(kwargs["gsd_x"])
         captured["y"] = float(kwargs["gsd_y"])
