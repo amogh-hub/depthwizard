@@ -26,9 +26,20 @@ def test_packaged_sidecar_requires_session_token(monkeypatch: pytest.MonkeyPatch
         validate_launch_environment(host="127.0.0.1", port=8765)
 
 
+def test_packaged_sidecar_requires_boot_identity_nonce(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
+    monkeypatch.setenv("DEPTHWIZARD_SESSION_TOKEN", "a" * 64)
+    monkeypatch.setenv("DEPTHWIZARD_REQUIRE_BOOT_NONCE", "1")
+    monkeypatch.delenv("DEPTHWIZARD_BOOT_NONCE", raising=False)
+    with pytest.raises(RuntimeError, match="per-process boot identity nonce"):
+        validate_launch_environment(host="127.0.0.1", port=8765)
+
+
 def test_packaged_sidecar_accepts_secured_loopback_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
     monkeypatch.setenv("DEPTHWIZARD_SESSION_TOKEN", "b" * 64)
+    monkeypatch.setenv("DEPTHWIZARD_REQUIRE_BOOT_NONCE", "1")
+    monkeypatch.setenv("DEPTHWIZARD_BOOT_NONCE", "c" * 64)
     validate_launch_environment(host="127.0.0.1", port=49152)
 
 
@@ -52,10 +63,13 @@ def test_startup_trace_is_machine_readable_and_secret_free(
     trace = tmp_path / "startup.jsonl"
     monkeypatch.setenv("DEPTHWIZARD_STARTUP_TRACE", str(trace))
     monkeypatch.setenv("DEPTHWIZARD_SESSION_TOKEN", "secret-token-that-must-not-be-recorded")
+    monkeypatch.setenv("DEPTHWIZARD_BOOT_NONCE", "secret-boot-nonce-that-must-not-be-recorded")
 
     _startup_trace("test_phase", port=43210)
 
-    payload = json.loads(trace.read_text(encoding="utf-8").strip())
+    text = trace.read_text(encoding="utf-8")
+    payload = json.loads(text.strip())
     assert payload["phase"] == "test_phase"
     assert payload["port"] == 43210
-    assert "secret-token-that-must-not-be-recorded" not in trace.read_text(encoding="utf-8")
+    assert "secret-token-that-must-not-be-recorded" not in text
+    assert "secret-boot-nonce-that-must-not-be-recorded" not in text
