@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from depthwizard.calibration import gcp_io
 from depthwizard.calibration.gcp_io import inspect_ground_control_point_file
 
 
@@ -34,4 +35,39 @@ def test_gcp_csv_import_rejects_nonfinite_values(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="non-finite GCP"):
+        inspect_ground_control_point_file(path)
+
+
+def test_gcp_csv_import_rejects_excessive_point_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gcp_io, "_MAX_GCP_POINTS", 2)
+    path = tmp_path / "gcps.csv"
+    path.write_text(
+        "x,y,elevation_m\n"
+        "1,1,10\n"
+        "2,2,20\n"
+        "3,3,30\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="point ingestion limit"):
+        inspect_ground_control_point_file(path)
+
+
+def test_gcp_csv_import_rejects_excessive_file_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gcp_io, "_MAX_GCP_FILE_BYTES", 24)
+    path = tmp_path / "gcps.csv"
+    path.write_text(
+        "x,y,elevation_m\n"
+        "500000,1400000,101.25\n"
+        "500010,1400010,108.75\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="ingestion limit"):
         inspect_ground_control_point_file(path)
