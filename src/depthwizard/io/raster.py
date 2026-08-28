@@ -81,6 +81,11 @@ def _trusted_wgs84_coordinate(crs: CRS, x: float, y: float) -> tuple[float, floa
 
 
 def _projected_axis_factors_m(crs: CRS) -> tuple[float, float] | None:
+    """Return declared map-axis unit conversion factors.
+
+    This helper is retained for metadata diagnostics only. It must not be used as a substitute for
+    true local ground distance because projected metres can include projection scale distortion.
+    """
     if not crs.is_projected or len(crs.axis_info) < 2:
         return None
     x_factor = crs.axis_info[0].unit_conversion_factor
@@ -133,18 +138,16 @@ def _projected_coordinate_within_area(
 
 
 def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
-    """Return trustworthy pixel ground spacing in metres when the raster supports it.
+    """Return trustworthy local ground pixel spacing in metres.
 
-    Normal projected/geographic rasters use their CRS only when its spatial semantics are
-    trustworthy. The dedicated OrthoLoC acceptance/benchmark opt-in is evaluated *before* CRS
-    interpretation: the official dataset contract defines DOP/DSM pixel scale in metres, while some
-    raw/unpacked TIFF representations preserve a dataset-local metric affine even if a syntactic CRS
-    tag is present. Under that explicit opt-in the affine basis vectors are therefore the metric
-    scale and global lon/lat interpretation is intentionally not used.
+    The returned values are *ground* distances near the raster centre, not merely coordinate-axis
+    increments. For ordinary projected and geographic CRSs, adjacent pixel centres are transformed
+    to WGS84 and measured geodesically. This is essential for distorted map projections such as
+    EPSG:3857, where one projected map metre is not one ground metre away from the equator.
 
-    No raster receives this treatment by default. Outside the explicit OrthoLoC contract, projected
-    rasters use affine basis vectors converted from CRS linear units after area-of-use plausibility
-    checks, and geographic rasters use WGS84 geodesic neighbour distances.
+    The dedicated OrthoLoC acceptance/benchmark opt-in is evaluated before CRS interpretation. Its
+    published dataset-local affine scale is explicitly metric and deliberately carries no global
+    longitude/latitude claim. No arbitrary raster receives that treatment by default.
     """
     with rasterio.open(path) as src:
         if src.transform.is_identity:
@@ -160,7 +163,9 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
             return None
 
         crs = CRS.from_user_input(src.crs)
-        metadata_crs = _crs_with_authority_metadata(crs)
+        if not (crs.is_projected or crs.is_geographic):
+            return None
+
         transform = src.transform
         representative_pixels = {
             (0, 0),
@@ -169,28 +174,12 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
             (max(src.width - 1, 0), max(src.height - 1, 0)),
             (max((src.width - 1) // 2, 0), max((src.height - 1) // 2, 0)),
         }
-
-        if crs.is_projected:
-            factors = _projected_axis_factors_m(crs)
-            if factors is None:
+        # Reject syntactically valid but geographically implausible CRS-tagged rasters before any
+        # metric claim. This preserves the fail-closed behavior used by dataset-local fixtures.
+        for col_i, row_i in representative_pixels:
+            x_i, y_i = src.xy(row_i, col_i)
+            if _trusted_wgs84_coordinate(crs, float(x_i), float(y_i)) is None:
                 return None
-            area_bounds = _projected_area_bounds(crs)
-            if metadata_crs.area_of_use is not None:
-                if area_bounds is None:
-                    return None
-                for col, row in representative_pixels:
-                    x, y = src.xy(row, col)
-                    if not _projected_coordinate_within_area(float(x), float(y), area_bounds):
-                        return None
-            x_factor, y_factor = factors
-            gsd_x = float(np.hypot(transform.a * x_factor, transform.d * y_factor))
-            gsd_y = float(np.hypot(transform.b * x_factor, transform.e * y_factor))
-            if not np.isfinite(gsd_x) or not np.isfinite(gsd_y) or gsd_x <= 0 or gsd_y <= 0:
-                return None
-            return gsd_x, gsd_y
-
-        if not crs.is_geographic:
-            return None
 
         col = (src.width - 1) / 2.0
         row = (src.height - 1) / 2.0
