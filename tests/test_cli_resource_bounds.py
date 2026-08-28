@@ -2,7 +2,6 @@ from typer.testing import CliRunner
 
 from depthwizard.cli import app
 
-
 runner = CliRunner()
 
 
