@@ -1,0 +1,41 @@
+:root {
+  --dw-toolrail-width: 56px;
+}
+
+.dw-toolrail {
+  gap: 6px;
+  padding: 10px 7px;
+}
+
+.dw-tool {
+  width: 40px;
+  min-height: 40px;
+  height: 40px;
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  gap: 0;
+  padding: 0;
+  text-align: center;
+}
+
+.dw-tool-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.dw-tool-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.dw-tool:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.dw-tool-label {
+  display: none !important;
+}
