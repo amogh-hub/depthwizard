@@ -39,8 +39,10 @@ def terrain_mesh_from_dsm(
     """Create a metric, y-up textured terrain mesh from a DSM/rDSM.
 
     x maps to image columns, z maps to negative image rows so north/up raster orientation remains
-    intuitive in Three.js, and vertex y stores elevation. When ``valid_mask`` is supplied, faces
-    touching invalid/nodata pixels are omitted rather than rendered as black artificial terrain.
+    intuitive in Three.js, and vertex y stores elevation. Faces are wound counter-clockwise when
+    viewed from above so geometric front normals point upward; analytical materials must never rely
+    on double-sided rendering to hide reversed terrain normals. When ``valid_mask`` is supplied,
+    faces touching invalid/nodata pixels are omitted rather than rendered as black artificial terrain.
     """
     z = np.asarray(elevation, dtype=np.float32)
     image = np.asarray(rgb)
@@ -94,10 +96,12 @@ def terrain_mesh_from_dsm(
                 and sampled_valid[row + 1, col]
                 and sampled_valid[row + 1, col + 1]
             )
+            # z decreases with raster row index, therefore (a, b, c) and (b, d, c) are the
+            # counter-clockwise y-up windings when the cell is viewed from above.
             if triangle_1_valid:
-                faces.append((a, c, b))
+                faces.append((a, b, c))
             if triangle_2_valid:
-                faces.append((b, c, d))
+                faces.append((b, d, c))
 
     if not faces:
         raise ValueError("valid_mask removed every terrain face")
