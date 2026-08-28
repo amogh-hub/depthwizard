@@ -26,6 +26,18 @@ describe("RT5 final workstation closure", () => {
     expect(app).toContain("rasterSurfaceReady");
   });
 
+  it("binds a 3D analytical-layer claim to the renderer-validated overlay frame", () => {
+    const app = source("../App.tsx");
+    const terrain = source("./TerrainViewport.tsx");
+    expect(app).toContain("terrainOverlayRenderState");
+    expect(app).toContain("onOverlayState={setTerrainOverlayRenderState}");
+    expect(app).toContain("analytical overlay frame-validated");
+    expect(app).not.toContain('"analytical overlay active"');
+    expect(terrain).toContain("onOverlayState");
+    expect(terrain).toContain("Analytical overlay rendered and frame-validated");
+    expect(terrain).toContain("source texture restored");
+  });
+
   it("preserves an already-active 3D workspace while keeping raster-analysis fallbacks on the DSM", () => {
     const app = source("../App.tsx");
     expect(app).toContain('(activeTool === "Measure" || activeTool === "Profiles") && geometryReady && activeView !== "3D Terrain"');
