@@ -240,6 +240,124 @@
   bottom: 14px;
 }
 
+/* Elevation transects are line charts, never default-filled SVG polygons. */
+.dw-profile-chart {
+  display: grid;
+  gap: 7px;
+  margin: 2px 0 12px;
+}
+
+.dw-profile-plot {
+  position: relative;
+  height: 174px;
+  padding-left: 72px;
+  border: 1px solid var(--dw-border);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfcfd, #f7f9fb);
+  overflow: hidden;
+}
+
+.dw-profile-plot svg {
+  position: absolute;
+  inset: 10px 8px 12px 72px;
+  width: calc(100% - 80px);
+  height: calc(100% - 22px);
+  overflow: visible;
+}
+
+.dw-profile-grid,
+.dw-profile-axis,
+.dw-profile-line,
+.dw-profile-reference-line {
+  fill: none !important;
+  vector-effect: non-scaling-stroke;
+}
+
+.dw-profile-grid {
+  stroke: #e2e7ed;
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.dw-profile-axis {
+  stroke: #aeb8c5;
+  stroke-width: 1;
+}
+
+.dw-profile-line {
+  stroke: var(--dw-primary);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.dw-profile-reference-line {
+  stroke: #7c8796;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.dw-profile-y-axis {
+  position: absolute;
+  inset: 12px auto 12px 8px;
+  width: 58px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: var(--dw-text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dw-profile-x-axis {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  color: var(--dw-text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-profile-x-axis span:nth-child(2) {
+  text-align: center;
+}
+
+.dw-profile-x-axis span:last-child {
+  text-align: right;
+}
+
+.dw-profile-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dw-text-muted);
+  font-size: 9px;
+}
+
+.dw-profile-key-swatch {
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--dw-primary);
+}
+
+.dw-profile-key-swatch--reference {
+  background: #7c8796;
+}
+
+.dw-profile-note {
+  margin-top: 10px;
+  padding: 8px 9px;
+  border-radius: 6px;
+  background: var(--dw-surface-subtle);
+  color: var(--dw-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 /* Readable metadata without one-character wrapping or orphaned filename suffixes. */
 .dw-property {
   grid-template-columns: minmax(104px, 0.78fr) minmax(0, 1.22fr);
@@ -305,5 +423,19 @@
   .dw-chip,
   .dw-compact-select {
     font-size: 10px;
+  }
+
+  .dw-profile-plot {
+    padding-left: 60px;
+  }
+
+  .dw-profile-plot svg {
+    left: 60px;
+    width: calc(100% - 68px);
+  }
+
+  .dw-profile-y-axis {
+    width: 48px;
+    font-size: 8px;
   }
 }
