@@ -21,7 +21,13 @@ function distanceLabel(profile: ProjectProfileResult): string {
 function ProfileChart({ profile }: { profile: ProjectProfileResult }) {
   const surface = profile.samples.filter((sample) => sample.surface.available && sample.surface.value !== null);
   if (surface.length < 2) return null;
-  const values = surface.map((sample) => sample.surface.value as number);
+  const reference = profile.samples.filter(
+    (sample) => sample.reference.available && sample.reference.value !== null,
+  );
+  const values = [
+    ...surface.map((sample) => sample.surface.value as number),
+    ...reference.map((sample) => sample.reference.value as number),
+  ];
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(max - min, 1e-9);
@@ -29,16 +35,13 @@ function ProfileChart({ profile }: { profile: ProjectProfileResult }) {
     .map((sample) => {
       const x = sample.fraction * 100;
       const y = 94 - ((sample.surface.value as number) - min) / span * 82;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
+      return `${x.toFixed(2)},${Math.min(98, Math.max(2, y)).toFixed(2)}`;
     })
     .join(" ");
-  const reference = profile.samples.filter(
-    (sample) => sample.reference.available && sample.reference.value !== null,
-  );
   const referencePoints = reference
     .map((sample) => {
       const x = sample.fraction * 100;
-      const y = 94 - ((sample.surface.value as number) - min) / span * 82;
+      const y = 94 - ((sample.reference.value as number) - min) / span * 82;
       return `${x.toFixed(2)},${Math.min(98, Math.max(2, y)).toFixed(2)}`;
     })
     .join(" ");
