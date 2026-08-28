@@ -29,12 +29,14 @@ describe("final workstation chrome", () => {
     expect(css).toContain("top: 58px");
   });
 
-  it("ships explicit camera help and analytical-overlay failure feedback", () => {
+  it("ships deterministic camera help and analytical-overlay failure feedback", () => {
     const terrain = source("./TerrainViewport.tsx");
     expect(terrain).toContain("Orbit · drag to rotate");
-    expect(terrain).toContain("Fly · W/S forward/back");
+    expect(terrain).toContain("Fly · WASD move");
     expect(terrain).toContain("First person · WASD move");
     expect(terrain).toContain("Top down · drag to pan");
+    expect(terrain).toContain("const freeCamera = new FlyControls");
+    expect(terrain).not.toContain("FirstPersonControls");
     expect(terrain).toContain("Analytical overlay unavailable");
     expect(terrain).toContain("Terrain bytes received · preparing GPU resources");
   });
