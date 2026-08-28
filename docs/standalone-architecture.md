@@ -6,15 +6,17 @@ Release Train 5 turns DepthWizard from a desktop frontend that expects a separat
 
 ## Runtime lifecycle
 
-1. Tauri reserves an ephemeral `127.0.0.1` port.
-2. Tauri generates a fresh 256-bit random session token.
+1. Tauri obtains an ephemeral `127.0.0.1` port candidate.
+2. Tauri generates two independent 256-bit random values: a session API token and a per-process boot identity nonce.
 3. Tauri resolves the qualified scientific runtime from its bundled resource tree.
-4. Tauri launches `depthwizard-core` directly as an owned child process, passing the token through the child environment rather than command-line arguments.
-5. The Python sidecar validates that packaged mode is loopback-only and that a session token is present.
-6. Tauri polls the minimal `/health` endpoint until the core is ready or the startup timeout expires.
-7. The React webview obtains `{apiBase, sessionToken}` through a Tauri IPC command before rendering the main application.
+4. Tauri launches `depthwizard-core` directly as an owned child process, passing both values through the child environment rather than command-line arguments.
+5. The Python sidecar validates that packaged mode is loopback-only and that both required launch credentials are present.
+6. The packaged sidecar exposes a private boot-identity endpoint containing only the boot nonce. Tauri polls that endpoint and accepts readiness only if the response contains the exact nonce generated for this child. It also fails immediately if the spawned child exits before readiness.
+7. Only after identity-verified readiness does React obtain `{apiBase, sessionToken}` through the Tauri IPC command before rendering the main application.
 8. Every scientific API request carries `x-depthwizard-token`; missing or incorrect tokens are rejected.
 9. Tauri terminates and reaps the owned scientific child when the application exits.
+
+The ephemeral-port handoff still contains a small bind/release window because Uvicorn owns the final listening socket, but a different local process cannot satisfy readiness merely by winning that port: it does not know the independently generated boot nonce. The session token is never sent during the readiness probe.
 
 The child is launched directly with Rust `std::process::Command`; a general-purpose shell is not required for the production scientific runtime.
 
@@ -50,7 +52,7 @@ A build that times out, crashes, cannot resolve bundled geospatial data, or prod
 
 ## Startup diagnostics
 
-When `DEPTHWIZARD_STARTUP_TRACE=<path>` is explicitly set for acceptance or diagnostics, the scientific core emits machine-readable JSONL startup phases. The trace never records the session token. Normal launches do not write a trace. Acceptance failures include the last observed startup phase instead of returning an opaque connection-refused timeout.
+When `DEPTHWIZARD_STARTUP_TRACE=<path>` is explicitly set for acceptance or diagnostics, the scientific core emits machine-readable JSONL startup phases. The trace never records the session token or boot nonce. Normal launches do not write a trace. Acceptance failures include the last observed startup phase instead of returning an opaque connection-refused timeout.
 
 The qualified Apple Silicon runtime has demonstrated a cold packaged-core readiness time of roughly 41 seconds. Tauri therefore uses a 90-second liveness watchdog. This watchdog is a correctness bound, not a performance claim; finale-Mac FPS and responsiveness qualification remains RT7 evidence.
 
@@ -69,20 +71,32 @@ The final core uses model assets already installed/cached on the machine. It mus
 
 ## Acceptance-only control hooks
 
-Normal production launches do not write the session token to disk. Deterministic acceptance has three explicit opt-in hooks, all disabled unless their environment variables are supplied by the acceptance runner:
+Normal production launches do not write the session token to disk. Deterministic acceptance has explicit opt-in hooks, all disabled unless their environment variables are supplied by the acceptance runner:
 
-- `DEPTHWIZARD_ACCEPTANCE_BOOT_REPORT=<path>` writes a non-secret boot report after the sidecar is healthy. It records endpoint, PID, offline state and token bit length, never the token value.
+- `DEPTHWIZARD_ACCEPTANCE_BOOT_REPORT=<path>` writes a non-secret boot report only after the sidecar has passed per-process identity verification. It records endpoint, PID, offline state, token bit length, and the fact/bit length of the boot-identity proof; it records neither random value.
 - `DEPTHWIZARD_ACCEPTANCE_AUTO_EXIT_MS=<500..60000>` supports the short bundle-lifecycle smoke.
 - `DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH=<path>` creates a mode-0600 ephemeral control file containing the loopback endpoint, token and sidecar PID so the external RT5 acceptance runner can drive the already-running Tauri-owned sidecar through the same authenticated API used by the desktop. The runner deletes this file immediately after reading it, and Tauri removes it again on shutdown if necessary.
 - `DEPTHWIZARD_ACCEPTANCE_EXIT_SIGNAL=<path>` lets the RT5 runner request a normal Tauri exit after the full scientific workflow, so Rust shutdown still kills and reaps the owned sidecar.
 
 The ephemeral control channel is test-only and is never used by normal production launches. Its token is never copied into final evidence artifacts.
 
+## Dependency reproducibility boundary
+
+Standalone source qualification has three resolver surfaces and all three must be frozen before clean-machine RT7 evidence is allowed:
+
+- npm: exact top-level package versions plus committed `apps/desktop/package-lock.json`;
+- Cargo: committed `apps/desktop/src-tauri/Cargo.lock`;
+- Python: committed resolver lock `uv.lock` in addition to `pyproject.toml`.
+
+`scripts/check_release_reproducibility.py --strict` is the source prerequisite gate. A passing lock audit proves only that dependency resolution is frozen; it does not replace the final clean-machine build/install/process test.
+
+When lockfiles are not yet committed, CI contains a temporary lock-bootstrap job that resolves and uploads the three lock candidates for review. The generated files must be committed only after the exact-head test/build matrix passes with them, after which ordinary CI should consume the locks (`npm ci`, locked Cargo, locked Python resolution) rather than continuously resolving new graphs.
+
 ## RT5 acceptance
 
 `make release-train-5-sidecar-smoke` validates the already-qualified frozen runtime's process/security contract: loopback readiness, startup phases, missing/wrong-token rejection, authorized raster inspection, offline policy and clean process termination.
 
-`make release-train-5-app-smoke` validates the real packaged `.app`: qualified runtime resource integrity, Tauri-owned startup, loopback readiness, non-export of the token to evidence, offline policy, no user-visible terminal and child termination on graceful desktop exit.
+`make release-train-5-app-smoke` validates the real packaged `.app`: qualified runtime resource integrity, Tauri-owned startup, per-process boot-identity proof, loopback readiness, non-export of the token to evidence, offline policy, no user-visible terminal and child termination on graceful desktop exit.
 
 `make release-train-5-full-smoke` launches the real packaged `DepthWizard.app` and then, through the authenticated loopback sidecar owned by that same Tauri process, proves:
 
@@ -100,7 +114,7 @@ The ephemeral control channel is test-only and is never used by normal productio
 
 ## Frozen release-train boundary
 
-A passing consolidated RT5 acceptance closes **RT5 — Standalone Production Suite engineering scope**: packaged scientific runtime, real no-terminal Tauri application lifecycle, secure loopback/session model, offline DA3 execution, fresh process→validate→mesh→export flow, and recoverable malformed/runtime failures.
+A passing consolidated RT5 acceptance closes **RT5 — Standalone Production Suite engineering scope**: packaged scientific runtime, real no-terminal Tauri application lifecycle, secure loopback/session model, identity-bound sidecar startup, offline DA3 execution, fresh process→validate→mesh→export flow, and recoverable malformed/runtime failures.
 
 It does **not** consume or replace the already-frozen later release trains:
 
