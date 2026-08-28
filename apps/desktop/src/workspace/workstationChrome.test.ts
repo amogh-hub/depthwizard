@@ -29,15 +29,18 @@ describe("final workstation chrome", () => {
     expect(css).toContain("top: 58px");
   });
 
-  it("ships deterministic camera help and analytical-overlay failure feedback", () => {
+  it("ships focused free-camera help, true first-person entry and overlay recovery", () => {
     const terrain = source("./TerrainViewport.tsx");
     expect(terrain).toContain("Orbit · drag to rotate");
-    expect(terrain).toContain("Fly · WASD move");
-    expect(terrain).toContain("First person · WASD move");
+    expect(terrain).toContain("Fly · click terrain · WASD move");
+    expect(terrain).toContain("First person · click terrain · WASD move");
     expect(terrain).toContain("Top down · drag to pan");
     expect(terrain).toContain("const freeCamera = new FlyControls");
     expect(terrain).not.toContain("FirstPersonControls");
+    expect(terrain).toContain("canvasFocused");
+    expect(terrain).toContain("enterFirstPerson");
     expect(terrain).toContain("Analytical overlay unavailable");
+    expect(terrain).toContain("Retry overlay");
     expect(terrain).toContain("Terrain bytes received · preparing GPU resources");
   });
 
