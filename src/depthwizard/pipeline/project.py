@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from depthwizard.contracts import ProjectRunStatus
 from depthwizard.pipeline.stages import ProcessingStage
+from depthwizard.provenance.manifest import sha256_file
 
 
 def _utc_now() -> str:
@@ -118,8 +119,40 @@ class ProjectManifest:
         self.updated_at_utc = now
         self.save()
 
+    def verified_artifact_path(self, name: str) -> Path:
+        """Return a registered artifact only when its persisted bytes match the manifest identity."""
+        payload = self.artifacts.get(name)
+        if not payload:
+            raise RuntimeError(f"project manifest has no registered {name} artifact")
+        raw = payload.get("path")
+        expected = payload.get("sha256")
+        if not isinstance(raw, str):
+            raise RuntimeError(f"project manifest {name} artifact path is malformed")
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise RuntimeError(f"project manifest {name} artifact has no valid SHA-256 identity")
+        path = Path(raw)
+        if not path.is_file():
+            raise FileNotFoundError(f"persisted {name} artifact does not exist: {path}")
+        actual = sha256_file(path)
+        if actual != expected:
+            raise RuntimeError(
+                f"persisted {name} artifact hash mismatch; expected {expected}, got {actual}. "
+                "DepthWizard will not reuse mutated or stale scientific products."
+            )
+        return path
+
     def stage_completed(self, stage: ProcessingStage) -> bool:
-        return self.stages.get(stage.value, {}).get("status") == "completed"
+        entry = self.stages.get(stage.value, {})
+        if entry.get("status") != "completed":
+            return False
+        # A completed stage is reusable evidence only if every registered artifact it claims still
+        # matches the SHA-256 identity frozen into the project manifest.
+        stage_artifacts = entry.get("artifacts", {})
+        if isinstance(stage_artifacts, dict):
+            for name in stage_artifacts:
+                if name in self.artifacts:
+                    self.verified_artifact_path(name)
+        return True
 
     def register_artifact(
         self,
