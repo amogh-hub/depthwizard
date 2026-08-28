@@ -26,12 +26,36 @@ def test_packaged_sidecar_requires_session_token(monkeypatch: pytest.MonkeyPatch
         validate_launch_environment(host="127.0.0.1", port=8765)
 
 
+@pytest.mark.parametrize("token", ["a" * 63, "a" * 65, "g" * 64])
+def test_packaged_sidecar_rejects_non_256_bit_hex_session_token(
+    monkeypatch: pytest.MonkeyPatch,
+    token: str,
+) -> None:
+    monkeypatch.setenv("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
+    monkeypatch.setenv("DEPTHWIZARD_SESSION_TOKEN", token)
+    with pytest.raises(RuntimeError, match="256-bit hexadecimal"):
+        validate_launch_environment(host="127.0.0.1", port=8765)
+
+
 def test_packaged_sidecar_requires_boot_identity_nonce(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
     monkeypatch.setenv("DEPTHWIZARD_SESSION_TOKEN", "a" * 64)
     monkeypatch.setenv("DEPTHWIZARD_REQUIRE_BOOT_NONCE", "1")
     monkeypatch.delenv("DEPTHWIZARD_BOOT_NONCE", raising=False)
     with pytest.raises(RuntimeError, match="per-process boot identity nonce"):
+        validate_launch_environment(host="127.0.0.1", port=8765)
+
+
+@pytest.mark.parametrize("nonce", ["b" * 63, "b" * 65, "z" * 64])
+def test_packaged_sidecar_rejects_non_256_bit_hex_boot_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+    nonce: str,
+) -> None:
+    monkeypatch.setenv("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
+    monkeypatch.setenv("DEPTHWIZARD_SESSION_TOKEN", "a" * 64)
+    monkeypatch.setenv("DEPTHWIZARD_REQUIRE_BOOT_NONCE", "1")
+    monkeypatch.setenv("DEPTHWIZARD_BOOT_NONCE", nonce)
+    with pytest.raises(RuntimeError, match="256-bit hexadecimal"):
         validate_launch_environment(host="127.0.0.1", port=8765)
 
 
