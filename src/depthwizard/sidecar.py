@@ -63,6 +63,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _is_256_bit_hex(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdefABCDEF" for character in value)
+
+
 def validate_launch_environment(*, host: str, port: int) -> None:
     """Fail closed for packaged standalone launches before starting the HTTP server."""
     if host not in _LOOPBACK_HOSTS:
@@ -71,15 +75,17 @@ def validate_launch_environment(*, host: str, port: int) -> None:
         raise ValueError("DepthWizard packaged core port must be between 1 and 65535")
     if os.environ.get("DEPTHWIZARD_REQUIRE_SESSION_TOKEN") == "1":
         token = os.environ.get("DEPTHWIZARD_SESSION_TOKEN", "")
-        if len(token) < 32:
+        if not _is_256_bit_hex(token):
             raise RuntimeError(
-                "DepthWizard standalone launch requires a per-session authentication token"
+                "DepthWizard standalone launch requires a 256-bit hexadecimal per-session "
+                "authentication token"
             )
     if os.environ.get("DEPTHWIZARD_REQUIRE_BOOT_NONCE") == "1":
         nonce = os.environ.get("DEPTHWIZARD_BOOT_NONCE", "")
-        if len(nonce) < 32:
+        if not _is_256_bit_hex(nonce):
             raise RuntimeError(
-                "DepthWizard standalone launch requires a per-process boot identity nonce"
+                "DepthWizard standalone launch requires a 256-bit hexadecimal per-process boot "
+                "identity nonce"
             )
 
 
@@ -262,6 +268,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     boot_nonce = os.environ.get("DEPTHWIZARD_BOOT_NONCE")
     if boot_nonce:
+
         def _boot_identity() -> dict[str, str]:
             return {"boot_nonce": boot_nonce}
 
