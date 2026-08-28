@@ -46,8 +46,18 @@ def inspect(path: Path) -> None:
 def reconstruct_da3(
     source: Path,
     output_dir: Path,
-    tile_size: int = typer.Option(1024, min=256, help="Inference tile edge in source pixels"),
-    overlap: int = typer.Option(128, min=0, help="Tile overlap in source pixels"),
+    tile_size: int = typer.Option(
+        1024,
+        min=256,
+        max=4096,
+        help="Inference tile edge in source pixels",
+    ),
+    overlap: int = typer.Option(
+        128,
+        min=0,
+        max=4095,
+        help="Tile overlap in source pixels",
+    ),
     harmonize_overlaps: bool = typer.Option(
         True,
         help="Robustly scale/offset harmonize overlapping monocular tiles",
@@ -275,7 +285,12 @@ def calibrate_dem(
     relative_height: Path,
     dem: Path,
     output: Path,
-    sigma_px: float = typer.Option(24.0, help="Low-frequency residual smoothing scale in pixels"),
+    sigma_px: float = typer.Option(
+        24.0,
+        min=0.0,
+        max=4096.0,
+        help="Low-frequency residual smoothing scale in pixels",
+    ),
 ) -> None:
     """Calibrate a georeferenced relative-height raster against a DEM and emit metric DSM."""
     with rasterio.open(relative_height) as src:
