@@ -67,3 +67,23 @@ def test_release_reproducibility_audit_reports_every_unfrozen_surface(tmp_path: 
         "missing_python_lockfile",
         "non_exact_npm_dependency_spec",
     }
+
+
+def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
+    root = Path(__file__).resolve().parents[1]
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+    target = makefile.split("release-train-5-final-qualification:\n", 1)[1].split(
+        "\nstandalone-build:", 1
+    )[0]
+
+    assert "git ls-files --error-unmatch uv.lock" in target
+    assert 'test -z "$$(git status --porcelain)"' in target
+    assert "uv sync --frozen --python 3.12 --extra dev --extra standalone" in target
+    assert "npm ci --no-audit --no-fund" in target
+    assert "cargo clippy --locked" in target
+    assert "cargo test --locked" in target
+    assert (
+        "git diff --exit-code -- uv.lock apps/desktop/package-lock.json "
+        "apps/desktop/src-tauri/Cargo.lock"
+    ) in target
+    assert 'pip install -e ".[dev,standalone]"' not in target
