@@ -11,6 +11,7 @@ import yaml
 from rasterio.transform import from_origin
 
 from depthwizard.evaluation.final_campaign import evaluate_final_science_campaign
+from depthwizard.provenance.manifest import sha256_file
 
 
 def _write_surface(path: Path, values: np.ndarray) -> None:
@@ -96,6 +97,7 @@ def _setup_campaign(
             {
                 "scene_id": scene_id,
                 "prediction_path": f"../preds/{scene_id}-pred.tif",
+                "prediction_sha256": sha256_file(prediction),
                 "calibration_evidence_paths": [evidence_path],
             }
         )
@@ -125,6 +127,7 @@ def _setup_campaign(
         {
             "scene_id": cross_scene_id,
             "prediction_path": f"../preds/{cross_scene_id}-pred.tif",
+            "prediction_sha256": sha256_file(cross_prediction),
             "calibration_evidence_paths": [f"../data/{cross_scene_id}-dem.tif"],
         }
     )
@@ -142,6 +145,7 @@ def _setup_campaign(
             {
                 "schema_version": 1,
                 "model_id": "DA3MONO-LARGE",
+                "checkpoint_sha256": "a" * 64,
                 "predictions": predictions,
             },
             sort_keys=False,
@@ -171,6 +175,8 @@ def test_campaign_emits_required_four_terrain_and_cross_sensor_evidence(
         "urban",
     ]
     assert report["requirements"]["cross_sensor_scene_count"] == 1
+    assert report["requirements"]["checkpoint_identity_frozen"] == "passed"
+    assert report["requirements"]["prediction_identity_freeze"] == "passed"
     assert report["terrain"]["urban"]["rmse_m"] == pytest.approx(1.0, abs=1e-5)
     assert report["terrain"]["forested"]["mae_m"] == pytest.approx(4.0, abs=1e-5)
     assert report["test_overall"]["rmse_m"] == pytest.approx(np.sqrt(7.5), abs=1e-5)
@@ -212,6 +218,22 @@ def test_campaign_rejects_prediction_identical_to_reference(tmp_path: Path) -> N
     registry, manifest = _setup_campaign(tmp_path, identical_prediction=True)
 
     with pytest.raises(ValueError, match="prediction is byte-identical"):
+        evaluate_final_science_campaign(
+            registry,
+            manifest,
+            tmp_path / "out",
+            min_valid_pixels=4,
+        )
+
+
+def test_campaign_rejects_prediction_mutated_after_manifest_freeze(tmp_path: Path) -> None:
+    registry, manifest = _setup_campaign(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    prediction_entry = payload["predictions"][0]
+    prediction_path = (manifest.parent / prediction_entry["prediction_path"]).resolve()
+    prediction_path.write_bytes(prediction_path.read_bytes() + b"post-freeze-mutation")
+
+    with pytest.raises(ValueError, match="no longer matches frozen manifest"):
         evaluate_final_science_campaign(
             registry,
             manifest,
