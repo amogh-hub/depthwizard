@@ -188,7 +188,10 @@ fn boot_response_proves_identity(response: &[u8], expected_boot_nonce: &str) -> 
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&response[header_end..]) else {
         return false;
     };
-    payload.get("boot_nonce").and_then(serde_json::Value::as_str) == Some(expected_boot_nonce)
+    payload
+        .get("boot_nonce")
+        .and_then(serde_json::Value::as_str)
+        == Some(expected_boot_nonce)
 }
 
 fn health_check(port: u16, expected_boot_nonce: &str) -> io::Result<bool> {
@@ -452,12 +455,9 @@ pub fn run() {
             let mut child = launch_sidecar(app, port, &token, &boot_nonce)?;
             let sidecar_pid = child.id();
 
-            if let Err(error) = wait_for_health(
-                &mut child,
-                port,
-                &boot_nonce,
-                SIDECAR_READY_TIMEOUT,
-            ) {
+            if let Err(error) =
+                wait_for_health(&mut child, port, &boot_nonce, SIDECAR_READY_TIMEOUT)
+            {
                 terminate_child(&mut child);
                 return Err(Box::new(error));
             }
