@@ -329,6 +329,25 @@ class ProjectManifest:
         for name in self.artifacts:
             self.verified_artifact_path(name)
 
+    def _validate_stage_artifact_paths(self) -> None:
+        """Keep provenance stage pointers inside the project even though they are not file inputs."""
+        for stage_name, entry in self.stages.items():
+            artifacts = entry.get("artifacts", {})
+            if not isinstance(artifacts, dict):
+                raise ProjectIntegrityError(
+                    f"project manifest stage {stage_name!r} artifacts are malformed"
+                )
+            for artifact_name, raw_path in artifacts.items():
+                if not isinstance(raw_path, str):
+                    raise ProjectIntegrityError(
+                        f"project manifest stage {stage_name!r} artifact {artifact_name!r} "
+                        "path is malformed"
+                    )
+                self._confined_artifact_path(
+                    f"{stage_name}.{artifact_name}",
+                    raw_path,
+                )
+
     @classmethod
     def create_or_load(cls, project_dir: str | Path, source_path: str | Path) -> ProjectManifest:
         directory = Path(project_dir)
@@ -492,7 +511,6 @@ class ProjectManifest:
 
     def save(self) -> None:
         self.project_dir.mkdir(parents=True, exist_ok=True)
-        self._validate_registered_artifact_paths()
         self.updated_at_utc = _utc_now()
         payload = {
             "schema_version": 2,
@@ -515,6 +533,8 @@ class ProjectManifest:
         # Validate the full document before replacing durable state. This keeps in-memory corruption
         # or a bad caller from persisting a manifest that the next process cannot safely reopen.
         _validate_v2_payload(payload)
+        self._validate_registered_artifact_paths()
+        self._validate_stage_artifact_paths()
         temporary = self.path.with_suffix(".json.tmp")
         temporary.write_text(
             json.dumps(payload, indent=2, sort_keys=True, default=str),
@@ -554,6 +574,7 @@ class ProjectManifest:
                 stages=stages,
             )
             manifest._validate_registered_artifact_paths()
+            manifest._validate_stage_artifact_paths()
             return manifest
         if schema_version != 2:
             raise ProjectIntegrityError(
@@ -580,5 +601,6 @@ class ProjectManifest:
             errors=validated["errors"],
         )
         manifest._validate_registered_artifact_paths()
+        manifest._validate_stage_artifact_paths()
         manifest._validate_registered_artifact_integrity()
         return manifest
