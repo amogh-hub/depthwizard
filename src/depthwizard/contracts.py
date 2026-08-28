@@ -317,20 +317,24 @@ class ProcessingRequest(BaseModel):
     ``srtm_path`` is retained for compatibility with early callers. New code should use
     ``dem_path`` because the calibration source may be SRTM, Copernicus DEM, or another explicit
     geospatial DEM product. Supplying both names is rejected rather than guessed.
+
+    Resource-affecting inputs are explicitly bounded. DepthWizard is a local scientific workstation,
+    but authenticated local callers still must not be able to request arbitrarily large inference
+    tiles, evidence arrays, or smoothing kernels that bypass the runtime's bounded-memory design.
     """
 
     source: Path
     output_dir: Path
     dem_path: Path | None = None
     srtm_path: Path | None = None
-    gcps: list[GroundControlPoint] = Field(default_factory=list)
+    gcps: list[GroundControlPoint] = Field(default_factory=list, max_length=10_000)
     gcp_evidence: GroundControlPointEvidence | None = None
     requested_output: Literal["rdsm", "dsm"] | None = None
     band_indices: tuple[int, int, int] = (1, 2, 3)
-    tile_size: int = Field(default=1024, ge=256)
-    overlap: int = Field(default=128, ge=0)
+    tile_size: int = Field(default=1024, ge=256, le=4096)
+    overlap: int = Field(default=128, ge=0, le=4095)
     harmonize_overlaps: bool = True
-    low_frequency_sigma_px: float = Field(default=24.0, ge=0.0)
+    low_frequency_sigma_px: float = Field(default=24.0, ge=0.0, le=4096.0)
 
     @property
     def metric_dem_path(self) -> Path | None:
