@@ -25,6 +25,7 @@ EVALUATION_SPLITS = ("test", "cross_sensor_test")
 class CampaignPrediction(BaseModel):
     scene_id: str = Field(min_length=1)
     prediction_path: Path
+    prediction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     calibration_evidence_paths: list[Path] = Field(min_length=1, max_length=32)
     prediction_vertical_units: Literal["m"] = "m"
     reference_vertical_units: Literal["m"] = "m"
@@ -34,7 +35,7 @@ class CampaignPrediction(BaseModel):
 class CampaignManifest(BaseModel):
     schema_version: Literal[1] = 1
     model_id: str = Field(min_length=1)
-    checkpoint_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    checkpoint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     predictions: list[CampaignPrediction] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -287,8 +288,9 @@ def evaluate_final_science_campaign(
 
     This function never creates predictions and never uses reference data for calibration. It only
     evaluates pre-existing metric DSM predictions against registry-declared independent references.
-    Calibration evidence is SHA-audited against each reference so a copied/renamed calibration DEM
-    cannot silently become evaluation truth.
+    Prediction identities must already be frozen in the manifest and are SHA-verified before any
+    reference evaluation. Calibration evidence is SHA-audited against each reference so a
+    copied/renamed calibration DEM cannot silently become evaluation truth.
     """
     if min_valid_pixels < 2:
         raise ValueError("min_valid_pixels must be >= 2")
@@ -326,6 +328,13 @@ def evaluate_final_science_campaign(
             base_dir=campaign_base,
             context=f"prediction for {scene.scene_id}",
         )
+        prediction_sha = sha256_file(prediction_path)
+        if prediction_sha != prediction_entry.prediction_sha256:
+            raise ValueError(
+                f"scene {scene.scene_id} prediction SHA-256 no longer matches frozen manifest; "
+                f"expected={prediction_entry.prediction_sha256}, actual={prediction_sha}"
+            )
+
         assert scene.reference_path is not None
         reference_path = _resolved_file(
             scene.reference_path,
@@ -338,7 +347,6 @@ def evaluate_final_science_campaign(
             context=f"RGB source for {scene.scene_id}",
         )
 
-        prediction_sha = sha256_file(prediction_path)
         reference_sha = sha256_file(reference_path)
         if prediction_path == reference_path or prediction_sha == reference_sha:
             raise ValueError(
@@ -398,6 +406,8 @@ def evaluate_final_science_campaign(
                 "prediction": {
                     "path": str(prediction_path),
                     "sha256": prediction_sha,
+                    "manifest_sha256": prediction_entry.prediction_sha256,
+                    "identity_check": "passed",
                     "vertical_units": prediction_entry.prediction_vertical_units,
                 },
                 "reference": {
@@ -434,7 +444,8 @@ def evaluate_final_science_campaign(
         "schema_version": 1,
         "protocol": "depthwizard_final_science_campaign_v1",
         "claim_boundary": (
-            "Independent evaluation only. Reference rasters are prohibited from matching "
+            "Independent evaluation only. Production checkpoint identity and prediction bytes are "
+            "frozen before reference evaluation. Reference rasters are prohibited from matching "
             "prediction or calibration-evidence bytes. Results do not imply unseen sensor/terrain "
             "performance outside the frozen registry."
         ),
@@ -460,6 +471,8 @@ def evaluate_final_science_campaign(
             ),
             "geographic_split_integrity": "passed",
             "cross_sensor_train_sensor_separation": "passed",
+            "checkpoint_identity_frozen": "passed",
+            "prediction_identity_freeze": "passed",
             "reference_independence": "passed",
         },
         "test_overall": test_overall.summary(),
