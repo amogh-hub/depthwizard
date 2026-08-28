@@ -136,6 +136,7 @@ release-train-5-final-qualification:
 	git ls-files --error-unmatch uv.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock >/dev/null
 	test -z "$$(git status --porcelain)"
 	uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
+	.venv/bin/python -c "import torch, torchvision; from torch import nn; assert nn.Module is not None; print('Scientific runtime imports PASS:', torch.__version__, torchvision.__version__)"
 	.venv/bin/python -m scripts.check_release_reproducibility --strict
 	.venv/bin/python scripts/verify.py
 	.venv/bin/python -m scripts.ensure_tauri_sidecar_stub
