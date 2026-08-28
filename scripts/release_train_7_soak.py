@@ -129,6 +129,13 @@ def _sample_memory(samples: list[dict[str, object]], key: str) -> dict[str, int 
     }
 
 
+def _sample_float(sample: dict[str, object], key: str) -> float:
+    value = sample.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SoakFailure(f"packaged soak sample field {key!r} is not numeric")
+    return float(value)
+
+
 def run_soak(
     *,
     duration_seconds: float,
@@ -282,7 +289,7 @@ def run_soak(
         raise SoakFailure("packaged soak never reached the monitored healthy state")
     if not samples:
         raise SoakFailure("packaged soak completed without any liveness samples")
-    cycle_latencies = [float(sample["request_cycle_seconds"]) for sample in samples]
+    cycle_latencies = [_sample_float(sample, "request_cycle_seconds") for sample in samples]
     report: dict[str, Any] = {
         "schema_version": 1,
         "status": qualification_status(monitored_seconds),
