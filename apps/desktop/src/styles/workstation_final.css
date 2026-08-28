@@ -137,7 +137,7 @@
   z-index: 9;
   top: 58px;
   left: 14px;
-  max-width: min(680px, calc(100% - 230px));
+  max-width: min(720px, calc(100% - 230px));
   padding: 6px 9px;
   border: 1px solid rgba(201, 210, 220, 0.9);
   border-radius: 7px;
@@ -152,8 +152,45 @@
   text-overflow: ellipsis;
 }
 
+.dw-terrain-overlay-state {
+  position: absolute;
+  z-index: 11;
+  top: 94px;
+  left: 14px;
+  max-width: min(520px, calc(100% - 230px));
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid rgba(201, 210, 220, 0.9);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--dw-text-muted);
+  box-shadow: 0 1px 5px rgba(16, 24, 40, 0.045);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.dw-terrain-overlay-state strong {
+  color: var(--dw-text);
+  white-space: nowrap;
+}
+
+.dw-terrain-overlay-state span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dw-terrain-overlay-state--error {
+  border-color: rgba(181, 77, 77, 0.38);
+  background: rgba(255, 250, 250, 0.98);
+  color: var(--dw-danger);
+}
+
 .dw-scientific-legend {
-  top: 104px;
+  top: 132px;
 }
 
 .dw-north-indicator {
@@ -215,7 +252,8 @@
 
   .dw-canvas-context,
   .dw-interaction-hint,
-  .dw-terrain-mode-help {
+  .dw-terrain-mode-help,
+  .dw-terrain-overlay-state {
     max-width: calc(100% - 92px);
   }
 }
