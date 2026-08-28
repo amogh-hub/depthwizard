@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
+from pyproj import Geod, Transformer
 from rasterio.transform import from_origin
 
 from depthwizard.io.raster import (
@@ -100,6 +101,42 @@ def test_ground_sample_distance_is_metric_for_projected_crs(tmp_path: Path) -> N
     metadata = inspect_raster(path)
     assert metadata.ground_sample_distance_x is not None
     assert abs(metadata.ground_sample_distance_x - 10.0) < 0.05
+
+
+def test_web_mercator_gsd_is_true_ground_spacing_not_map_metres(tmp_path: Path) -> None:
+    path = tmp_path / "joshimath_webmercator.tif"
+    to_map = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    to_geo = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    lon, lat = 79.64, 30.61
+    x, y = to_map.transform(lon, lat)
+    map_pixel = 38.219
+    transform = from_origin(x - 4 * map_pixel, y + 4 * map_pixel, map_pixel, map_pixel)
+    _write(
+        path,
+        np.ones((8, 8), dtype=np.float32),
+        transform=transform,
+        crs="EPSG:3857",
+    )
+
+    gsd = ground_sample_distance_m(path)
+    assert gsd is not None
+
+    col = (8 - 1) / 2.0
+    row = (8 - 1) / 2.0
+    x0, y0 = transform * (col + 0.5, row + 0.5)
+    x1, y1 = transform * (col + 1.5, row + 0.5)
+    x2, y2 = transform * (col + 0.5, row + 1.5)
+    lon0, lat0 = to_geo.transform(x0, y0)
+    lon1, lat1 = to_geo.transform(x1, y1)
+    lon2, lat2 = to_geo.transform(x2, y2)
+    geod = Geod(ellps="WGS84")
+    _, _, expected_x = geod.inv(lon0, lat0, lon1, lat1)
+    _, _, expected_y = geod.inv(lon0, lat0, lon2, lat2)
+
+    assert abs(gsd[0] - abs(expected_x)) < 1e-4
+    assert abs(gsd[1] - abs(expected_y)) < 1e-4
+    assert gsd[0] < map_pixel * 0.9
+    assert 32.0 < gsd[0] < 34.0
 
 
 def test_ground_sample_distance_rejects_projected_extent_outside_crs_area(
