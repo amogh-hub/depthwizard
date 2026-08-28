@@ -31,14 +31,14 @@ The desktop is accepted only when scientific product state, display-asset state,
 
 ## Analyst workflows
 
-- Measure and Profiles always enter the 2D DSM workspace, even when a 3D mesh already exists.
-- Structure measurement always enters the metric DSM workspace.
+- Measure and Profiles default to the registered 2D DSM workspace when a raster workflow is required.
+- Structure measurement requires a metric DSM surface.
 - Measure: A/B selection, plan distance, endpoint elevation change, clear/cancel behavior.
 - Profiles: live A→B transect preview, persisted-surface sampling, elevation chart, gain/loss, and optional reference line.
 - Structures: explicit footprint vertices, draggable edit handles, undo/delete/escape, and robust local-ground structural-height calculation.
 - Tools that require a raster surface are disabled if that active surface failed to load.
 - Switching tools clears unrelated stale probe/transect/structure state.
-- 3D direct selection is restricted to the Navigate/Project context so camera manipulation cannot masquerade as an analyst-mode click.
+- When the 3D terrain is already active and renderer-ready, Project, Measure, Profiles, and metric Structures may perform evidence-native 3D point selection. The selected world point is converted back to the authoritative raster/project coordinate system before scientific sampling; camera gestures must never masquerade as analytical clicks.
 
 ## Comparison and validation
 
@@ -56,6 +56,7 @@ The renderer state progression is:
 - Camera controls remain disabled before renderer-ready.
 - Blank/zero-geometry renderers cannot report success or meaningful FPS.
 - WebGL/context/GLB failures show an explicit failure with retry/diagnostics.
+- Analytical overlay readiness is bound to renderer-validated overlay state, not merely to a successful image fetch.
 - Auto LOD ignores invalid telemetry and uses sustained pressure; an approximately 30 fps screen-recording environment does not by itself force the lowest LOD.
 
 ## 3D navigation
@@ -86,7 +87,7 @@ The renderer state progression is:
 - 3D telemetry appears only in the 3D workspace.
 - Footer status describes the current view/action; an old completed export does not override active DSM/Optical/3D status.
 
-## Exact-head packaging contract
+## Exact-head packaging and sidecar identity contract
 
 A workstation correction build must not reuse a stale staged Python sidecar. The supported local target is:
 
@@ -96,11 +97,23 @@ make release-train-5-workstation-build
 
 It synchronizes the exact checkout, runs the repository verification suite, rebuilds the packaged Python sidecar, installs/tests the frontend, and then packages Tauri.
 
-At packaged desktop startup, DepthWizard probes the workstation preview and legend routes through the authenticated loopback API. An incompatible/stale sidecar fails closed instead of opening a partially functional workstation.
+At packaged desktop startup, Tauri launches the sidecar with two independent 256-bit random values: the API session token and a per-process boot identity nonce. Readiness is accepted only when the loopback sidecar returns the expected boot nonce from the packaged-only boot endpoint; a different local process that wins the ephemeral-port race cannot satisfy that identity proof. The session token is not sent during readiness probing. After identity-verified boot, the desktop probes the workstation preview and legend routes through the authenticated loopback API. An incompatible/stale sidecar fails closed instead of opening a partially functional workstation.
+
+## Reproducibility contract
+
+Final RT7 source qualification requires all dependency-resolution surfaces to be frozen and audited:
+
+- exact top-level npm dependency versions;
+- committed `apps/desktop/package-lock.json`;
+- committed `apps/desktop/src-tauri/Cargo.lock`;
+- committed Python resolver lock (`uv.lock`);
+- clean-machine installation/build using those locks rather than unconstrained resolution.
+
+The source audit is a prerequisite only. A passing lock audit does not replace clean-machine packaged inference, accelerator compatibility, FPS, or soak evidence.
 
 ## Hosted CI quota exception
 
-GitHub-hosted Actions quota was exhausted during this corrective campaign. A workflow that is rejected before job steps execute is not treated as code evidence. The last actually executed green hosted run remains historical evidence only; the corrective head requires local exact-head verification now and one hosted exact-head rerun after the account quota resets.
+GitHub-hosted Actions quota was exhausted during the original corrective campaign. A workflow rejected before job steps execute is not code evidence. The last actually executed green hosted run remains historical evidence only; any newer exact head still requires local exact-head verification and one hosted exact-head rerun when hosted execution is available.
 
 ## Final Mac operator acceptance
 
@@ -109,7 +122,7 @@ After the exact-head workstation build passes locally, perform one continuous re
 1. Open the existing Joshimath project.
 2. Confirm DSM and available Optical restoration without rerunning reconstruction.
 3. Exercise 2D pan/zoom/Fit/1:1 and synchronized layer changes.
-4. Exercise Measure, Profiles, Structure edit/undo, and stale-state cleanup.
+4. Exercise Measure, Profiles, Structure edit/undo, stale-state cleanup, then repeat supported point-selection tasks from an already-active renderer-ready 3D workspace.
 5. Exercise 3D loading/readiness, Orbit, Fly, First Person, Top Down, Flythrough, Fit, LOD, and vertical exaggeration.
 6. Verify every available 3D analytical overlay visibly changes and has matching semantics/legend.
 7. Confirm Compare stays gated without a valid reference; if an independent reference is supplied, exercise Compare and validation.
