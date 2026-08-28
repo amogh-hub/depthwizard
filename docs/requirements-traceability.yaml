@@ -30,15 +30,17 @@ requirements:
     implementation:
       - depthwizard.geometry_prior.base
       - depthwizard.geometry_prior.da3.DA3MonocularPrior
-    verification: "checkpoint/model manifest + accelerator-specific inference integration suite"
+      - model-manifests/da3mono-large.yaml
+    verification: "exact Hugging Face revision/checkpoint identity + pinned upstream source + accelerator-specific inference integration suite"
     evidence: "backbone_manifest.json"
 
   - id: PS-DOMAINGAP-001
     clause: "Address remote-sensing domain gaps and structural variation"
     implementation:
-      - final remote-sensing refinement network (training lane)
+      - remote-sensing refinement research lane with evidence-gated promotion policy
       - sensor/GSD-aware dataset registry and cross-sensor holdout policy
-    verification: "same-split baseline comparison + cross-sensor/terrain generalization benchmark"
+      - geodetic evidence calibration that preserves fine monocular structure
+    verification: "same-input baseline comparison + cross-sensor/terrain generalization benchmark + negative-result record"
     evidence: "domain_generalization_report.json"
 
   - id: PS-CAL-DEM-001
@@ -61,11 +63,12 @@ requirements:
     evidence: "calibration_gcp_report.json"
 
   - id: PS-CAL-SEM-001
-    clause: "Scale calibration may use semantic priors and scene-level statistics"
+    clause: "Scale calibration may use semantic priors, uncertainty/reliability evidence and scene-level statistics"
     implementation:
       - depthwizard.calibration.evidence.build_anchor_weights
-      - final semantic/uncertainty heads (training lane)
-    verification: "anchor-quality and semantic-prior ablation"
+      - depthwizard.calibration.confidence.model_confidence_to_uncertainty
+      - depthwizard.pipeline.runtime.ProductionElevationRuntime confidence-aware DEM calibration
+    verification: "native-confidence monotonic weighting tests + degenerate-confidence fallback + final reliability ablation"
     evidence: "semantic_calibration_ablation.json"
 
   - id: PS-TILING-001
@@ -74,7 +77,8 @@ requirements:
       - depthwizard.tiling.grid
       - depthwizard.tiling.blend
       - depthwizard.pipeline.geometry overlap harmonization
-    verification: "large-scene overlap/scale-drift tests and seam metric"
+      - depthwizard.evaluation.seams.evaluate_tiling_seams
+    verification: "large-scene overlap/scale-drift tests + seam-to-interior discontinuity metric"
     evidence: "tiling_consistency_report.json"
 
   - id: PS-3D-001
@@ -82,14 +86,15 @@ requirements:
     implementation:
       - depthwizard.mesh.terrain
       - apps/desktop TerrainViewport GLB rendering path
-    verification: "metric coordinate/UV export tests + projection-registration QA"
+    verification: "upward-normal metric mesh + UV export tests + projection-registration QA"
     evidence: "projection_accuracy_report.json"
 
   - id: PS-NAV-001
     clause: "Support seamless first-person navigation and arbitrary aerial perspectives"
     implementation:
       - apps/desktop TerrainViewport Orbit/Fly/FirstPerson/TopDown controls
-    verification: "interaction automation + FPS/latency benchmark on finale hardware"
+      - terrain-aware first-person clearance and scene-bound navigation constraints
+    verification: "interaction acceptance + FPS/latency benchmark on finale hardware"
     evidence: "3d_navigation_benchmark.json"
 
   - id: PS-HEIGHT-001
@@ -97,26 +102,27 @@ requirements:
     implementation:
       - depthwizard.analysis.structures.estimate_structure_height
       - depthwizard.analysis.project_structure.estimate_project_structure_height
+      - robust surrounding-ground plane estimation beneath explicit analyst footprints
       - depthwizard.service project structure-height endpoint
-      - desktop Structures tool with explicit polygon footprint and contextual inspector
-    verification: "local-ground structural-height tests + explicit-footprint project integration + reference-height task benchmark"
+      - desktop Structures workflow in registered 2D and evidence-native 3D
+    verification: "sloping-ground structural-height tests + explicit-footprint integration + reference-height task benchmark"
     evidence: "structural_height_validation.json"
 
   - id: PS-SLOPE-001
     clause: "Analysis of slopes"
     implementation:
       - depthwizard.evaluation.metrics.slope_degrees
-      - depthwizard.analysis.profile
-      - desktop slope/profile tools
-    verification: "analytic planar-slope tests + reference slope comparison"
+      - depthwizard.evaluation.project_analysis subpixel transects
+      - desktop slope/measure/profile tools with local-ground/geodesic distances
+    verification: "analytic planar-slope tests + geodesic-distance tests + reference slope comparison"
     evidence: "slope_validation.json"
 
   - id: PS-METRICS-001
     clause: "Evaluate DSM using RMSE, MAE and correlation against LiDAR/reference data"
     implementation:
       - depthwizard.evaluation.metrics
-      - depthwizard.evaluation.report
-    verification: "deterministic unit tests + exact-grid aligned geospatial validation"
+      - depthwizard.evaluation.project_validation
+    verification: "deterministic metrics tests + exact-grid/reprojected geospatial reference validation"
     evidence: "metrics.json"
 
   - id: PS-TERRAIN-001
@@ -130,25 +136,26 @@ requirements:
     clause: "Rendering quality, projection accuracy and visual fidelity"
     implementation:
       - textured metric GLB/LOD exporter
-      - Three.js renderer with neutral scientific workstation design system
+      - Three.js renderer with scientific workstation design system
+      - validated analytical overlays with source texture fallback
       - display-only hillshade and contour derivatives from persisted project surfaces
-    verification: "projection tests, render QA, derived-preview contract and LOD/FPS benchmark"
+    verification: "projection tests, renderer/overlay recovery QA, derived-preview contract and LOD/FPS benchmark"
     evidence: "rendering_quality_report.json"
 
   - id: PS-UX-001
     clause: "Interface intuitiveness and navigability"
     implementation:
-      - permanent VeilGraph-derived DepthWizard UI system
-      - contextual inspector, restrained controls, visible deterministic workflow state
+      - DepthWizard scientific/geospatial workstation design system
+      - contextual inspector, restrained controls, explicit scientific semantics and visible deterministic workflow state
     verification: "task-based analyst usability protocol"
     evidence: "ux_acceptance_report.md"
 
   - id: PS-REF-001
     clause: "Allow users to validate estimated height values against reference datasets"
     implementation:
-      - depthwizard.evaluation.report.validate_geospatial_dsm
-      - residual.tif and official metrics artifacts
-      - desktop comparison workspace (rendering lane)
+      - depthwizard.evaluation.project_validation.validate_project_reference
+      - aligned reference, residual raster and metrics artifacts
+      - synchronized desktop prediction/reference comparison workspace
     verification: "reference reprojection + residual/metrics integration tests"
     evidence: "reference_validation_report.json"
 
@@ -156,21 +163,24 @@ requirements:
     clause: "Output a high-fidelity DSM in a standard geospatial format"
     implementation:
       - GeoTIFF/float32 export with CRS, transform, NoData and product tags
-    verification: "round-trip GeoTIFF metadata test"
+      - immutable artifact SHA identities and hash-audited project export bundle
+    verification: "round-trip GeoTIFF metadata + persisted-artifact integrity tests"
     evidence: "geospatial_export_report.json"
 
   - id: PS-STANDALONE-001
     clause: "Successful standalone deployment as a unified software suite"
     implementation:
       - Tauri desktop application
-      - loopback Python scientific sidecar with constrained API boundary
-    verification: "clean-machine install/start/process/validate/export test"
+      - packaged loopback Python scientific sidecar with per-session authentication
+      - offline-after-model-install operation and owned lifecycle
+    verification: "packaged app lifecycle/process/validate/mesh/export acceptance + final clean-machine test"
     evidence: "standalone_acceptance_report.md"
 
   - id: PS-STABILITY-001
     clause: "Software stability"
     implementation:
-      - typed contracts, bounded tiling, explicit errors, provenance and project manifests
+      - typed contracts, bounded tiling, fail-closed errors, provenance and immutable project manifests
+      - authenticated standalone runtime recovery path
       - CI/unit/integration test suite
     verification: "2-hour scripted soak test + malformed raster/error-recovery suite"
     evidence: "software_stability_report.json"
@@ -179,5 +189,6 @@ requirements:
     clause: "Complete source code and technical documentation"
     implementation:
       - monorepo + MASTER_SPEC + ADRs + traceability + API/user/deployment docs
-    verification: "reproducibility dry run from clean environment"
+      - pinned DA3 model/source identity and explicit claim boundaries
+    verification: "reproducibility dry run from clean environment + release-lock audit"
     evidence: "reproducibility_report.md"
