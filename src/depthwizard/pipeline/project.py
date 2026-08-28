@@ -430,7 +430,7 @@ class ProjectManifest:
         expected = payload.get("sha256")
         if not isinstance(raw, str):
             raise ProjectIntegrityError(f"project manifest {name} artifact path is malformed")
-        if not _is_sha256(expected):
+        if not isinstance(expected, str) or not _is_sha256(expected):
             raise ProjectIntegrityError(
                 f"project manifest {name} artifact has no valid SHA-256 identity"
             )
