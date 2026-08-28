@@ -1,26 +1,17 @@
 import type {
   GroundControlPointFileReport,
   ProjectExportReport,
+  ProjectMeshReport,
   ProjectProbeResult,
   ProjectProfileResult,
   ProjectStructureHeightResult,
   RasterMetadata,
   ReferenceValidationReport,
+  TerrainPerformance,
+  TerrainRenderState,
 } from "../api";
-import type { TerrainRenderState } from "../workspace/TerrainViewport";
 import { AnalysisInspector } from "./AnalysisInspector";
-import { StatusPipeline, type StageState } from "./StatusPipeline";
-
-function gsdLabel(meta: RasterMetadata | null): string {
-  if (!meta?.ground_sample_distance_x || !meta.ground_sample_distance_y) return "—";
-  return `${meta.ground_sample_distance_x.toFixed(3)} × ${meta.ground_sample_distance_y.toFixed(3)} m`;
-}
-
-function byteLabel(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${bytes} B`;
-}
+import { StatusPipeline } from "./StatusPipeline";
 
 export type ValidationEvidence = {
   dataset: string;
@@ -32,27 +23,21 @@ export type ValidationEvidence = {
   pearsonR: number | null;
 };
 
-type RendererTelemetry = {
-  fps: number;
-  triangles: number;
-  drawCalls: number;
-};
-
 type InspectorProps = {
   metadata: RasterMetadata | null;
-  geometryReady?: boolean;
-  meshArtifactReady?: boolean;
-  rendererReady?: boolean;
-  terrainRenderState?: TerrainRenderState;
-  activeView?: string;
-  calibrationReady?: boolean;
+  geometryReady: boolean;
+  meshArtifactReady: boolean;
+  rendererReady: boolean;
+  terrainRenderState: TerrainRenderState;
+  activeView: string;
+  calibrationReady: boolean;
   elevationMode?: string;
   modelId?: string;
   tileCount?: number;
   harmonizedTiles?: number;
   validationEvidence?: ValidationEvidence | null;
   projectValidation?: ReferenceValidationReport | null;
-  activeTool?: string;
+  activeTool: string;
   probe?: ProjectProbeResult | null;
   measurement?: ProjectProfileResult | null;
   profile?: ProjectProfileResult | null;
@@ -63,24 +48,34 @@ type InspectorProps = {
   projectExport?: ProjectExportReport | null;
   meshLod?: number;
   autoLod?: boolean;
-  terrainPerformance?: RendererTelemetry | null;
+  terrainPerformance?: TerrainPerformance | null;
 };
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+function byteLabel(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} B`;
+}
 
 export function Inspector({
   metadata,
-  geometryReady = false,
-  meshArtifactReady = false,
-  rendererReady = false,
+  geometryReady,
+  meshArtifactReady,
+  rendererReady,
   terrainRenderState,
-  activeView = "DSM",
-  calibrationReady = false,
+  activeView,
+  calibrationReady,
   elevationMode,
   modelId,
   tileCount,
   harmonizedTiles,
   validationEvidence,
   projectValidation,
-  activeTool = "Project",
+  activeTool,
   probe,
   measurement,
   profile,
@@ -90,112 +85,57 @@ export function Inspector({
   analysisBusy = false,
   projectExport,
   meshLod = 0,
-  autoLod = false,
+  autoLod = true,
   terrainPerformance,
 }: InspectorProps) {
-  const hasInput = metadata !== null;
-  const georeferenced = Boolean(metadata?.crs);
-  const mode = elevationMode ?? (hasInput ? (georeferenced ? "Calibration eligible" : "Relative DSM") : "—");
-  const benchmarkDataset = validationEvidence?.dataset.split("/")[0]?.trim() ?? "—";
-  const referenceName = projectValidation?.reference_path.split(/[\\/]/).pop() ?? "—";
-  const exportName = projectExport?.bundle_path.split(/[\\/]/).pop() ?? "—";
-  const gcpName = gcpEvidence?.source_path.split(/[\\/]/).pop() ?? "—";
-  const renderFailed = terrainRenderState?.phase === "error";
-  const terrainStageState: StageState = rendererReady
-    ? "complete"
-    : renderFailed
-      ? "failed"
-      : meshArtifactReady
-        ? "active"
-        : "pending";
-  const showAnalysis = ["Measure", "Profiles", "Validation", "Compare"].includes(activeTool) || Boolean(probe);
-  const showValidation = ["Validation", "Compare"].includes(activeTool) || ["Reference", "Residual"].includes(activeView);
-  const showExport = activeTool === "Export" || Boolean(projectExport);
-  const subtitle = activeView === "3D Terrain"
-    ? rendererReady ? "Interactive terrain renderer ready" : renderFailed ? "Terrain renderer requires attention" : meshArtifactReady ? "Preparing terrain renderer" : "Terrain mesh not built"
-    : geometryReady ? `${activeView} analytical workspace` : hasInput ? "Source imagery loaded" : "No scene loaded";
+  const sourceName = metadata?.path ? fileName(metadata.path) : "—";
+  const showValidation = activeTool === "Validation";
+  const showExport = activeTool === "Export";
+  const benchmarkDataset = validationEvidence?.dataset ? fileName(validationEvidence.dataset) : "—";
+  const referenceName = projectValidation?.reference_path ? fileName(projectValidation.reference_path) : "—";
+  const exportName = projectExport?.bundle_path ? fileName(projectExport.bundle_path) : "—";
 
   return (
-    <aside className="dw-inspector" aria-label="Analysis inspector">
+    <aside className="dw-inspector" aria-label="Scene inspector">
       <header className="dw-inspector-header">
         <h2>Scene inspector</h2>
-        <p>{subtitle}</p>
+        <p>{activeView} analytical workspace</p>
       </header>
 
-      <section className="dw-section">
-        <div className="dw-section-title">Project state</div>
-        <StatusPipeline stages={[
-          { label: "Input", state: hasInput ? "complete" : "pending", detail: hasInput ? "ready" : "" },
-          { label: "Geometry", state: geometryReady ? "complete" : hasInput ? "active" : "pending", detail: geometryReady ? (modelId ?? "DA3") : "" },
-          { label: "Calibration", state: calibrationReady ? "complete" : "pending", detail: calibrationReady ? "metric evidence" : georeferenced ? "DEM/GCP" : "relative" },
-          { label: "DSM", state: geometryReady ? "complete" : "pending", detail: geometryReady ? (calibrationReady ? "absolute" : "relative") : "" },
-          { label: "Validation", state: projectValidation ? "complete" : "pending", detail: projectValidation ? `${projectValidation.valid_pixels.toLocaleString()} px` : "scene reference" },
-          {
-            label: "3D terrain",
-            state: terrainStageState,
-            detail: rendererReady ? "rendered GLB" : renderFailed ? "renderer failed" : meshArtifactReady ? "loading renderer" : "",
-          },
-          { label: "Export", state: projectExport ? "complete" : "pending", detail: projectExport ? byteLabel(projectExport.bundle_bytes) : "hash-audited ZIP" },
-        ]} />
-      </section>
+      <StatusPipeline
+        geometryReady={geometryReady}
+        calibrationReady={calibrationReady}
+        validationReady={Boolean(projectValidation)}
+        terrainReady={meshArtifactReady}
+        exportReady={Boolean(projectExport)}
+        modelId={modelId}
+        terrainLabel={rendererReady ? `rendered LOD ${meshLod}` : meshArtifactReady ? terrainRenderState.phase : undefined}
+      />
 
-      <details className="dw-inspector-disclosure" open={activeTool === "Project" || activeTool === "Layers"}>
+      <details className="dw-inspector-disclosure">
         <summary>Geospatial metadata</summary>
         <section className="dw-section dw-section--nested">
           <dl className="dw-property-list">
-            <div className="dw-property"><dt>Source</dt><dd title={metadata?.path}>{metadata?.path.split(/[\\/]/).pop() ?? "Not loaded"}</dd></div>
-            <div className="dw-property"><dt>CRS</dt><dd title={metadata?.crs ?? undefined}>{metadata?.crs ?? "—"}</dd></div>
-            <div className="dw-property"><dt>GSD</dt><dd>{gsdLabel(metadata)}</dd></div>
-            <div className="dw-property"><dt>Raster size</dt><dd>{metadata ? `${metadata.width.toLocaleString()} × ${metadata.height.toLocaleString()}` : "—"}</dd></div>
-            <div className="dw-property"><dt>Elevation product</dt><dd>{mode}</dd></div>
-            <div className="dw-property"><dt>Geometry model</dt><dd title={modelId}>{modelId ?? (geometryReady ? "DA3" : "—")}</dd></div>
-            <div className="dw-property"><dt>Tiling</dt><dd>{tileCount === undefined ? "—" : `${tileCount} tiles · ${harmonizedTiles ?? 0} harmonized`}</dd></div>
+            <div className="dw-property"><dt>Source</dt><dd title={metadata?.path ?? undefined}>{sourceName}</dd></div>
+            <div className="dw-property"><dt>Dimensions</dt><dd>{metadata ? `${metadata.width.toLocaleString()} × ${metadata.height.toLocaleString()}` : "—"}</dd></div>
+            <div className="dw-property"><dt>Bands</dt><dd>{metadata?.count ?? "—"}</dd></div>
+            <div className="dw-property"><dt>CRS</dt><dd>{metadata?.crs ?? "None"}</dd></div>
+            <div className="dw-property"><dt>Ground GSD X</dt><dd>{metadata?.ground_sample_distance_x == null ? "—" : `${metadata.ground_sample_distance_x.toFixed(3)} m`}</dd></div>
+            <div className="dw-property"><dt>Ground GSD Y</dt><dd>{metadata?.ground_sample_distance_y == null ? "—" : `${metadata.ground_sample_distance_y.toFixed(3)} m`}</dd></div>
+            <div className="dw-property"><dt>Elevation mode</dt><dd>{elevationMode ?? "Not reconstructed"}</dd></div>
+            {modelId && <div className="dw-property"><dt>Geometry prior</dt><dd>{modelId}</dd></div>}
+            {tileCount !== undefined && <div className="dw-property"><dt>Inference tiles</dt><dd>{tileCount}</dd></div>}
+            {harmonizedTiles !== undefined && <div className="dw-property"><dt>Harmonized tiles</dt><dd>{harmonizedTiles}</dd></div>}
+            {gcpEvidence && <div className="dw-property"><dt>GCP evidence</dt><dd>{gcpEvidence.point_count} points · SHA {gcpEvidence.sha256.slice(0, 12)}…</dd></div>}
+            {meshArtifactReady && <div className="dw-property"><dt>Terrain LOD</dt><dd>{meshLod} · {autoLod ? "auto" : "manual"}</dd></div>}
+            {terrainPerformance && rendererReady && (
+              <div className="dw-property"><dt>Renderer</dt><dd>{terrainPerformance.fps.toFixed(0)} fps · {terrainPerformance.triangles.toLocaleString()} triangles</dd></div>
+            )}
           </dl>
         </section>
       </details>
 
-      {gcpEvidence && activeTool === "Project" && (
-        <section className="dw-section">
-          <div className="dw-section-title">Sparse GCP evidence</div>
-          <dl className="dw-property-list">
-            <div className="dw-property"><dt>Evidence file</dt><dd title={gcpEvidence.source_path}>{gcpName}</dd></div>
-            <div className="dw-property"><dt>Control points</dt><dd>{gcpEvidence.point_count}</dd></div>
-            <div className="dw-property"><dt>Elevation span</dt><dd>{gcpEvidence.minimum_elevation_m.toFixed(2)}–{gcpEvidence.maximum_elevation_m.toFixed(2)} m</dd></div>
-            <div className="dw-property"><dt>SHA-256</dt><dd title={gcpEvidence.sha256}>{gcpEvidence.sha256.slice(0, 16)}…</dd></div>
-          </dl>
-          <div className="dw-validation-empty">
-            <strong>Coordinates are never guessed</strong>
-            <p>The CSV parser preserves x/y/elevation values exactly. Calibration interprets coordinates in the source raster CRS and verifies the file hash again before a metric claim.</p>
-          </div>
-        </section>
-      )}
-
-      {activeView === "3D Terrain" && meshArtifactReady && (
-        <section className="dw-section">
-          <div className="dw-section-title">3D renderer</div>
-          <dl className="dw-property-list">
-            <div className="dw-property"><dt>Renderer state</dt><dd>{terrainRenderState?.phase ?? "loading"}</dd></div>
-            <div className="dw-property"><dt>Active LOD</dt><dd>LOD {meshLod}</dd></div>
-            <div className="dw-property"><dt>LOD policy</dt><dd>{autoLod ? "adaptive" : "manual"}</dd></div>
-            <div className="dw-property"><dt>Frame rate</dt><dd>{rendererReady && terrainPerformance ? `${terrainPerformance.fps.toFixed(1)} fps` : "—"}</dd></div>
-            <div className="dw-property"><dt>Triangles</dt><dd>{rendererReady && terrainPerformance ? terrainPerformance.triangles.toLocaleString() : "—"}</dd></div>
-            <div className="dw-property"><dt>Draw calls</dt><dd>{rendererReady && terrainPerformance ? terrainPerformance.drawCalls.toLocaleString() : "—"}</dd></div>
-          </dl>
-          {renderFailed ? (
-            <div className="dw-validation-empty dw-validation-empty--danger">
-              <strong>Renderer did not reach a valid frame</strong>
-              <p>{terrainRenderState?.message}</p>
-            </div>
-          ) : (
-            <div className="dw-validation-empty">
-              <strong>Visualization is not the measurement source</strong>
-              <p>LOD, analytical overlays, camera motion and vertical exaggeration change only the rendered workstation view. Probe and profile values continue to come from persisted project rasters.</p>
-            </div>
-          )}
-        </section>
-      )}
-
-      {showAnalysis && (
+      {(activeTool === "Measure" || activeTool === "Profiles" || probe || analysisBusy) && (
         <AnalysisInspector
           activeTool={activeTool}
           probe={probe}
@@ -220,7 +160,7 @@ export function Inspector({
               </dl>
               <div className="dw-validation-empty">
                 <strong>Analyst-selected footprint</strong>
-                <p>Height is the robust median DSM elevation inside the explicit footprint minus the robust surrounding ground ring. DepthWizard does not claim automatic building classification.</p>
+                <p>DepthWizard robustly fits the surrounding ground ring as a local terrain plane, extrapolates that ground beneath the explicit footprint, and reports the median roof-above-local-ground height. It does not claim automatic building classification.</p>
               </div>
               {structureHeight.warnings.map((warning) => (
                 <div className="dw-validation-empty dw-warning-note" key={warning}><strong>Selection warning</strong><p>{warning}</p></div>
@@ -250,11 +190,14 @@ export function Inspector({
                 <div className="dw-property"><dt>Slope RMSE</dt><dd>{projectValidation.slope.rmse_degrees.toFixed(3)}°</dd></div>
                 <div className="dw-property"><dt>Coverage</dt><dd>{(100 * projectValidation.coverage_fraction).toFixed(2)}%</dd></div>
                 <div className="dw-property"><dt>Valid pixels</dt><dd>{projectValidation.valid_pixels.toLocaleString()}</dd></div>
-                <div className="dw-property"><dt>Reliability</dt><dd>{projectValidation.reliability.available ? "measured" : "unavailable"}</dd></div>
+                <div className="dw-property"><dt>Reliability</dt><dd>{projectValidation.reliability.available ? "measured · native confidence" : "unavailable"}</dd></div>
+                {projectValidation.reliability.available && (
+                  <div className="dw-property"><dt>Confidence ↔ |error| r</dt><dd>{projectValidation.reliability.confidence_abs_error_pearson_r === null ? "—" : projectValidation.reliability.confidence_abs_error_pearson_r.toFixed(3)}</dd></div>
+                )}
               </dl>
               <div className="dw-validation-empty">
                 <strong>Reference values stay evaluation-only</strong>
-                <p>The reference is aligned downstream of reconstruction and calibration. The exact-file check prevents byte-identical calibration DEM reuse; it does not by itself prove geographic or sensor independence.</p>
+                <p>The reference is aligned downstream of reconstruction and calibration. The exact-file check prevents byte-identical calibration DEM reuse; it does not by itself prove geographic or sensor independence. Native-confidence reliability diagnostics are empirical associations, not calibrated correctness probabilities.</p>
               </div>
             </>
           ) : (
