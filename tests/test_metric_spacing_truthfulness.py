@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -10,9 +9,12 @@ import rasterio
 from rasterio.transform import from_origin
 
 from depthwizard.cli import mesh_rdsm
+from depthwizard.contracts import ProcessingRequest
 from depthwizard.evaluation.report import validate_geospatial_dsm
 from depthwizard.io.raster import ground_sample_distance_m
+from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.runtime import ProductionElevationRuntime
+from depthwizard.pipeline.runtime_base import _GeometryState
 
 
 def _write_high_latitude_web_mercator(path: Path, data: np.ndarray, *, count: int = 1) -> None:
@@ -112,12 +114,24 @@ def test_production_dem_calibration_fails_when_physical_support_is_unknown(
         ) as dst:
             dst.write(values, 1)
 
+    project_dir = tmp_path / "project"
+    manifest = ProjectManifest.create_or_load(project_dir, source)
+    request = ProcessingRequest(
+        source=source,
+        output_dir=project_dir,
+        low_frequency_sigma_px=8.0,
+    )
+    geometry = _GeometryState(
+        relative_height=values,
+        confidence=None,
+        model_id="metric-spacing-test",
+        tile_count=1,
+        harmonized_tiles=0,
+    )
     runtime = ProductionElevationRuntime.__new__(ProductionElevationRuntime)
-    request = SimpleNamespace(source=source, low_frequency_sigma_px=8.0)
-    geometry = SimpleNamespace(relative_height=values, confidence=None)
 
     try:
-        runtime._dem_calibration(SimpleNamespace(), request, geometry, dem)
+        runtime._dem_calibration(manifest, request, geometry, dem)
     except ValueError as exc:
         assert "trustworthy physical ground sample distance" in str(exc)
     else:
@@ -145,11 +159,20 @@ def test_metric_calibration_rejects_crs_tagged_but_implausible_source_grid(
         dst.write(values, 1)
 
     assert ground_sample_distance_m(source) is None
+    project_dir = tmp_path / "project"
+    manifest = ProjectManifest.create_or_load(project_dir, source)
+    request = ProcessingRequest(source=source, output_dir=project_dir)
+    geometry = _GeometryState(
+        relative_height=values,
+        confidence=None,
+        model_id="metric-spacing-test",
+        tile_count=1,
+        harmonized_tiles=0,
+    )
     runtime = ProductionElevationRuntime.__new__(ProductionElevationRuntime)
-    request = SimpleNamespace(source=source)
 
     try:
-        runtime._calibrate(SimpleNamespace(), request, SimpleNamespace())
+        runtime._calibrate(manifest, request, geometry)
     except ValueError as exc:
         assert "trustworthy physical/geospatial source grid" in str(exc)
     else:
