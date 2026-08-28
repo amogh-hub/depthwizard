@@ -120,18 +120,29 @@ release-train-5-workstation-build:
 	python -m scripts.build_standalone_sidecar
 	cd apps/desktop && npm install --no-audit --no-fund && npm test && npm run tauri build
 
-# Final RT5 qualification is intentionally self-preparing: a git pull may change editable-project
-# metadata (for example PyInstaller entry points) while the active venv still reflects the prior
-# checkout. Synchronize the exact checked-out metadata first, verify that source, then build the
-# frozen runtime directly so the scientific payload and app bundle are guaranteed to match HEAD.
-# The strict reproducibility audit is a separate prerequisite until the three resolver locks are
-# committed; once they exist, the release command must be promoted to locked package-manager modes.
+# Final qualification is fail-closed on all three committed resolver locks. `uv sync --frozen`
+# creates/updates the project .venv strictly from uv.lock; npm uses `ci`; Rust verification uses
+# Cargo's `--locked` mode. Tauri then builds against that already-verified Cargo graph, and the
+# post-build diff check proves none of the committed resolver inputs drifted during packaging.
+# Do not use this target until `make dependency-locks` has been reviewed and the three locks have
+# been committed on the exact branch being qualified.
 release-train-5-final-qualification:
-	python -m pip install -e ".[dev,standalone]"
-	$(MAKE) verify
-	python -m scripts.build_standalone_sidecar
+	test -f uv.lock
+	test -f apps/desktop/package-lock.json
+	test -f apps/desktop/src-tauri/Cargo.lock
+	git diff --quiet && git diff --cached --quiet
+	uv sync --frozen --python 3.12 --extra dev --extra standalone
+	.venv/bin/python -m scripts.check_release_reproducibility --strict
+	.venv/bin/python scripts/verify.py
+	.venv/bin/python -m scripts.ensure_tauri_sidecar_stub
+	cd apps/desktop && npm ci --no-audit --no-fund && npm test && npm run build
+	cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --locked --all-targets --all-features -- -D warnings && cargo test --locked --all-targets --all-features
+	.venv/bin/python -m scripts.build_standalone_sidecar
 	cd apps/desktop && npm run tauri build
-	$(MAKE) release-train-5-standalone-acceptance
+	git diff --exit-code -- uv.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock
+	.venv/bin/python -m scripts.release_train_5_sidecar_smoke
+	.venv/bin/python -m scripts.release_train_5_app_bundle_smoke
+	.venv/bin/python -m scripts.release_train_5_full_acceptance
 
 standalone-build: sidecar-build frontend-build
 	cd apps/desktop && npm run tauri build
