@@ -19,10 +19,16 @@ if __name__ == "__main__":
     # contents alter the verification surface.
     run(sys.executable, "-m", "pytest", "tests")
     run(sys.executable, "-m", "ruff", "check", "src", "tests", "scripts")
+    # Pyright is a Node-backed checker even when launched through `python -m pyright`; without an
+    # explicit interpreter it may inspect a system Python instead of the environment that actually
+    # ran pytest. Pin it to this exact interpreter so imports and typing are checked against the
+    # same locked runtime used by qualification.
     run(
         sys.executable,
         "-m",
         "pyright",
+        "--pythonpath",
+        sys.executable,
         "src",
         "tests",
         "scripts/train_ortholoc_height_acceptance.py",
