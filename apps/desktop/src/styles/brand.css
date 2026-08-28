@@ -1,13 +1,13 @@
 /* DepthWizard final product identity: logo-only chrome and centered project context. */
 
 .dw-topbar {
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
   column-gap: 14px;
 }
 
 .dw-brand {
-  width: 32px;
-  min-width: 32px;
+  width: 40px;
+  min-width: 40px;
   gap: 0;
 }
 
@@ -16,9 +16,9 @@
 }
 
 .dw-mark {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
   border-radius: 0;
   background: transparent url("/depthwizard-mark.png") center / contain no-repeat;
   color: transparent;
