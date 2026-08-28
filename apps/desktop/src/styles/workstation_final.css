@@ -1,0 +1,232 @@
+:root {
+  --dw-toolrail-width: 56px;
+  --dw-inspector-width: 368px;
+}
+
+/* Final workstation chrome: stable, compact and never scrollbar-driven. */
+.dw-toolrail {
+  width: var(--dw-toolrail-width);
+  gap: 6px;
+  padding: 10px 7px;
+}
+
+.dw-tool {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  padding: 0;
+  gap: 0;
+}
+
+.dw-tool-label {
+  display: none !important;
+}
+
+.dw-tool-icon,
+.dw-tool-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.dw-workspace-bar {
+  min-height: 48px;
+  height: auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 6px 10px;
+  overflow: visible;
+}
+
+.dw-segmented {
+  align-self: start;
+  white-space: nowrap;
+}
+
+.dw-toolbar-group {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  align-content: flex-start;
+  gap: 5px;
+  padding: 0;
+  overflow: visible !important;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.dw-toolbar-group::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.dw-chip,
+.dw-compact-select,
+.dw-render-metric {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dw-render-metric {
+  min-width: 48px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  color: var(--dw-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.dw-toolbar-divider {
+  height: 22px;
+  margin-inline: 3px;
+}
+
+/* Canvas annotations occupy deterministic lanes instead of colliding. */
+.dw-canvas-context {
+  top: 14px;
+  left: 14px;
+  right: auto;
+  max-width: min(680px, calc(100% - 230px));
+  min-height: 34px;
+  overflow: hidden;
+}
+
+.dw-canvas-context strong,
+.dw-canvas-context span {
+  min-width: 0;
+}
+
+.dw-canvas-context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dw-interaction-hint {
+  top: 58px;
+  left: 14px;
+  transform: none;
+  max-width: min(620px, calc(100% - 230px));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The 3D viewport owns its own camera-mode help; suppress the older generic sibling hint. */
+.dw-terrain-viewport ~ .dw-interaction-hint {
+  display: none;
+}
+
+.dw-terrain-mode-help {
+  position: absolute;
+  z-index: 9;
+  top: 58px;
+  left: 14px;
+  max-width: min(680px, calc(100% - 230px));
+  padding: 6px 9px;
+  border: 1px solid rgba(201, 210, 220, 0.9);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--dw-text-muted);
+  box-shadow: 0 1px 5px rgba(16, 24, 40, 0.045);
+  pointer-events: none;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dw-scientific-legend {
+  top: 104px;
+}
+
+.dw-north-indicator {
+  top: 14px;
+}
+
+.dw-scene-badge {
+  bottom: 14px;
+}
+
+/* Readable metadata without one-character wrapping or orphaned filename suffixes. */
+.dw-property {
+  grid-template-columns: minmax(104px, 0.78fr) minmax(0, 1.22fr);
+  gap: 12px;
+}
+
+.dw-property dd {
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 12px;
+}
+
+.dw-stage small {
+  white-space: nowrap;
+}
+
+/* Stable top actions at normal laptop widths. */
+.dw-topbar,
+.dw-top-actions,
+.dw-project-title {
+  min-width: 0;
+}
+
+.dw-top-actions {
+  flex-wrap: nowrap;
+}
+
+.dw-top-actions .dw-btn {
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  :root {
+    --dw-inspector-width: 336px;
+  }
+
+  .dw-workspace-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .dw-toolbar-group {
+    justify-content: flex-start;
+  }
+
+  .dw-canvas-context,
+  .dw-interaction-hint,
+  .dw-terrain-mode-help {
+    max-width: calc(100% - 92px);
+  }
+}
+
+@media (max-width: 980px) {
+  :root {
+    --dw-inspector-width: 300px;
+  }
+
+  .dw-chip,
+  .dw-compact-select {
+    font-size: 10px;
+  }
+}
