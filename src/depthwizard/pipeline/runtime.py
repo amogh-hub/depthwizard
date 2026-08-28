@@ -22,17 +22,19 @@ __all__ = ["ProductionElevationRuntime", "ProjectRunResult", "SceneRefiner"]
 
 
 class ProductionElevationRuntime(_BaseProductionElevationRuntime):
-    """Production runtime with confidence-aware, physically scaled DEM calibration.
+    """Production runtime with confidence-aware, physically truthful metric calibration.
 
     Model-native confidence is never presented as a calibrated probability. When it has usable
     spatial variation, DepthWizard converts it monotonically to a conservative uncertainty weight
     that can only down-weight DEM anchors. Missing or degenerate confidence falls back to the
     established DEM-only weighting path rather than fabricating reliability.
 
-    DEM calibration itself is stricter: both the optical target and DEM must expose trustworthy
-    physical ground spacing. Without that pair, DepthWizard cannot know the DEM's effective support
-    relative to the optical grid, so it fails closed instead of treating upsampled DEM pixels as
-    independent metric evidence.
+    Every metric path requires a trustworthy physical/geospatial source grid. DEM calibration is
+    stricter still: the DEM must also expose trustworthy physical ground spacing. Without that pair,
+    DepthWizard cannot know the DEM's effective support relative to the optical grid, so it fails
+    closed instead of treating upsampled DEM pixels as independent metric evidence. GCP-only
+    calibration may establish the vertical datum/scale, but it is not allowed to launder an
+    implausible or physically uninterpretable source CRS into an "absolute geospatial DSM" claim.
     """
 
     _last_dem_confidence_weighting: dict[str, object] | None = None
@@ -77,6 +79,14 @@ class ProductionElevationRuntime(_BaseProductionElevationRuntime):
         request: ProcessingRequest,
         geometry: _GeometryState,
     ) -> _CalibrationOutcome:
+        source_gsd = ground_sample_distance_m(request.source)
+        if source_gsd is None:
+            raise ValueError(
+                "metric calibration requires a trustworthy physical/geospatial source grid; "
+                "DepthWizard refused to turn an implausible or unscaled CRS/transform into an "
+                "absolute DSM claim"
+            )
+
         self._last_dem_confidence_weighting = None
         outcome = super()._calibrate(manifest, request, geometry)
         if request.metric_dem_path is None or self._last_dem_confidence_weighting is None:
