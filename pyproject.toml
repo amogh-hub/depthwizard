@@ -23,9 +23,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Complete runtime closure for the pinned DA3 monocular path used by DepthWizard. Keep export-only
+# native stacks (pycolmap/open3d/xformers/moviepy/pillow-heif/plyfile) out of the production macOS
+# environment: setup_da3_macos.sh intentionally applies the same narrowed monocular contract.
 ml = [
   "torch>=2.6",
   "torchvision>=0.21",
+  "opencv-python>=4.10,<4.12",
+  "addict>=2.4,<3",
+  "einops>=0.8",
+  "huggingface-hub>=0.34",
+  "imageio>=2.37",
+  "omegaconf>=2.3",
+  "requests>=2.32",
+  "safetensors>=0.5",
+  "tqdm>=4.67",
+  "evo>=1.31",
+  "e3nn>=0.5",
 ]
 dev = [
   "pytest>=8.3",
