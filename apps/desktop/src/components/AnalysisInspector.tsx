@@ -38,7 +38,7 @@ function ProfileChart({ profile }: { profile: ProjectProfileResult }) {
   const referencePoints = reference
     .map((sample) => {
       const x = sample.fraction * 100;
-      const y = 94 - ((sample.reference.value as number) - min) / span * 82;
+      const y = 94 - ((sample.surface.value as number) - min) / span * 82;
       return `${x.toFixed(2)},${Math.min(98, Math.max(2, y)).toFixed(2)}`;
     })
     .join(" ");
@@ -73,30 +73,48 @@ export function AnalysisInspector({
   profile,
   analysisBusy = false,
 }: AnalysisInspectorProps) {
+  const measureMode = activeTool === "Measure";
+  const profileMode = activeTool === "Profiles";
   const showProbe = Boolean(probe);
-  const showMeasurement = activeTool === "Measure" && Boolean(measurement);
-  const showProfile = activeTool === "Profiles" && Boolean(profile);
-  if (!showProbe && !showMeasurement && !showProfile && !analysisBusy) return null;
+  const showMeasurement = measureMode && Boolean(measurement);
+  const showProfile = profileMode && Boolean(profile);
+  if (!showProbe && !showMeasurement && !showProfile && !analysisBusy && !measureMode && !profileMode) return null;
 
   return (
     <>
-      <section className="dw-section">
-        <div className="dw-section-title">Analyst cursor</div>
-        {analysisBusy && !probe ? (
-          <div className="dw-validation-empty"><strong>Sampling project</strong><p>Reading persisted geospatial products at the selected location.</p></div>
-        ) : probe ? (
-          <dl className="dw-property-list">
-            <div className="dw-property"><dt>Pixel</dt><dd>{probe.pixel_col}, {probe.pixel_row}</dd></div>
-            <div className="dw-property"><dt>Surface</dt><dd>{sampleLabel(probe.surface.available, probe.surface.value, probe.surface.units)}</dd></div>
-            <div className="dw-property"><dt>Slope</dt><dd>{sampleLabel(probe.slope.available, probe.slope.value, probe.slope.units)}</dd></div>
-            <div className="dw-property"><dt>Reference</dt><dd>{sampleLabel(probe.reference.available, probe.reference.value, probe.reference.units)}</dd></div>
-            <div className="dw-property"><dt>Residual</dt><dd>{sampleLabel(probe.residual.available, probe.residual.value, probe.residual.units)}</dd></div>
-            <div className="dw-property"><dt>Confidence</dt><dd>{sampleLabel(probe.confidence.available, probe.confidence.value, probe.confidence.units)}</dd></div>
-            <div className="dw-property"><dt>Longitude</dt><dd>{probe.longitude === null ? "—" : probe.longitude.toFixed(6)}</dd></div>
-            <div className="dw-property"><dt>Latitude</dt><dd>{probe.latitude === null ? "—" : probe.latitude.toFixed(6)}</dd></div>
-          </dl>
-        ) : null}
-      </section>
+      {(measureMode || profileMode) && !analysisBusy && !(measureMode ? measurement : profile) && (
+        <section className="dw-section">
+          <div className="dw-section-title">{measureMode ? "Two-point measurement" : "Elevation profile"}</div>
+          <div className="dw-validation-empty">
+            <strong>{probe ? "Select endpoint B" : "Select endpoint A"}</strong>
+            <p>
+              {measureMode
+                ? "Click two registered surface locations. DepthWizard reports plan distance and endpoint elevation change; hold Space while dragging to pan without placing a point."
+                : "Click the start and end of a transect. The canvas previews the line before endpoint B is committed, then samples the persisted elevation surface along the path."}
+            </p>
+          </div>
+        </section>
+      )}
+
+      {(showProbe || analysisBusy) && (
+        <section className="dw-section">
+          <div className="dw-section-title">Analyst cursor</div>
+          {analysisBusy && !probe ? (
+            <div className="dw-validation-empty"><strong>Sampling project</strong><p>Reading persisted geospatial products at the selected location.</p></div>
+          ) : probe ? (
+            <dl className="dw-property-list">
+              <div className="dw-property"><dt>Pixel</dt><dd>{probe.pixel_col}, {probe.pixel_row}</dd></div>
+              <div className="dw-property"><dt>Surface</dt><dd>{sampleLabel(probe.surface.available, probe.surface.value, probe.surface.units)}</dd></div>
+              <div className="dw-property"><dt>Slope</dt><dd>{sampleLabel(probe.slope.available, probe.slope.value, probe.slope.units)}</dd></div>
+              <div className="dw-property"><dt>Reference</dt><dd>{sampleLabel(probe.reference.available, probe.reference.value, probe.reference.units)}</dd></div>
+              <div className="dw-property"><dt>Residual</dt><dd>{sampleLabel(probe.residual.available, probe.residual.value, probe.residual.units)}</dd></div>
+              <div className="dw-property"><dt>Confidence</dt><dd>{sampleLabel(probe.confidence.available, probe.confidence.value, probe.confidence.units)}</dd></div>
+              <div className="dw-property"><dt>Longitude</dt><dd>{probe.longitude === null ? "—" : probe.longitude.toFixed(6)}</dd></div>
+              <div className="dw-property"><dt>Latitude</dt><dd>{probe.latitude === null ? "—" : probe.latitude.toFixed(6)}</dd></div>
+            </dl>
+          ) : null}
+        </section>
+      )}
 
       {showMeasurement && measurement && (
         <section className="dw-section">
