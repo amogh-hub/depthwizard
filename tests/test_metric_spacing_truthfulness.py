@@ -117,3 +117,35 @@ def test_production_dem_calibration_fails_when_physical_support_is_unknown(
         assert "trustworthy physical ground sample distance" in str(exc)
     else:
         raise AssertionError("metric DEM calibration must fail closed when physical support is unknown")
+
+
+def test_metric_calibration_rejects_crs_tagged_but_implausible_source_grid(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "implausible-utm.tif"
+    values = np.arange(64, dtype=np.float32).reshape(8, 8)
+    # EPSG:32643 is valid, but easting/northing near zero is outside its registered area of use.
+    # A syntactic CRS tag is therefore insufficient evidence for an absolute geospatial DSM.
+    with rasterio.open(
+        source,
+        "w",
+        driver="GTiff",
+        height=8,
+        width=8,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32643",
+        transform=from_origin(0.0, 8.0, 1.0, 1.0),
+    ) as dst:
+        dst.write(values, 1)
+
+    assert ground_sample_distance_m(source) is None
+    runtime = ProductionElevationRuntime.__new__(ProductionElevationRuntime)
+    request = SimpleNamespace(source=source)
+
+    try:
+        runtime._calibrate(SimpleNamespace(), request, SimpleNamespace())
+    except ValueError as exc:
+        assert "trustworthy physical/geospatial source grid" in str(exc)
+    else:
+        raise AssertionError("metric calibration must reject an implausible CRS-tagged source grid")
