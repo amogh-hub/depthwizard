@@ -208,6 +208,26 @@
   outline: none;
 }
 
+/* Display-asset failures must look like recoverable errors, not ordinary empty-state cards. */
+.dw-empty-card--error {
+  border-color: rgba(181, 77, 77, 0.28);
+  background: rgba(255, 252, 252, 0.98);
+  box-shadow: 0 10px 30px rgba(110, 37, 37, 0.06);
+}
+
+.dw-empty-card--error h2 {
+  color: var(--dw-danger);
+}
+
+.dw-empty-card--error p {
+  max-width: 560px;
+  color: var(--dw-text-muted);
+}
+
+.dw-empty-card--error .dw-btn {
+  margin-top: 14px;
+}
+
 .dw-scientific-legend {
   top: 132px;
 }
