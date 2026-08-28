@@ -16,6 +16,7 @@ from depthwizard.evaluation.metrics import compute_elevation_metrics
 from depthwizard.evaluation.report import validate_geospatial_dsm
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
 from depthwizard.io.raster import (
+    ground_sample_distance_m,
     inspect_raster,
     read_rgb,
     reproject_to_match,
@@ -26,6 +27,12 @@ from depthwizard.mesh.terrain import export_lod_pyramid
 from depthwizard.pipeline.geometry import infer_geometry_scene
 
 app = typer.Typer(no_args_is_help=True, help="DepthWizard engineering CLI")
+
+
+def _mean_gsd(gsd: tuple[float, float] | None) -> float | None:
+    if gsd is None:
+        return None
+    return float((gsd[0] + gsd[1]) / 2.0)
 
 
 @app.command()
@@ -141,14 +148,28 @@ def mesh_rdsm(
 
     with rasterio.open(rdsm) as src:
         elevation = src.read(1).astype(np.float32)
-        valid = np.isfinite(elevation)
-        if src.nodata is not None:
-            valid &= elevation != src.nodata
+        valid = src.read_masks(1) > 0
+        valid &= np.isfinite(elevation)
+        if src.nodata is not None and np.isfinite(src.nodata):
+            valid &= elevation != np.float32(src.nodata)
         if not np.any(valid):
             raise typer.BadParameter("rDSM contains no valid terrain pixels")
-        gsd_x = abs(float(src.transform.a)) if not src.transform.is_identity else 1.0
-        gsd_y = abs(float(src.transform.e)) if not src.transform.is_identity else 1.0
         crs = src.crs.to_string() if src.crs is not None else None
+        has_spatial_grid = src.crs is not None and not src.transform.is_identity
+
+    ground_gsd = ground_sample_distance_m(rdsm)
+    if has_spatial_grid:
+        if ground_gsd is None:
+            raise typer.BadParameter(
+                "georeferenced rDSM has no trustworthy physical ground spacing; refusing to build "
+                "a metrically scaled XY mesh from raw map-coordinate increments"
+            )
+        gsd_x, gsd_y = ground_gsd
+        spacing_semantics = "local_ground_geodesic_metres_per_pixel"
+    else:
+        gsd_x = 1.0
+        gsd_y = 1.0
+        spacing_semantics = "relative_grid_units_per_pixel"
 
     rgb = read_rgb(texture)
     with rasterio.open(texture) as texture_src:
@@ -185,6 +206,7 @@ def mesh_rdsm(
         "crs": crs,
         "gsd_x": gsd_x,
         "gsd_y": gsd_y,
+        "spacing_semantics": spacing_semantics,
         "valid_fraction": float(np.mean(mesh_valid)),
         "vertical_scale": vertical_scale,
         "vertical_scale_semantics": "visualization_only_for_dimensionless_rdsm",
@@ -207,7 +229,7 @@ def mesh_rdsm(
 
     print("[bold green]DepthWizard terrain mesh export: PASS[/bold green]")
     print(f"CRS: {crs or 'none'}")
-    print(f"Ground spacing: {gsd_x:.3f} x {gsd_y:.3f}")
+    print(f"Ground spacing: {gsd_x:.3f} x {gsd_y:.3f} ({spacing_semantics})")
     print(f"Valid terrain: {100.0 * np.mean(mesh_valid):.1f}%")
     print(f"Visualization vertical scale: {vertical_scale:g}x")
     for index, result in enumerate(results):
@@ -223,13 +245,20 @@ def mesh_rdsm(
 def evaluate(prediction: Path, reference: Path) -> None:
     """Compute official DSM metrics when rasters already share an identical grid."""
     with rasterio.open(prediction) as psrc, rasterio.open(reference) as rsrc:
+        if psrc.shape != rsrc.shape:
+            raise typer.BadParameter(
+                f"prediction grid {psrc.shape} does not match reference grid {rsrc.shape}; "
+                "use validate-dsm for geospatial alignment"
+            )
         pred = psrc.read(1).astype(np.float64)
         ref = rsrc.read(1).astype(np.float64)
-        valid = np.ones_like(pred, dtype=bool)
-        if psrc.nodata is not None:
-            valid &= pred != psrc.nodata
-        if rsrc.nodata is not None:
-            valid &= ref != rsrc.nodata
+        valid = psrc.read_masks(1) > 0
+        valid &= rsrc.read_masks(1) > 0
+        valid &= np.isfinite(pred) & np.isfinite(ref)
+        if psrc.nodata is not None and np.isfinite(psrc.nodata):
+            valid &= pred != float(psrc.nodata)
+        if rsrc.nodata is not None and np.isfinite(rsrc.nodata):
+            valid &= ref != float(rsrc.nodata)
     metrics = compute_elevation_metrics(pred, ref, valid_mask=valid)
     print(json.dumps(metrics.model_dump(), indent=2))
 
@@ -250,12 +279,21 @@ def calibrate_dem(
 ) -> None:
     """Calibrate a georeferenced relative-height raster against a DEM and emit metric DSM."""
     with rasterio.open(relative_height) as src:
-        if src.crs is None:
+        if src.crs is None or src.transform.is_identity:
             raise typer.BadParameter("relative-height input must be georeferenced for DEM calibration")
         rel = src.read(1).astype(np.float32)
-        valid_rel = np.isfinite(rel)
-        if src.nodata is not None:
-            valid_rel &= rel != src.nodata
+        valid_rel = src.read_masks(1) > 0
+        valid_rel &= np.isfinite(rel)
+        if src.nodata is not None and np.isfinite(src.nodata):
+            valid_rel &= rel != np.float32(src.nodata)
+
+    target_gsd_m = _mean_gsd(ground_sample_distance_m(relative_height))
+    dem_effective_gsd_m = _mean_gsd(ground_sample_distance_m(dem))
+    if target_gsd_m is None or dem_effective_gsd_m is None:
+        raise typer.BadParameter(
+            "DEM calibration requires trustworthy physical ground sample distance for both the "
+            "relative-height raster and DEM; metric support was not guessed"
+        )
 
     aligned_dem, valid_dem = reproject_to_match(dem, relative_height)
     result = calibrate_relative_height_with_dem(
@@ -263,6 +301,8 @@ def calibrate_dem(
         aligned_dem,
         dem_valid=valid_rel & valid_dem,
         low_frequency_sigma_px=sigma_px,
+        target_gsd_m=target_gsd_m,
+        dem_effective_gsd_m=dem_effective_gsd_m,
     )
     write_float_geotiff(
         output,
