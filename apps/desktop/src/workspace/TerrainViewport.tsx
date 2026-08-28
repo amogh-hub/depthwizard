@@ -4,6 +4,7 @@ import { FlyControls } from "three/examples/jsm/controls/FlyControls.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { NormalizedPoint } from "../api";
+import { rasterPointFromTerrainUv } from "./terrainCoordinates";
 
 export type CameraMode = "orbit" | "fly" | "firstPerson" | "topDown";
 
@@ -599,10 +600,7 @@ export function TerrainViewport({
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(terrainMeshes, false)[0];
       if (!hit?.uv) return;
-      const point = {
-        x: THREE.MathUtils.clamp(hit.uv.x, 0, 1),
-        y: THREE.MathUtils.clamp(1 - hit.uv.y, 0, 1),
-      };
+      const point = rasterPointFromTerrainUv(hit.uv.x, hit.uv.y);
       positionMarker(point);
       selectRef.current?.(point);
     };

@@ -1008,6 +1008,7 @@ export function App() {
       setExporting(true);
       const report = await buildProjectExport(projectDir, { includeSource: false, includeMesh: true, includeValidation: true });
       setProjectExport(report);
+      setActiveTool("Export");
       const url = await getProjectExportUrl(projectDir);
       const anchor = document.createElement("a");
       anchor.href = url;
