@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP = ROOT / "apps" / "desktop"
+_EXACT_NPM_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 
 def _json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _non_exact_npm_specs(dependencies: dict[str, object]) -> list[str]:
+    return sorted(
+        name
+        for name, spec in dependencies.items()
+        if not isinstance(spec, str) or _EXACT_NPM_VERSION.fullmatch(spec.strip()) is None
+    )
 
 
 def build_report(root: Path = ROOT) -> dict[str, object]:
@@ -19,17 +29,15 @@ def build_report(root: Path = ROOT) -> dict[str, object]:
     package_lock = desktop / "package-lock.json"
     cargo_toml = desktop / "src-tauri" / "Cargo.toml"
     cargo_lock = desktop / "src-tauri" / "Cargo.lock"
+    python_manifest = root / "pyproject.toml"
+    python_lock = root / "uv.lock"
 
     package = _json(package_json)
     dependencies = {
         **dict(package.get("dependencies") or {}),
         **dict(package.get("devDependencies") or {}),
     }
-    moving_npm_specs = sorted(
-        name
-        for name, spec in dependencies.items()
-        if isinstance(spec, str) and spec.strip().lower() in {"latest", "next", "*"}
-    )
+    non_exact_npm_specs = _non_exact_npm_specs(dependencies)
 
     findings: list[dict[str, object]] = []
     if not package_lock.is_file():
@@ -38,7 +46,7 @@ def build_report(root: Path = ROOT) -> dict[str, object]:
                 "severity": "blocker_for_final_reproducibility",
                 "code": "missing_npm_lockfile",
                 "path": str(package_lock.relative_to(root)),
-                "message": "Desktop JavaScript dependency resolution is not frozen.",
+                "message": "Desktop JavaScript transitive dependency resolution is not frozen.",
             }
         )
     if not cargo_lock.is_file():
@@ -50,29 +58,43 @@ def build_report(root: Path = ROOT) -> dict[str, object]:
                 "message": "Desktop Rust dependency resolution is not frozen.",
             }
         )
-    if moving_npm_specs:
+    if not python_lock.is_file():
         findings.append(
             {
                 "severity": "blocker_for_final_reproducibility",
-                "code": "moving_npm_dependency_spec",
+                "code": "missing_python_lockfile",
+                "path": str(python_lock.relative_to(root)),
+                "message": "Python transitive dependency resolution is not frozen.",
+            }
+        )
+    if non_exact_npm_specs:
+        findings.append(
+            {
+                "severity": "blocker_for_final_reproducibility",
+                "code": "non_exact_npm_dependency_spec",
                 "path": str(package_json.relative_to(root)),
-                "packages": moving_npm_specs,
-                "message": "Release manifests must not depend on moving npm tags.",
+                "packages": non_exact_npm_specs,
+                "message": (
+                    "Release package.json must use exact top-level versions; lockfiles then freeze "
+                    "the full transitive graph."
+                ),
             }
         )
 
     return {
-        "schema": "depthwizard.release-reproducibility-audit.v1",
+        "schema": "depthwizard.release-reproducibility-audit.v2",
         "npm_lockfile_present": package_lock.is_file(),
         "cargo_lockfile_present": cargo_lock.is_file(),
-        "moving_npm_specs": moving_npm_specs,
-        "python_manifest_present": (root / "pyproject.toml").is_file(),
+        "python_lockfile_present": python_lock.is_file(),
+        "non_exact_npm_specs": non_exact_npm_specs,
+        "python_manifest_present": python_manifest.is_file(),
         "cargo_manifest_present": cargo_toml.is_file(),
         "findings": findings,
         "ready_for_final_reproducibility_qualification": not findings,
         "claim_boundary": (
-            "This source audit checks release dependency-resolution prerequisites only. A passing "
-            "result does not replace the final clean-machine build/install/process qualification."
+            "This source audit checks deterministic dependency-resolution prerequisites only. A "
+            "passing result does not replace the final clean-machine build/install/process "
+            "qualification or prove accelerator compatibility."
         ),
     }
 
