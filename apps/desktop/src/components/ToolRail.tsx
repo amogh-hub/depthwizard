@@ -45,8 +45,7 @@ export function ToolRail({
               if (!disabled) onChange(id);
             }}
           >
-            <span className="dw-tool-icon"><ToolIcon /></span>
-            <span className="dw-tool-label">{label}</span>
+            <span className="dw-tool-icon" aria-hidden="true"><ToolIcon /></span>
           </button>
         );
       })}
