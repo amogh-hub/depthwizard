@@ -57,8 +57,8 @@ function navigationHelp(cameraMode: CameraMode, autoFlythrough: boolean): string
   if (autoFlythrough) return "Flythrough active · deterministic camera tour · click Flythrough again to stop";
   if (cameraMode === "orbit") return "Orbit · drag to rotate · Shift/right-drag to pan · wheel to dolly";
   if (cameraMode === "topDown") return "Top down · drag to pan · wheel to zoom · Fit restores the scene";
-  if (cameraMode === "fly") return "Fly · WASD move · R/F rise/fall · drag to look · Shift accelerates";
-  return "First person · WASD move · R/F rise/fall · drag to look · Shift accelerates · choose Orbit to exit";
+  if (cameraMode === "fly") return "Fly · click terrain · WASD move · R/F rise/fall · drag to look · Shift accelerates";
+  return "First person · click terrain · WASD move · R/F rise/fall · drag to look · Shift accelerates · choose Orbit to exit";
 }
 
 export function TerrainViewport({
@@ -86,6 +86,7 @@ export function TerrainViewport({
   const performanceRef = useRef(onPerformance);
   const renderStateRef = useRef(onRenderState);
   const [retryGeneration, setRetryGeneration] = useState(0);
+  const [overlayRetryGeneration, setOverlayRetryGeneration] = useState(0);
   const [renderState, setRenderState] = useState<TerrainRenderState>(EMPTY_RENDER_STATE);
   const [overlayState, setOverlayState] = useState<TerrainOverlayState>(EMPTY_OVERLAY_STATE);
 
@@ -164,8 +165,9 @@ export function TerrainViewport({
     orbit.enablePan = true;
     orbit.screenSpacePanning = false;
 
-    // A single drag-to-look free-camera controller backs both Fly and First Person. The modes
-    // deliberately differ in navigation speed, not in hidden/unpredictable mouse semantics.
+    // FlyControls provides deterministic WASD + drag-to-look mechanics. DepthWizard constrains
+    // activation to an explicitly focused terrain canvas and uses separate speeds/entry framing
+    // for Fly versus First Person so keyboard input elsewhere in the workstation cannot move it.
     const freeCamera = new FlyControls(camera, renderer.domElement);
     freeCamera.movementSpeed = 80;
     freeCamera.rollSpeed = 0.30;
@@ -221,6 +223,7 @@ export function TerrainViewport({
     let shiftBoost = false;
     let flyBaseSpeed = 80;
     let firstPersonBaseSpeed = 35;
+    let canvasFocused = false;
 
     const refreshBounds = () => {
       if (!loaded) return;
@@ -267,6 +270,23 @@ export function TerrainViewport({
       raycaster.set(origin, new THREE.Vector3(0, -1, 0));
       const hit = raycaster.intersectObjects(terrainMeshes, false)[0];
       return hit?.point.clone() ?? null;
+    };
+
+    const enterFirstPerson = () => {
+      if (!loaded) return;
+      const eyeSurface = surfacePoint({ x: 0.5, y: 0.58 });
+      const lookSurface = surfacePoint({ x: 0.5, y: 0.48 });
+      if (!eyeSurface) {
+        fitView();
+        return;
+      }
+      const eyeHeight = THREE.MathUtils.clamp(sceneSize.y * 0.0015, 2.2, 8);
+      camera.up.set(0, 1, 0);
+      camera.position.copy(eyeSurface).add(new THREE.Vector3(0, eyeHeight, 0));
+      const lookTarget = (lookSurface ?? sceneCenter).clone().add(new THREE.Vector3(0, eyeHeight * 0.35, 0));
+      camera.lookAt(lookTarget);
+      camera.near = Math.max(0.05, Math.min(0.5, eyeHeight / 10));
+      camera.updateProjectionMatrix();
     };
 
     const positionMarker = (point: NormalizedPoint | null | undefined) => {
@@ -374,6 +394,7 @@ export function TerrainViewport({
         (error) => {
           if (generation !== overlayLoadGeneration || disposed) return;
           restoreOriginalMaterials();
+          appliedOverlayUrl = null;
           setOverlayState({
             phase: "error",
             message: `Analytical overlay could not be rendered: ${error instanceof Error ? error.message : String(error)}`,
@@ -450,6 +471,15 @@ export function TerrainViewport({
 
     let pointerDown: { x: number; y: number } | null = null;
     let shiftPan = false;
+    const onFocus = () => { canvasFocused = true; };
+    const onBlur = () => {
+      canvasFocused = false;
+      shiftBoost = false;
+      updateNavigationSpeed();
+    };
+    renderer.domElement.addEventListener("focus", onFocus);
+    renderer.domElement.addEventListener("blur", onBlur);
+
     const onPointerDown = (event: PointerEvent) => {
       renderer.domElement.focus({ preventScroll: true });
       if (event.button !== 0) return;
@@ -484,7 +514,7 @@ export function TerrainViewport({
     renderer.domElement.addEventListener("pointerup", onPointerUp);
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Shift" && !shiftBoost) {
+      if (event.key === "Shift" && canvasFocused && !shiftBoost) {
         shiftBoost = true;
         updateNavigationSpeed();
       }
@@ -515,7 +545,7 @@ export function TerrainViewport({
       const dt = Math.min(clock.getDelta(), 0.05);
       const touring = autoFlythroughRef.current && Boolean(loaded) && rendererReady;
       orbit.enabled = rendererReady && !touring && (mode === "orbit" || mode === "topDown");
-      freeCamera.enabled = rendererReady && !touring && (mode === "fly" || mode === "firstPerson");
+      freeCamera.enabled = rendererReady && !touring && canvasFocused && (mode === "fly" || mode === "firstPerson");
 
       if (mode === "topDown") {
         orbit.enableRotate = false;
@@ -537,11 +567,10 @@ export function TerrainViewport({
           camera.position.set(sceneCenter.x, sceneCenter.y + distance, sceneCenter.z + 0.001);
           camera.lookAt(sceneCenter);
           orbit.target.copy(sceneCenter);
+        } else if (mode === "firstPerson" && loaded) {
+          enterFirstPerson();
         } else if (mode === "orbit" && loaded && previousMode && previousMode !== "orbit") {
-          camera.up.set(0, 1, 0);
-          orbit.target.copy(sceneCenter);
-          camera.lookAt(sceneCenter);
-          orbit.update();
+          fitView();
         } else if (mode !== "topDown") {
           camera.up.set(0, 1, 0);
         }
@@ -585,6 +614,8 @@ export function TerrainViewport({
         );
         camera.lookAt(sceneCenter);
         orbit.target.copy(sceneCenter);
+      } else if (wasAutoFlythrough && loaded) {
+        fitView();
       }
       wasAutoFlythrough = touring;
       previousMode = mode;
@@ -633,6 +664,8 @@ export function TerrainViewport({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       renderer.domElement.removeEventListener("webglcontextlost", contextLost);
+      renderer.domElement.removeEventListener("focus", onFocus);
+      renderer.domElement.removeEventListener("blur", onBlur);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       orbit.dispose();
@@ -650,7 +683,7 @@ export function TerrainViewport({
       (pathLine.material as THREE.Material).dispose();
       renderer.domElement.remove();
     };
-  }, [meshUrl, retryGeneration]);
+  }, [meshUrl, retryGeneration, overlayRetryGeneration]);
 
   return (
     <div className="dw-terrain-viewport">
@@ -665,6 +698,7 @@ export function TerrainViewport({
         <div className="dw-terrain-overlay-state dw-terrain-overlay-state--error" role="alert">
           <strong>Analytical overlay unavailable</strong>
           <span>{overlayState.message}</span>
+          <button type="button" className="dw-overlay-retry" onClick={() => setOverlayRetryGeneration((value) => value + 1)}>Retry overlay</button>
         </div>
       )}
       {renderState.phase === "loading" && (
