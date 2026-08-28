@@ -36,6 +36,30 @@ def test_completed_stage_rejects_mutated_registered_artifact(tmp_path: Path) -> 
         manifest.stage_completed(ProcessingStage.GEOMETRY)
 
 
+def test_project_load_rejects_mutated_registered_artifact(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    source.write_bytes(b"source")
+    project = tmp_path / "project"
+    artifact = project / "products" / "slope.tif"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"original slope bytes")
+
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "slope",
+        artifact,
+        semantics="surface_slope",
+        units="degrees",
+        sha256=sha256_file(artifact),
+    )
+    # Registration seeds the cache. A subsequent filesystem mutation must invalidate it through
+    # size/mtime/ctime and force a new SHA-256 check on project load.
+    artifact.write_bytes(b"mutated slope bytes with a different identity")
+
+    with pytest.raises(RuntimeError, match="artifact hash mismatch"):
+        ProjectManifest.load(project)
+
+
 def test_verified_artifact_path_requires_registered_sha_identity(tmp_path: Path) -> None:
     source = tmp_path / "source.tif"
     source.write_bytes(b"source")
@@ -82,7 +106,7 @@ def test_register_artifact_rejects_supplied_hash_that_does_not_match_bytes(tmp_p
     artifact.write_bytes(b"metric dsm")
 
     manifest = ProjectManifest.create_or_load(project, source)
-    with pytest.raises(RuntimeError, match="supplied SHA-256 does not match bytes"):
+    with pytest.raises(RuntimeError, match="registration hash mismatch"):
         manifest.register_artifact(
             "dsm",
             artifact,
