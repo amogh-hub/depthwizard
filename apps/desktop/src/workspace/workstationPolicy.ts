@@ -45,7 +45,6 @@ export function activeWorkspaceStatus(input: {
     if (input.terrainPhase === "ready") return "Interactive 3D terrain ready";
   }
   if (input.previewLoading) return `Loading ${input.activeView} scientific layer…`;
-  if (input.projectExportMiB != null) return `Export ready · ${input.projectExportMiB.toFixed(2)} MiB`;
   if (input.validationRmseM != null && ["Validation", "Reference", "Residual"].includes(input.activeView)) {
     return `Reference validation ready · RMSE ${input.validationRmseM.toFixed(3)} m`;
   }
