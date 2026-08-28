@@ -39,6 +39,8 @@ struct AcceptanceBootReport<'a> {
     offline_core: bool,
     session_token_bits: u16,
     session_token_exported: bool,
+    boot_identity_bound: bool,
+    boot_identity_bits: u16,
     strict_python_egress_guard: bool,
     ephemeral_acceptance_control_enabled: bool,
     build_git_sha: &'static str,
@@ -82,7 +84,7 @@ fn terminate_child(child: &mut Child) {
     let _ = child.wait();
 }
 
-fn generate_session_token() -> String {
+fn generate_random_hex_256() -> String {
     let mut bytes = [0_u8; 32];
     OsRng.fill_bytes(&mut bytes);
     let mut token = String::with_capacity(64);
@@ -92,32 +94,53 @@ fn generate_session_token() -> String {
     token
 }
 
+fn generate_session_token() -> String {
+    generate_random_hex_256()
+}
+
+fn generate_boot_nonce() -> String {
+    generate_random_hex_256()
+}
+
 fn reserve_loopback_port() -> io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     Ok(listener.local_addr()?.port())
 }
 
-fn health_check(port: u16) -> io::Result<bool> {
+fn health_check(port: u16, expected_boot_nonce: &str) -> io::Result<bool> {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(300))?;
     stream.set_read_timeout(Some(Duration::from_millis(500)))?;
     stream.set_write_timeout(Some(Duration::from_millis(500)))?;
-    stream.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")?;
-    let mut response = [0_u8; 512];
+    stream.write_all(
+        b"GET /_depthwizard/boot HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    )?;
+    let mut response = [0_u8; 2048];
     let count = stream.read(&mut response)?;
     let head = String::from_utf8_lossy(&response[..count]);
-    Ok(head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200"))
+    let success = head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200");
+    Ok(success && head.contains(expected_boot_nonce))
 }
 
-fn wait_for_health(port: u16, timeout: Duration) -> io::Result<()> {
+fn wait_for_health(
+    child: &mut Child,
+    port: u16,
+    expected_boot_nonce: &str,
+    timeout: Duration,
+) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     let mut last_error: Option<io::Error> = None;
     while Instant::now() < deadline {
-        match health_check(port) {
+        if let Some(status) = child.try_wait()? {
+            return Err(io::Error::other(format!(
+                "DepthWizard sidecar exited before authenticated readiness: {status}"
+            )));
+        }
+        match health_check(port, expected_boot_nonce) {
             Ok(true) => return Ok(()),
             Ok(false) => {
                 last_error = Some(io::Error::other(
-                    "DepthWizard sidecar health endpoint returned a non-200 response",
+                    "DepthWizard sidecar boot endpoint did not prove the expected process identity",
                 ));
             }
             Err(error) => last_error = Some(error),
@@ -127,7 +150,7 @@ fn wait_for_health(port: u16, timeout: Duration) -> io::Result<()> {
     Err(last_error.unwrap_or_else(|| {
         io::Error::new(
             io::ErrorKind::TimedOut,
-            "DepthWizard sidecar did not become healthy before timeout",
+            "DepthWizard sidecar did not become identity-verified and healthy before timeout",
         )
     }))
 }
@@ -137,13 +160,15 @@ fn write_acceptance_boot_report(runtime: &RuntimeConfig) -> io::Result<()> {
         return Ok(());
     };
     let report = AcceptanceBootReport {
-        schema_version: 2,
+        schema_version: 3,
         status: "PASS_TAURI_SIDECAR_BOOT",
         api_base: &runtime.api_base,
         sidecar_pid: runtime.sidecar_pid,
         offline_core: runtime.offline_core,
         session_token_bits: (runtime.session_token.len() * 4) as u16,
         session_token_exported: false,
+        boot_identity_bound: true,
+        boot_identity_bits: 256,
         strict_python_egress_guard: runtime.offline_core,
         ephemeral_acceptance_control_enabled: env::var_os("DEPTHWIZARD_ACCEPTANCE_CONTROL_PATH")
             .is_some(),
@@ -290,6 +315,7 @@ fn launch_sidecar(
     app: &tauri::App,
     port: u16,
     token: &str,
+    boot_nonce: &str,
 ) -> Result<Child, Box<dyn std::error::Error>> {
     let executable = sidecar_executable(app)?;
     let mut command = Command::new(&executable);
@@ -302,6 +328,8 @@ fn launch_sidecar(
         .arg("warning")
         .env("DEPTHWIZARD_REQUIRE_SESSION_TOKEN", "1")
         .env("DEPTHWIZARD_SESSION_TOKEN", token)
+        .env("DEPTHWIZARD_REQUIRE_BOOT_NONCE", "1")
+        .env("DEPTHWIZARD_BOOT_NONCE", boot_nonce)
         .env("DEPTHWIZARD_OFFLINE_CORE", "1")
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
@@ -336,10 +364,16 @@ pub fn run() {
         .setup(|app| {
             let port = reserve_loopback_port()?;
             let token = generate_session_token();
-            let mut child = launch_sidecar(app, port, &token)?;
+            let boot_nonce = generate_boot_nonce();
+            let mut child = launch_sidecar(app, port, &token, &boot_nonce)?;
             let sidecar_pid = child.id();
 
-            if let Err(error) = wait_for_health(port, SIDECAR_READY_TIMEOUT) {
+            if let Err(error) = wait_for_health(
+                &mut child,
+                port,
+                &boot_nonce,
+                SIDECAR_READY_TIMEOUT,
+            ) {
                 terminate_child(&mut child);
                 return Err(Box::new(error));
             }
@@ -397,7 +431,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_session_token, reserve_loopback_port};
+    use super::{generate_boot_nonce, generate_session_token, reserve_loopback_port};
     use std::net::TcpListener;
 
     #[test]
@@ -405,6 +439,15 @@ mod tests {
         let token = generate_session_token();
         assert_eq!(token.len(), 64);
         assert!(token.chars().all(|character| character.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn boot_nonce_is_independent_256_bit_hex_material() {
+        let token = generate_session_token();
+        let nonce = generate_boot_nonce();
+        assert_eq!(nonce.len(), 64);
+        assert!(nonce.chars().all(|character| character.is_ascii_hexdigit()));
+        assert_ne!(nonce, token);
     }
 
     #[test]
