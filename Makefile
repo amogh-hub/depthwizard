@@ -1,4 +1,4 @@
-.PHONY: test verify service frontend-build rust-verify da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance release-train-4-analytical-smoke sidecar-build release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke release-train-5-standalone-acceptance release-train-5-final-qualification standalone-build demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
+.PHONY: test verify service frontend-build rust-verify da3-setup da3-smoke height-model-smoke height-train-acceptance height-multiscene-v2 height-multiscene-v3 height-multiscene-v4 height-multiscene-acceptance height-adaptive-acceptance height-frozen-holdout-v1 height-frozen-holdout potsdam-contract-audit potsdam-external-v1 potsdam-external-v2-preflight potsdam-external-v2-execution-preflight potsdam-external-acceptance release-train-2-validation-smoke release-train-3-spatial-foundation-smoke release-train-3-mesh-smoke release-train-3-export-smoke release-train-3-workstation-smoke release-train-3-acceptance release-train-4-analytical-smoke sidecar-build release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke release-train-5-standalone-acceptance release-train-5-workstation-build release-train-5-final-qualification standalone-build demo-rdsm demo-mesh demo-ui demo-india-absolute benchmark-ortholoc-demo rdah-setup benchmark-rdah-ortholoc rdah-sweep-setup benchmark-rdah-sweep
 
 test:
 	python -m pytest
@@ -97,6 +97,16 @@ release-train-5-full-smoke:
 	python -m scripts.release_train_5_full_acceptance
 
 release-train-5-standalone-acceptance: release-train-5-sidecar-smoke release-train-5-app-smoke release-train-5-full-smoke
+
+# Workstation correction packaging must rebuild the Python sidecar from the exact checked-out
+# source before Tauri bundles it. This prevents a new React desktop from silently shipping against
+# an older FastAPI API surface (for example missing preview/legend workstation routes).
+# It deliberately avoids rerunning the already-earned heavy RT5 scientific acceptance campaign.
+release-train-5-workstation-build:
+	python -m pip install -e ".[dev,standalone]"
+	$(MAKE) verify
+	python -m scripts.build_standalone_sidecar
+	cd apps/desktop && npm install --no-audit --no-fund && npm test && npm run tauri build
 
 # Final RT5 qualification is intentionally self-preparing: a git pull may change editable-project
 # metadata (for example PyInstaller entry points) while the active venv still reflects the prior
