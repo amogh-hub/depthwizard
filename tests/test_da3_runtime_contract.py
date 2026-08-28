@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib
+from types import ModuleType
 
 import pytest
 
@@ -21,15 +21,13 @@ def test_da3_runtime_contract_includes_lazy_checkpoint_dependencies() -> None:
 def test_da3_runtime_dependency_verifier_fails_closed_on_missing_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real_import = importlib.import_module
-
-    def controlled_import(module_name: str):
+    def controlled_import(module_name: str) -> ModuleType:
         if module_name == "huggingface_hub.hub_mixin":
             raise ModuleNotFoundError(
                 "No module named 'huggingface_hub'",
                 name="huggingface_hub",
             )
-        return real_import(module_name)
+        return ModuleType(module_name)
 
     monkeypatch.setattr(
         "depthwizard.geometry_prior.da3_runtime_contract.importlib.import_module",
