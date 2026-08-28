@@ -49,6 +49,7 @@ import {
 import {
   TerrainViewport,
   type CameraMode,
+  type TerrainOverlayState,
   type TerrainPerformance,
   type TerrainRenderState,
 } from "./workspace/TerrainViewport";
@@ -79,6 +80,10 @@ const emptyTerrainState: TerrainRenderState = {
   message: "Terrain renderer idle",
   triangles: 0,
   drawCalls: 0,
+};
+const emptyTerrainOverlayState: TerrainOverlayState = {
+  phase: "idle",
+  message: "Source texture active",
 };
 
 type AbsoluteDemoReport = {
@@ -250,6 +255,7 @@ export function App() {
   const [terrainOverlayUrl, setTerrainOverlayUrl] = useState<string | null>(null);
   const [terrainOverlayLoading, setTerrainOverlayLoading] = useState(false);
   const [terrainOverlayError, setTerrainOverlayError] = useState<string | null>(null);
+  const [terrainOverlayRenderState, setTerrainOverlayRenderState] = useState<TerrainOverlayState>(emptyTerrainOverlayState);
   const [terrainOverlayRetryGeneration, setTerrainOverlayRetryGeneration] = useState(0);
   const [terrainLegend, setTerrainLegend] = useState<ProjectLayerLegend | null>(null);
   const [autoFlythrough, setAutoFlythrough] = useState(false);
@@ -316,7 +322,9 @@ export function App() {
       if (current) URL.revokeObjectURL(current);
       return null;
     });
+    setTerrainOverlayLoading(false);
     setTerrainOverlayError(null);
+    setTerrainOverlayRenderState(emptyTerrainOverlayState);
     setTerrainLegend(null);
   };
 
@@ -501,6 +509,7 @@ export function App() {
   }, [demoMode, meshLod, projectDir, projectMesh?.build_config_sha256]);
 
   useEffect(() => {
+    setTerrainOverlayRenderState(emptyTerrainOverlayState);
     if (demoMode || activeView !== "3D Terrain" || !projectDir || !projectMesh || !terrainOverlay) {
       setTerrainOverlayUrl((current) => {
         if (current) URL.revokeObjectURL(current);
@@ -981,6 +990,7 @@ export function App() {
       lodPressureRef.current = 0;
       setTerrainPerformance(null);
       setTerrainRenderState({ phase: "loading", message: "Fetching terrain LOD 0…", triangles: 0, drawCalls: 0 });
+      setTerrainOverlayRenderState(emptyTerrainOverlayState);
       setVerticalExaggeration(1);
       setActiveLayer("Texture");
       setActiveView("3D Terrain");
@@ -1100,7 +1110,10 @@ export function App() {
     setComparisonError(null);
     if (view !== activeView && view !== "3D Terrain") revokePreview();
     setActiveView(view);
-    if (view !== "3D Terrain") setAutoFlythrough(false);
+    if (view !== "3D Terrain") {
+      setAutoFlythrough(false);
+      setTerrainOverlayRenderState(emptyTerrainOverlayState);
+    }
     if (view === "Optical") setActiveLayer("Texture");
     if (view === "DSM") setActiveLayer("DSM");
     if (view === "Residual") setActiveLayer("Residual");
@@ -1121,6 +1134,7 @@ export function App() {
     if (!layerAvailable(layer)) return;
     setPreviewError(null);
     setTerrainOverlayError(null);
+    setTerrainOverlayRenderState(emptyTerrainOverlayState);
     if (activeView !== "3D Terrain") revokePreview();
     setActiveLayer(layer);
     if (activeView === "3D Terrain" && meshArtifactReady) return;
@@ -1172,9 +1186,19 @@ export function App() {
             ? cameraMode === "orbit" ? "Drag to orbit · Shift/right-drag to pan · wheel to dolly" : cameraMode === "topDown" ? "Drag to pan · wheel to zoom" : "Use the active navigation mode to explore the terrain"
             : "Drag to pan · wheel/pinch to zoom · click to inspect synchronized values";
 
+  const terrainOverlayRenderError = terrainOverlay && terrainOverlayRenderState.phase === "error"
+    ? terrainOverlayRenderState.message
+    : null;
+  const terrainOverlayFailure = terrainOverlayError ?? terrainOverlayRenderError;
+  const terrainOverlayPending = Boolean(
+    terrainOverlay
+      && !terrainOverlayFailure
+      && (terrainOverlayLoading || terrainOverlayRenderState.phase !== "ready"),
+  );
+
   const workspaceFailure = activeView === "3D Terrain"
-    ? terrainOverlayError
-      ? `Analytical overlay unavailable · ${terrainOverlayError}`
+    ? terrainOverlayFailure
+      ? `Analytical overlay unavailable · ${terrainOverlayFailure}`
       : null
     : compareActive && comparisonError
       ? `Comparison reference unavailable · ${comparisonError}`
@@ -1203,7 +1227,7 @@ export function App() {
         }));
 
   const displayedLegend = activeView === "3D Terrain"
-    ? terrainOverlayError ? null : terrainLegend
+    ? terrainOverlay && terrainOverlayRenderState.phase === "ready" && !terrainOverlayFailure ? terrainLegend : null
     : previewError ? null : layerLegend;
   const showCanvasContext = activeView === "3D Terrain" ? Boolean(meshUrl) : Boolean(previewUrl);
 
@@ -1435,6 +1459,7 @@ export function App() {
                 setTerrainRenderState(state);
                 if (state.phase !== "ready") setTerrainPerformance(null);
               }}
+              onOverlayState={setTerrainOverlayRenderState}
             />
           )}
 
@@ -1539,9 +1564,13 @@ export function App() {
                       ? rendererReady
                         ? activeLayer === "Texture"
                           ? `${estimatorModel(projectManifest) ?? "DA3MONO-LARGE"} prior · rendered LOD ${meshLod} · ${verticalExaggeration}× display Z`
-                          : terrainOverlayError
+                          : terrainOverlayFailure
                             ? "analytical overlay failed · source texture restored"
-                            : `${terrainOverlayLoading ? "loading overlay" : "analytical overlay active"} · terrain geometry unchanged · LOD ${meshLod}`
+                            : terrainOverlayPending
+                              ? "loading and frame-validating analytical overlay · terrain geometry unchanged"
+                              : terrainOverlayRenderState.phase === "ready"
+                                ? `analytical overlay frame-validated · terrain geometry unchanged · LOD ${meshLod}`
+                                : "source texture active · analytical overlay not yet validated"
                         : terrainRenderState.message
                       : renderedPreviewLayer === "residual"
                         ? `${projectValidation?.valid_pixels.toLocaleString() ?? "—"} valid pixels · metres`
