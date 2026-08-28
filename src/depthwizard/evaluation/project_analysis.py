@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from itertools import pairwise
+from math import ceil, floor
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import rasterio
-from pyproj import CRS, Geod, Transformer
+from pyproj import Geod, Transformer
 from pyproj.exceptions import CRSError, ProjError
+from rasterio.windows import Window
 
 from depthwizard.contracts import (
     NormalizedPoint,
@@ -42,9 +44,16 @@ def _primary_surface(manifest: ProjectManifest) -> tuple[SurfaceProduct, Path]:
     raise ValueError("analytical sampling requires a completed DSM or rDSM artifact")
 
 
+def _floating_pixel(point: NormalizedPoint, *, width: int, height: int) -> tuple[float, float]:
+    col = float(point.x * max(width - 1, 0))
+    row = float(point.y * max(height - 1, 0))
+    return col, row
+
+
 def _pixel_index(point: NormalizedPoint, *, width: int, height: int) -> tuple[int, int]:
-    col = round(point.x * max(width - 1, 0))
-    row = round(point.y * max(height - 1, 0))
+    col_f, row_f = _floating_pixel(point, width=width, height=height)
+    col = round(col_f)
+    row = round(row_f)
     return min(max(col, 0), width - 1), min(max(row, 0), height - 1)
 
 
@@ -90,6 +99,87 @@ def _artifact_sample(manifest: ProjectManifest, name: str, point: NormalizedPoin
     )
 
 
+def _bilinear_series(path: Path, points: list[NormalizedPoint]) -> list[float | None]:
+    """Sample one raster along a normalized transect with nodata-aware bilinear interpolation.
+
+    Only the bounding window around the requested samples is read, avoiding hundreds of independent
+    file opens while preserving subpixel profile geometry.
+    """
+    with rasterio.open(path) as src:
+        cols = np.asarray([point.x * max(src.width - 1, 0) for point in points], dtype=np.float64)
+        rows = np.asarray([point.y * max(src.height - 1, 0) for point in points], dtype=np.float64)
+        col0 = max(0, floor(float(np.min(cols))) - 1)
+        row0 = max(0, floor(float(np.min(rows))) - 1)
+        col1 = min(src.width, ceil(float(np.max(cols))) + 2)
+        row1 = min(src.height, ceil(float(np.max(rows))) + 2)
+        window = Window.from_slices((row0, row1), (col0, col1))
+        sample = src.read(1, window=window, masked=True).astype(np.float64)
+        values = np.asarray(sample.filled(np.nan), dtype=np.float64)
+        valid = ~np.ma.getmaskarray(sample) & np.isfinite(values)
+        if src.nodata is not None and np.isfinite(src.nodata):
+            valid &= values != float(src.nodata)
+
+    local_cols = cols - col0
+    local_rows = rows - row0
+    c0 = np.floor(local_cols).astype(np.int64)
+    r0 = np.floor(local_rows).astype(np.int64)
+    c1 = np.minimum(c0 + 1, values.shape[1] - 1)
+    r1 = np.minimum(r0 + 1, values.shape[0] - 1)
+    fx = local_cols - c0
+    fy = local_rows - r0
+
+    weights = (
+        (1.0 - fx) * (1.0 - fy),
+        fx * (1.0 - fy),
+        (1.0 - fx) * fy,
+        fx * fy,
+    )
+    corners = ((r0, c0), (r0, c1), (r1, c0), (r1, c1))
+    numerator = np.zeros(len(points), dtype=np.float64)
+    denominator = np.zeros(len(points), dtype=np.float64)
+    for weight, (rr, cc) in zip(weights, corners, strict=True):
+        corner_valid = valid[rr, cc]
+        effective = np.where(corner_valid, weight, 0.0)
+        numerator += np.where(corner_valid, values[rr, cc], 0.0) * effective
+        denominator += effective
+
+    result: list[float | None] = []
+    for value, support in zip(numerator, denominator, strict=True):
+        if support <= 1e-8 or not np.isfinite(value):
+            result.append(None)
+        else:
+            result.append(float(value / support))
+    return result
+
+
+def _artifact_series(
+    manifest: ProjectManifest,
+    name: str,
+    points: list[NormalizedPoint],
+) -> list[RasterSample]:
+    payload = manifest.artifacts.get(name)
+    if not payload:
+        return [RasterSample(available=False, semantics=f"unavailable_{name}_artifact") for _ in points]
+    raw_path = payload.get("path")
+    if not isinstance(raw_path, str):
+        raise TypeError(f"{name} artifact path is malformed in project manifest")
+    path = Path(raw_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"persisted {name} artifact does not exist")
+    semantics = str(payload.get("semantics") or name)
+    units = str(payload.get("units")) if payload.get("units") is not None else None
+    values = _bilinear_series(path, points)
+    return [
+        RasterSample(
+            available=value is not None,
+            value=value,
+            units=units,
+            semantics=semantics if value is not None else f"{semantics}; nodata_at_point",
+        )
+        for value in values
+    ]
+
+
 def _safe_geographic_coordinates(
     crs: object,
     x: float,
@@ -118,8 +208,6 @@ def _spatial_coordinates(
             return col, row, None, None, None, None
         x, y = src.xy(row, col)
         if ortholoc_metric_affine_override_enabled():
-            # Under the explicit OrthoLoC contract these are dataset-local metric map coordinates;
-            # a syntactic CRS tag is not permission to manufacture global lon/lat.
             return col, row, float(x), float(y), None, None
         if src.crs is None:
             return col, row, None, None, None, None
@@ -130,12 +218,7 @@ def _spatial_coordinates(
 
 
 def probe_project(request: ProjectProbeRequest) -> ProjectProbeResult:
-    """Sample persisted analytical products at one normalized image position.
-
-    Coordinates are normalized to the raster extent so desktop previews may be downsampled without
-    changing scientific sampling. The endpoint is read-only and never writes analyst clicks into the
-    project evidence record.
-    """
+    """Sample persisted analytical products at one normalized image position."""
     manifest = _load_project(request.project_dir)
     surface_name, surface_path = _primary_surface(manifest)
     col, row, map_x, map_y, longitude, latitude = _spatial_coordinates(
@@ -160,20 +243,6 @@ def probe_project(request: ProjectProbeRequest) -> ProjectProbeResult:
     )
 
 
-def _projected_distance_factors(crs: CRS) -> tuple[float, float] | None:
-    """Return projected-coordinate conversion factors to metres when the CRS declares them."""
-    if not crs.is_projected or len(crs.axis_info) < 2:
-        return None
-    x_factor = crs.axis_info[0].unit_conversion_factor
-    y_factor = crs.axis_info[1].unit_conversion_factor
-    if x_factor is None or y_factor is None:
-        return None
-    factors = (float(x_factor), float(y_factor))
-    if not all(np.isfinite(value) and value > 0 for value in factors):
-        return None
-    return factors
-
-
 def _cumulative_map_distance_m(
     map_coordinates: list[tuple[float, float]],
 ) -> list[float | None]:
@@ -195,7 +264,7 @@ def _profile_distances(
     metric_gsd = ground_sample_distance_m(surface_path)
     with rasterio.open(surface_path) as src:
         pixels = [
-            _pixel_index(point, width=src.width, height=src.height)
+            _floating_pixel(point, width=src.width, height=src.height)
             for point in points
         ]
         pixel_distance = [0.0]
@@ -209,44 +278,23 @@ def _profile_distances(
 
         map_coordinates: list[tuple[float, float]] = []
         for col, row in pixels:
-            x, y = src.xy(row, col)
+            x, y = src.transform * (col + 0.5, row + 0.5)
             map_coordinates.append((float(x), float(y)))
 
         if ortholoc_metric_affine_override_enabled():
-            # The dedicated OrthoLoC contract defines this affine coordinate space in metres. Use
-            # direct affine geometry so rotation/shear are respected and never round-trip via WGS84.
             return pixel_distance, _cumulative_map_distance_m(map_coordinates)
 
         if src.crs is None:
             return pixel_distance, [None for _ in points]
 
-        crs = CRS.from_user_input(src.crs)
-        projected_factors = _projected_distance_factors(crs)
-        if projected_factors is not None:
-            x_factor, y_factor = projected_factors
-            metric_distance: list[float | None] = [0.0]
-            cumulative = 0.0
-            for (x0, y0), (x1, y1) in pairwise(map_coordinates):
-                segment = float(
-                    np.hypot((x1 - x0) * x_factor, (y1 - y0) * y_factor)
-                )
-                if not np.isfinite(segment):
-                    return pixel_distance, [None for _ in points]
-                cumulative += segment
-                metric_distance.append(cumulative)
-            return pixel_distance, metric_distance
-
-        if not crs.is_geographic:
-            return pixel_distance, [None for _ in points]
-
         geographic: list[tuple[float, float]] = []
         for x, y in map_coordinates:
-            longitude, latitude = _safe_geographic_coordinates(crs, x, y)
+            longitude, latitude = _safe_geographic_coordinates(src.crs, x, y)
             if longitude is None or latitude is None:
                 return pixel_distance, [None for _ in points]
             geographic.append((longitude, latitude))
 
-    metric_distance = [0.0]
+    metric_distance: list[float | None] = [0.0]
     cumulative = 0.0
     for (lon0, lat0), (lon1, lat1) in pairwise(geographic):
         _, _, segment = _GEOD.inv(lon0, lat0, lon1, lat1)
@@ -290,7 +338,7 @@ def _surface_statistics(samples: list[ProfileSample]) -> tuple[
 
 
 def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResult:
-    """Sample a deterministic analyst transect across the persisted project products."""
+    """Sample a deterministic subpixel analyst transect across persisted project products."""
     manifest = _load_project(request.project_dir)
     surface_name, surface_path = _primary_surface(manifest)
     fractions = np.linspace(0.0, 1.0, request.samples)
@@ -303,6 +351,12 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
     ]
     pixel_distances, metric_distances = _profile_distances(surface_path, points)
 
+    surfaces = _artifact_series(manifest, surface_name, points)
+    slopes = _artifact_series(manifest, "slope", points)
+    references = _artifact_series(manifest, "reference", points)
+    residuals = _artifact_series(manifest, "residual", points)
+    confidences = _artifact_series(manifest, "confidence", points)
+
     samples: list[ProfileSample] = []
     for index, (fraction, point) in enumerate(zip(fractions, points, strict=True)):
         samples.append(
@@ -311,11 +365,11 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
                 point=point,
                 distance_pixels=pixel_distances[index],
                 distance_m=metric_distances[index],
-                surface=_artifact_sample(manifest, surface_name, point),
-                slope=_artifact_sample(manifest, "slope", point),
-                reference=_artifact_sample(manifest, "reference", point),
-                residual=_artifact_sample(manifest, "residual", point),
-                confidence=_artifact_sample(manifest, "confidence", point),
+                surface=surfaces[index],
+                slope=slopes[index],
+                reference=references[index],
+                residual=residuals[index],
+                confidence=confidences[index],
             )
         )
 
@@ -337,9 +391,11 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
         elevation_loss=loss,
         samples=samples,
         semantics=(
-            "Analyst-selected surface transect. Vertical delta is endpoint surface elevation "
-            "difference; it is not automatically a building-height classification. Metric horizontal "
-            "distance is emitted only when the raster's spatial scale passes the active spatial "
-            "contract, including an explicit dataset-local metric-affine contract when selected."
+            "Analyst-selected persisted-surface transect. Profile values use nodata-aware bilinear "
+            "subpixel sampling. Vertical delta is endpoint surface elevation difference; it is not "
+            "automatically a building-height classification. Standard georeferenced rasters use "
+            "WGS84 geodesic ground distance so projected-coordinate distortion is not reported as "
+            "physical length. Metric horizontal distance is omitted when the spatial contract is "
+            "not trustworthy; the explicit OrthoLoC local-metric affine contract remains separate."
         ),
     )
