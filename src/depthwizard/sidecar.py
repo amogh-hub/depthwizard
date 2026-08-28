@@ -21,7 +21,8 @@ def _startup_trace(phase: str, **details: object) -> None:
     """Best-effort startup tracing for packaged-runtime diagnostics.
 
     The trace is disabled during normal launches unless DEPTHWIZARD_STARTUP_TRACE is set. It never
-    records the session token or other secrets, and tracing failures must never block the sidecar.
+    records the session token, boot nonce, or other secrets, and tracing failures must never block
+    the sidecar.
     """
     raw_path = os.environ.get("DEPTHWIZARD_STARTUP_TRACE")
     if not raw_path:
@@ -73,6 +74,12 @@ def validate_launch_environment(*, host: str, port: int) -> None:
         if len(token) < 32:
             raise RuntimeError(
                 "DepthWizard standalone launch requires a per-session authentication token"
+            )
+    if os.environ.get("DEPTHWIZARD_REQUIRE_BOOT_NONCE") == "1":
+        nonce = os.environ.get("DEPTHWIZARD_BOOT_NONCE", "")
+        if len(nonce) < 32:
+            raise RuntimeError(
+                "DepthWizard standalone launch requires a per-process boot identity nonce"
             )
 
 
@@ -252,6 +259,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     from depthwizard.service import app
 
     _startup_trace("service_import_complete")
+
+    boot_nonce = os.environ.get("DEPTHWIZARD_BOOT_NONCE")
+    if boot_nonce:
+        def _boot_identity() -> dict[str, str]:
+            return {"boot_nonce": boot_nonce}
+
+        app.add_api_route(
+            "/_depthwizard/boot",
+            _boot_identity,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+        _startup_trace("boot_identity_route_registered")
+
     _startup_trace("server_start")
     uvicorn.run(
         app,
