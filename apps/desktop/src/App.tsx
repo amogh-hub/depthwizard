@@ -207,6 +207,7 @@ export function App() {
   const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
   const [activeLayer, setActiveLayer] = useState<(typeof layers)[number]>("Texture");
   const [metadata, setMetadata] = useState<RasterMetadata | null>(null);
+  const [sourceAvailable, setSourceAvailable] = useState(true);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [openingProject, setOpeningProject] = useState(false);
@@ -221,10 +222,14 @@ export function App() {
   const [validatingReference, setValidatingReference] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewRetryGeneration, setPreviewRetryGeneration] = useState(0);
   const [renderedPreviewLayer, setRenderedPreviewLayer] = useState<ProjectPreviewLayer | null>(null);
   const [layerLegend, setLayerLegend] = useState<ProjectLayerLegend | null>(null);
   const [comparisonUrl, setComparisonUrl] = useState<string | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [comparisonRetryGeneration, setComparisonRetryGeneration] = useState(0);
   const [probe, setProbe] = useState<ProjectProbeResult | null>(null);
   const [lineStart, setLineStart] = useState<NormalizedPoint | null>(null);
   const [lineEnd, setLineEnd] = useState<NormalizedPoint | null>(null);
@@ -244,6 +249,8 @@ export function App() {
   const [verticalExaggeration, setVerticalExaggeration] = useState<number>(1);
   const [terrainOverlayUrl, setTerrainOverlayUrl] = useState<string | null>(null);
   const [terrainOverlayLoading, setTerrainOverlayLoading] = useState(false);
+  const [terrainOverlayError, setTerrainOverlayError] = useState<string | null>(null);
+  const [terrainOverlayRetryGeneration, setTerrainOverlayRetryGeneration] = useState(0);
   const [terrainLegend, setTerrainLegend] = useState<ProjectLayerLegend | null>(null);
   const [autoFlythrough, setAutoFlythrough] = useState(false);
   const [cameraResetToken, setCameraResetToken] = useState(0);
@@ -254,14 +261,21 @@ export function App() {
   const lodPressureRef = useRef(0);
   const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : projectMeshUrl ?? undefined;
 
-  const rememberProject = (path: string) => {
-    const next = [path, ...recentProjects.filter((item) => item !== path)].slice(0, 6);
-    setRecentProjects(next);
+  const persistRecentProjects = (paths: string[]) => {
+    setRecentProjects(paths);
     try {
-      localStorage.setItem(recentProjectStorageKey, JSON.stringify(next));
+      localStorage.setItem(recentProjectStorageKey, JSON.stringify(paths));
     } catch {
       // Recent paths are convenience only; project evidence remains on disk.
     }
+  };
+
+  const rememberProject = (path: string) => {
+    persistRecentProjects([path, ...recentProjects.filter((item) => item !== path)].slice(0, 6));
+  };
+
+  const forgetProject = (path: string) => {
+    persistRecentProjects(recentProjects.filter((item) => item !== path));
   };
 
   const revokePreview = () => {
@@ -302,6 +316,7 @@ export function App() {
       if (current) URL.revokeObjectURL(current);
       return null;
     });
+    setTerrainOverlayError(null);
     setTerrainLegend(null);
   };
 
@@ -321,6 +336,7 @@ export function App() {
       .then(([absoluteReport, benchmark]) => {
         if (cancelled) return;
         setDemoReport(absoluteReport);
+        setSourceAvailable(true);
         setMetadata({
           path: absoluteReport.imagery.path,
           width: absoluteReport.shape[1],
@@ -376,6 +392,7 @@ export function App() {
             setProjectManifest(manifest);
             setProjectJob(next);
             setProjectExport(null);
+            setPreviewError(null);
             resetAnalysis();
             setActiveLayer(manifest.artifacts.dsm ? "DSM" : "Texture");
             setActiveView(manifest.artifacts.dsm || manifest.artifacts.rdsm ? "DSM" : "Optical");
@@ -418,7 +435,8 @@ export function App() {
   const terrainOverlay = terrainOverlayLayer(activeLayer, projectManifest);
   const compareAvailable = compareToolAvailable(calibrationReady, Boolean(projectValidation));
   const compareActive = activeTool === "Compare" && compareAvailable;
-  const analystInteractive = !demoMode && activeView !== "3D Terrain" && Boolean(projectDir) && geometryReady;
+  const rasterSurfaceReady = activeView !== "3D Terrain" && Boolean(previewUrl) && !previewLoading && !previewError;
+  const analystInteractive = !demoMode && Boolean(projectDir) && geometryReady && rasterSurfaceReady;
   const projectAnalystInteractive = !demoMode && Boolean(projectDir) && geometryReady;
   const terrainAnalysisPath = useMemo<NormalizedPoint[]>(() => {
     if (activeTool === "Profiles" && profile) return profile.samples.map((sample) => sample.point);
@@ -478,12 +496,14 @@ export function App() {
         return null;
       });
       setTerrainOverlayLoading(false);
+      setTerrainOverlayError(null);
       setTerrainLegend(null);
       return;
     }
     let cancelled = false;
     let createdUrl: string | null = null;
     setTerrainOverlayLoading(true);
+    setTerrainOverlayError(null);
     setTerrainLegend(null);
     Promise.all([
       getProjectPreviewUrl(projectDir, terrainOverlay, 1600),
@@ -508,7 +528,7 @@ export function App() {
             return null;
           });
           setTerrainLegend(null);
-          setImportError(error instanceof Error ? error.message : "Unable to load 3D analytical overlay");
+          setTerrainOverlayError(error instanceof Error ? error.message : "Unable to load 3D analytical overlay");
         }
       })
       .finally(() => {
@@ -518,7 +538,7 @@ export function App() {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [activeView, demoMode, projectDir, projectManifest?.updated_at_utc, projectMesh?.build_config_sha256, terrainOverlay]);
+  }, [activeView, demoMode, projectDir, projectManifest?.updated_at_utc, projectMesh?.build_config_sha256, terrainOverlay, terrainOverlayRetryGeneration]);
 
   useEffect(() => {
     if (!autoLod || activeView !== "3D Terrain" || !projectMesh || !validTerrainTelemetry(terrainRenderState, terrainPerformance)) {
@@ -543,12 +563,14 @@ export function App() {
     if (demoMode || activeView === "3D Terrain" || !projectDir || !previewLayer) {
       revokePreview();
       setPreviewLoading(false);
+      setPreviewError(null);
       return;
     }
     let cancelled = false;
     let createdUrl: string | null = null;
     revokePreview();
     setPreviewLoading(true);
+    setPreviewError(null);
     Promise.all([
       getProjectPreviewUrl(projectDir, previewLayer),
       getProjectLayerLegend(projectDir, previewLayer),
@@ -562,11 +584,12 @@ export function App() {
         setPreviewUrl(url);
         setRenderedPreviewLayer(previewLayer);
         setLayerLegend(legend);
+        setPreviewError(null);
       })
       .catch((error: unknown) => {
         if (!cancelled) {
           revokePreview();
-          setImportError(error instanceof Error ? error.message : "Unable to render project layer");
+          setPreviewError(error instanceof Error ? error.message : "Unable to render project layer");
         }
       })
       .finally(() => {
@@ -576,7 +599,7 @@ export function App() {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [activeView, demoMode, previewLayer, projectDir, projectManifest?.updated_at_utc]);
+  }, [activeView, demoMode, previewLayer, projectDir, projectManifest?.updated_at_utc, previewRetryGeneration]);
 
   useEffect(() => {
     if (!compareActive || !projectDir) {
@@ -585,11 +608,13 @@ export function App() {
         return null;
       });
       setComparisonLoading(false);
+      setComparisonError(null);
       return;
     }
     let cancelled = false;
     let createdUrl: string | null = null;
     setComparisonLoading(true);
+    setComparisonError(null);
     setComparisonUrl((current) => {
       if (current) URL.revokeObjectURL(current);
       return null;
@@ -604,7 +629,7 @@ export function App() {
         setComparisonUrl(url);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setImportError(error instanceof Error ? error.message : "Unable to load comparison reference");
+        if (!cancelled) setComparisonError(error instanceof Error ? error.message : "Unable to load comparison reference");
       })
       .finally(() => {
         if (!cancelled) setComparisonLoading(false);
@@ -613,10 +638,11 @@ export function App() {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [compareActive, projectDir, projectManifest?.updated_at_utc]);
+  }, [compareActive, comparisonRetryGeneration, projectDir, projectManifest?.updated_at_utc]);
 
   useEffect(() => {
     resetAnalysis();
+    setPreviewError(null);
     if (activeTool === "Validation" && projectValidation) {
       setActiveView("Residual");
       setActiveLayer("Residual");
@@ -629,15 +655,22 @@ export function App() {
       setActiveView("DSM");
       setActiveLayer("DSM");
       setAutoFlythrough(false);
-    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady && !meshArtifactReady) {
+    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady) {
       setActiveView("DSM");
       setActiveLayer("DSM");
+      setAutoFlythrough(false);
     }
   }, [activeTool]);
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
-      if (activeTool !== "Structures" || isEditableTarget(event.target)) return;
+      if (isEditableTarget(event.target)) return;
+      if ((activeTool === "Measure" || activeTool === "Profiles") && event.key === "Escape") {
+        event.preventDefault();
+        resetAnalysis();
+        return;
+      }
+      if (activeTool !== "Structures") return;
       if ((event.key === "Backspace" || event.key === "Delete") && structurePolygon.length > 0) {
         event.preventDefault();
         setStructureHeight(null);
@@ -659,10 +692,26 @@ export function App() {
 
   const loadExistingProject = async (selectedDir: string) => {
     setImportError(null);
+    setPreviewError(null);
     setOpeningProject(true);
     try {
       const manifest = await getProjectManifest(selectedDir);
-      const nextMetadata = await inspectRaster(manifest.source_path);
+      let nextMetadata: RasterMetadata;
+      let nextSourceAvailable = true;
+      try {
+        nextMetadata = await inspectRaster(manifest.source_path);
+      } catch (sourceError) {
+        const persistedSurface = manifest.artifacts.dsm?.path ?? manifest.artifacts.rdsm?.path;
+        if (!persistedSurface) throw sourceError;
+        const surfaceMetadata = await inspectRaster(persistedSurface);
+        nextMetadata = {
+          ...surfaceMetadata,
+          path: manifest.source_path,
+          count: 0,
+          dtype: "source unavailable",
+        };
+        nextSourceAvailable = false;
+      }
       const [validation, mesh, exported] = await Promise.all([
         manifest.artifacts.metrics ? getProjectValidation(selectedDir).catch(() => null) : Promise.resolve(null),
         manifest.artifacts.mesh_manifest ? getProjectMesh(selectedDir).catch(() => null) : Promise.resolve(null),
@@ -672,6 +721,7 @@ export function App() {
       clearProjectMesh();
       resetAnalysis();
       setMetadata(nextMetadata);
+      setSourceAvailable(nextSourceAvailable);
       setProjectDir(selectedDir);
       setProjectManifest(manifest);
       setProjectJob(reopenedJobState(manifest, selectedDir));
@@ -686,6 +736,7 @@ export function App() {
       setActiveView(manifest.artifacts.dsm || manifest.artifacts.rdsm ? "DSM" : "Optical");
       rememberProject(selectedDir);
     } catch (error) {
+      if (recentProjects.includes(selectedDir)) forgetProject(selectedDir);
       setImportError(error instanceof Error ? error.message : "Unable to open existing DepthWizard project");
     } finally {
       setOpeningProject(false);
@@ -704,6 +755,7 @@ export function App() {
 
   const importImagery = async () => {
     setImportError(null);
+    setPreviewError(null);
     try {
       const selected = await open({
         multiple: false,
@@ -718,6 +770,7 @@ export function App() {
       clearProjectMesh();
       resetAnalysis();
       setMetadata(nextMetadata);
+      setSourceAvailable(true);
       setProjectDir(null);
       setProjectJob(null);
       setProjectManifest(null);
@@ -1023,7 +1076,7 @@ export function App() {
   const viewAvailable = (view: (typeof views)[number]): boolean => {
     if (view === "3D Terrain") return meshArtifactReady;
     if (demoMode) return false;
-    if (view === "Optical") return Boolean(metadata);
+    if (view === "Optical") return Boolean(metadata) && sourceAvailable;
     if (view === "DSM") return geometryReady;
     if (view === "Reference" || view === "Residual") return Boolean(projectValidation);
     if (view === "Confidence") return Boolean(projectManifest?.artifacts.confidence);
@@ -1032,6 +1085,8 @@ export function App() {
 
   const chooseView = (view: (typeof views)[number]) => {
     if (!viewAvailable(view)) return;
+    setPreviewError(null);
+    setComparisonError(null);
     if (view !== activeView && view !== "3D Terrain") revokePreview();
     setActiveView(view);
     if (view !== "3D Terrain") setAutoFlythrough(false);
@@ -1042,7 +1097,7 @@ export function App() {
   };
 
   const layerAvailable = (layer: (typeof layers)[number]): boolean => {
-    if (layer === "Texture") return meshArtifactReady || Boolean(projectManifest);
+    if (layer === "Texture") return meshArtifactReady || Boolean(projectManifest && sourceAvailable);
     if (layer === "DSM") return geometryReady;
     if (layer === "Slope") return Boolean(projectManifest?.artifacts.slope);
     if (layer === "Hillshade" || layer === "Contours") return geometryReady;
@@ -1053,6 +1108,8 @@ export function App() {
 
   const chooseLayer = (layer: (typeof layers)[number]) => {
     if (!layerAvailable(layer)) return;
+    setPreviewError(null);
+    setTerrainOverlayError(null);
     if (activeView !== "3D Terrain") revokePreview();
     setActiveLayer(layer);
     if (activeView === "3D Terrain" && meshArtifactReady) return;
@@ -1065,15 +1122,20 @@ export function App() {
   const disabledTools = useMemo(() => {
     const result = new Set<string>();
     if (!geometryReady) {
-      for (const tool of ["Layers", "Measure", "Profiles", "Export"]) result.add(tool);
+      for (const tool of ["Measure", "Profiles", "Export"]) result.add(tool);
     }
     if (!calibrationReady) {
       result.add("Structures");
       result.add("Validation");
     }
+    if (previewError && activeView !== "3D Terrain") {
+      result.add("Measure");
+      result.add("Profiles");
+      result.add("Structures");
+    }
     if (!compareAvailable) result.add("Compare");
     return result;
-  }, [calibrationReady, compareAvailable, geometryReady]);
+  }, [activeView, calibrationReady, compareAvailable, geometryReady, previewError]);
 
   const interactionMode: RasterInteractionMode = activeTool === "Measure"
     ? "measure"
@@ -1099,26 +1161,39 @@ export function App() {
             ? cameraMode === "orbit" ? "Drag to orbit · Shift/right-drag to pan · wheel to dolly" : cameraMode === "topDown" ? "Drag to pan · wheel to zoom" : "Use the active navigation mode to explore the terrain"
             : "Drag to pan · wheel/pinch to zoom · click to inspect synchronized values";
 
-  const normalStatus = structureHeight
-    ? `Structure height ${structureHeight.structure_height_m.toFixed(3)} m`
-    : activeWorkspaceStatus({
-        activeView,
-        previewLoading: previewLoading || comparisonLoading,
-        terrainPhase: terrainRenderState.phase,
-        terrainMessage: terrainRenderState.message,
-        processing,
-        waitingForCalibration,
-        calibrationReady,
-        geometryReady,
-        analysisBusy,
-        exporting,
-        buildingMesh,
-        projectError: projectJob?.error,
-        projectExportMiB: projectExport ? projectExport.bundle_bytes / (1024 * 1024) : null,
-        validationRmseM: projectValidation?.elevation.rmse_m ?? null,
-      });
+  const workspaceFailure = activeView === "3D Terrain"
+    ? terrainOverlayError
+      ? `Analytical overlay unavailable · ${terrainOverlayError}`
+      : null
+    : compareActive && comparisonError
+      ? `Comparison reference unavailable · ${comparisonError}`
+      : previewError
+        ? `${activeView} layer unavailable · ${previewError}`
+        : null;
 
-  const displayedLegend = activeView === "3D Terrain" ? terrainLegend : layerLegend;
+  const normalStatus = workspaceFailure
+    ?? (structureHeight
+      ? `Structure height ${structureHeight.structure_height_m.toFixed(3)} m`
+      : activeWorkspaceStatus({
+          activeView,
+          previewLoading: previewLoading || comparisonLoading,
+          terrainPhase: terrainRenderState.phase,
+          terrainMessage: terrainRenderState.message,
+          processing,
+          waitingForCalibration,
+          calibrationReady,
+          geometryReady,
+          analysisBusy,
+          exporting,
+          buildingMesh,
+          projectError: projectJob?.error,
+          projectExportMiB: projectExport ? projectExport.bundle_bytes / (1024 * 1024) : null,
+          validationRmseM: projectValidation?.elevation.rmse_m ?? null,
+        }));
+
+  const displayedLegend = activeView === "3D Terrain"
+    ? terrainOverlayError ? null : terrainLegend
+    : previewError ? null : layerLegend;
   const showCanvasContext = activeView === "3D Terrain" ? Boolean(meshUrl) : Boolean(previewUrl);
 
   return (
@@ -1162,17 +1237,17 @@ export function App() {
             </button>
           )}
           {needsRecovery && (
-            <button className="dw-btn dw-btn--primary" onClick={() => void recoverProject()} disabled={submittingProject}>
+            <button className="dw-btn dw-btn--primary" onClick={() => void recoverProject()} disabled={submittingProject || !sourceAvailable} title={!sourceAvailable ? "Original source imagery is required to resume processing" : undefined}>
               {submittingProject ? "Recovering…" : "Recover project"}
             </button>
           )}
           {!demoMode && waitingForCalibration && (
             <>
-              <button className="dw-btn dw-btn--primary" onClick={() => void addDemEvidence()} disabled={submittingProject}>
+              <button className="dw-btn dw-btn--primary" onClick={() => void addDemEvidence()} disabled={submittingProject || !sourceAvailable}>
                 {submittingProject ? "Starting…" : "Add DEM"}
               </button>
-              <button className="dw-btn" onClick={() => void addGcpEvidence()} disabled={submittingProject}>Add GCP CSV</button>
-              <button className="dw-btn" onClick={() => void addDemGcpEvidence()} disabled={submittingProject}>DEM + GCP</button>
+              <button className="dw-btn" onClick={() => void addGcpEvidence()} disabled={submittingProject || !sourceAvailable}>Add GCP CSV</button>
+              <button className="dw-btn" onClick={() => void addDemGcpEvidence()} disabled={submittingProject || !sourceAvailable}>DEM + GCP</button>
             </>
           )}
           {!demoMode && geometryReady && (
@@ -1213,7 +1288,7 @@ export function App() {
                   key={view}
                   data-active={activeView === view}
                   disabled={!available}
-                  title={available ? undefined : "Enabled only when its real project artifact is available"}
+                  title={view === "Optical" && !sourceAvailable ? "Original source imagery is unavailable; persisted elevation products remain usable" : available ? undefined : "Enabled only when its real project artifact is available"}
                   onClick={() => chooseView(view)}
                 >
                   {view}
@@ -1304,7 +1379,7 @@ export function App() {
                   setStructureHeight(null);
                   setStructurePolygon((current) => current.slice(0, -1));
                 }}>Undo vertex</button>
-                <button className="dw-chip" data-active={Boolean(structureHeight)} disabled={structurePolygon.length < 3 || analysisBusy} onClick={() => void measureStructure()}>
+                <button className="dw-chip" data-active={Boolean(structureHeight)} disabled={structurePolygon.length < 3 || analysisBusy || Boolean(previewError)} onClick={() => void measureStructure()}>
                   {analysisBusy ? "Measuring…" : "Measure footprint"}
                 </button>
               </>
@@ -1337,7 +1412,7 @@ export function App() {
               overlayUrl={terrainOverlayUrl}
               autoFlythrough={autoFlythrough}
               resetToken={cameraResetToken}
-              onSelectPoint={projectAnalystInteractive && activeTool !== "Structures" ? analyzeRasterPoint : undefined}
+              onSelectPoint={projectAnalystInteractive && activeTool === "Project" ? analyzeRasterPoint : undefined}
               onPerformance={setTerrainPerformance}
               onRenderState={(state) => {
                 setTerrainRenderState(state);
@@ -1349,6 +1424,14 @@ export function App() {
           {activeView === "3D Terrain" && meshArtifactReady && !meshUrl && (
             <div className="dw-layer-loading-shade">
               <div><span className="dw-spinner" />{meshUrlLoading ? `Fetching terrain LOD ${meshLod}…` : terrainRenderState.message}</div>
+            </div>
+          )}
+
+          {activeView === "3D Terrain" && terrainOverlay && terrainOverlayError && (
+            <div className="dw-terrain-overlay-state dw-terrain-overlay-state--error" role="alert">
+              <strong>Analytical overlay unavailable</strong>
+              <span>{terrainOverlayError}</span>
+              <button type="button" className="dw-overlay-retry" onClick={() => setTerrainOverlayRetryGeneration((value) => value + 1)}>Retry overlay</button>
             </div>
           )}
 
@@ -1365,7 +1448,7 @@ export function App() {
             />
           )}
 
-          {activeView !== "3D Terrain" && previewUrl && !(compareActive && comparisonUrl) && (
+          {activeView !== "3D Terrain" && previewUrl && !compareActive && (
             <RasterAnalysisViewport
               src={previewUrl}
               alt={`${renderedPreviewLayer ?? activeView} scientific raster`}
@@ -1391,6 +1474,16 @@ export function App() {
           {activeView !== "3D Terrain" && (previewLoading || comparisonLoading) && (
             <div className="dw-layer-loading-shade">
               <div><span className="dw-spinner" />Loading {previewLayer ?? activeView} scientific layer…</div>
+            </div>
+          )}
+
+          {activeView !== "3D Terrain" && compareActive && comparisonError && !comparisonLoading && (
+            <div className="dw-empty-canvas">
+              <div className="dw-empty-card dw-empty-card--error">
+                <h2>Comparison reference unavailable</h2>
+                <p>{comparisonError}</p>
+                <button className="dw-btn dw-btn--primary" type="button" onClick={() => setComparisonRetryGeneration((value) => value + 1)}>Retry comparison</button>
+              </div>
             </div>
           )}
 
@@ -1422,12 +1515,16 @@ export function App() {
                 </strong>
                 <span>
                   {compareActive
-                    ? "evaluation-only reference · registered viewport · synchronized cursor"
+                    ? comparisonError
+                      ? "reference preview failed · comparison disabled until recovery"
+                      : "evaluation-only reference · registered viewport · synchronized cursor"
                     : activeView === "3D Terrain"
                       ? rendererReady
                         ? activeLayer === "Texture"
                           ? `${estimatorModel(projectManifest) ?? "DA3MONO-LARGE"} · rendered LOD ${meshLod} · ${verticalExaggeration}× display Z`
-                          : `${terrainOverlayLoading ? "loading overlay" : "UV analytical overlay"} · terrain geometry unchanged · LOD ${meshLod}`
+                          : terrainOverlayError
+                            ? "analytical overlay failed · source texture restored"
+                            : `${terrainOverlayLoading ? "loading overlay" : "analytical overlay rendered"} · terrain geometry unchanged · LOD ${meshLod}`
                         : terrainRenderState.message
                       : renderedPreviewLayer === "residual"
                         ? `${projectValidation?.valid_pixels.toLocaleString() ?? "—"} valid pixels · metres`
@@ -1486,7 +1583,17 @@ export function App() {
             <div className="dw-interaction-hint">{analysisHint}</div>
           )}
 
-          {activeView !== "3D Terrain" && !previewUrl && !previewLoading && (
+          {activeView !== "3D Terrain" && !previewUrl && !previewLoading && previewError && !compareActive && (
+            <div className="dw-empty-canvas">
+              <div className="dw-empty-card dw-empty-card--error">
+                <h2>Scientific layer unavailable</h2>
+                <p>{previewError}</p>
+                <button className="dw-btn dw-btn--primary" type="button" onClick={() => setPreviewRetryGeneration((value) => value + 1)}>Retry layer</button>
+              </div>
+            </div>
+          )}
+
+          {activeView !== "3D Terrain" && !previewUrl && !previewLoading && !previewError && !compareActive && (
             <div className="dw-empty-canvas">
               <div className="dw-empty-card">
                 <h2>
