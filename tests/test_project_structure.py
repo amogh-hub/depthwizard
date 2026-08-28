@@ -48,6 +48,30 @@ def _project(tmp_path: Path, *, metric: bool = True) -> Path:
     return project
 
 
+def _sloping_project(tmp_path: Path) -> Path:
+    source = tmp_path / "rgb-slope.tif"
+    source.touch()
+    project = tmp_path / "project-slope"
+    rows, cols = np.mgrid[:80, :80]
+    ground = 300.0 + 0.45 * cols + 0.75 * rows
+    values = ground.astype(np.float32)
+    values[28:52, 28:52] += 12.0
+    # A few strong positive ring contaminants simulate nearby trees/structures.
+    values[20:23, 35:38] += 20.0
+    values[56:59, 42:45] += 16.0
+    surface = project / "products" / "dsm.tif"
+    _write_surface(surface, values)
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        surface,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(surface),
+    )
+    return project
+
+
 def test_structure_height_uses_explicit_footprint_and_local_ground(tmp_path: Path) -> None:
     project = _project(tmp_path)
     polygon = [
@@ -67,6 +91,25 @@ def test_structure_height_uses_explicit_footprint_and_local_ground(tmp_path: Pat
     assert result.ground_pixels >= 8
     assert result.warnings == []
     assert "not an automatic building classification" in result.semantics
+    assert "ground plane" in result.semantics
+
+
+def test_structure_height_uses_local_ground_plane_on_hillside(tmp_path: Path) -> None:
+    project = _sloping_project(tmp_path)
+    polygon = [
+        NormalizedPoint(x=28 / 79, y=28 / 79),
+        NormalizedPoint(x=51 / 79, y=28 / 79),
+        NormalizedPoint(x=51 / 79, y=51 / 79),
+        NormalizedPoint(x=28 / 79, y=51 / 79),
+    ]
+    result = estimate_project_structure_height(
+        ProjectStructureHeightRequest(project_dir=project, polygon=polygon, ring_pixels=10)
+    )
+
+    assert result.structure_height_m == pytest.approx(12.0, abs=0.15)
+    assert result.structure_pixels > 400
+    assert result.ground_pixels > 100
+    assert result.warnings == []
 
 
 def test_structure_height_rejects_relative_only_project(tmp_path: Path) -> None:
