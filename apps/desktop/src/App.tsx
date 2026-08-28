@@ -438,12 +438,23 @@ export function App() {
   const rasterSurfaceReady = activeView !== "3D Terrain" && Boolean(previewUrl) && !previewLoading && !previewError;
   const analystInteractive = !demoMode && Boolean(projectDir) && geometryReady && rasterSurfaceReady;
   const projectAnalystInteractive = !demoMode && Boolean(projectDir) && geometryReady;
+  const terrainToolInteractive = projectAnalystInteractive && (
+    activeTool === "Project"
+    || activeTool === "Measure"
+    || activeTool === "Profiles"
+    || (activeTool === "Structures" && calibrationReady)
+  );
   const terrainAnalysisPath = useMemo<NormalizedPoint[]>(() => {
+    if (activeTool === "Structures" && structurePolygon.length >= 2) {
+      return structurePolygon.length >= 3
+        ? [...structurePolygon, structurePolygon[0]]
+        : structurePolygon;
+    }
     if (activeTool === "Profiles" && profile) return profile.samples.map((sample) => sample.point);
     if (activeTool === "Measure" && measurement) return measurement.samples.map((sample) => sample.point);
     if (lineStart && lineEnd) return [lineStart, lineEnd];
     return [];
-  }, [activeTool, lineEnd, lineStart, measurement, profile]);
+  }, [activeTool, lineEnd, lineStart, measurement, profile, structurePolygon]);
 
   useEffect(() => {
     if (demoMode || !projectDir || !projectMesh) {
@@ -651,11 +662,11 @@ export function App() {
       setActiveView("DSM");
       setActiveLayer("DSM");
       setAutoFlythrough(false);
-    } else if (activeTool === "Structures" && calibrationReady) {
+    } else if (activeTool === "Structures" && calibrationReady && activeView !== "3D Terrain") {
       setActiveView("DSM");
       setActiveLayer("DSM");
       setAutoFlythrough(false);
-    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady) {
+    } else if ((activeTool === "Measure" || activeTool === "Profiles") && geometryReady && activeView !== "3D Terrain") {
       setActiveView("DSM");
       setActiveLayer("DSM");
       setAutoFlythrough(false);
@@ -956,7 +967,7 @@ export function App() {
   };
 
   const buildTerrain = async () => {
-    if (!projectDir || !geometryReady || demoMode) return;
+    if (!projectDir || !geometryReady || demoMode || !sourceAvailable) return;
     setImportError(null);
     try {
       setBuildingMesh(true);
@@ -1148,13 +1159,13 @@ export function App() {
   const analysisHint = activeTool === "Structures"
     ? calibrationReady
       ? structurePolygon.length < 3
-        ? `Select footprint vertices · ${structurePolygon.length}/3 minimum · drag a numbered vertex to refine`
+        ? `Select footprint vertices · ${structurePolygon.length}/3 minimum · ${activeView === "3D Terrain" ? "use Orbit or Top down to place points" : "drag a numbered vertex to refine"}`
         : `${structurePolygon.length} vertices selected · Backspace/Undo removes last · measure when complete`
       : "Structural height requires an absolute metric DSM"
     : activeTool === "Measure"
-      ? lineStart && !lineEnd ? "Select endpoint B · Space+drag pans" : "Select point A, then point B · Space+drag pans"
+      ? lineStart && !lineEnd ? "Select endpoint B · Space+drag pans in 2D" : "Select point A, then point B · 3D selection works in Orbit/Top down"
       : activeTool === "Profiles"
-        ? lineStart && !lineEnd ? "Move to preview transect · click endpoint B" : "Select transect endpoints A → B"
+        ? lineStart && !lineEnd ? "Move to preview transect in 2D or select endpoint B in 3D" : "Select transect endpoints A → B"
         : activeTool === "Compare"
           ? "Drag to pan · wheel/pinch to zoom · slider swipes reference ↔ prediction"
           : activeView === "3D Terrain"
@@ -1251,7 +1262,12 @@ export function App() {
             </>
           )}
           {!demoMode && geometryReady && (
-            <button className="dw-btn" onClick={() => void buildTerrain()} disabled={buildingMesh || processing || meshArtifactReady}>
+            <button
+              className="dw-btn"
+              onClick={() => void buildTerrain()}
+              disabled={buildingMesh || processing || meshArtifactReady || !sourceAvailable}
+              title={!sourceAvailable && !meshArtifactReady ? "Original source RGB is required to build a new textured terrain mesh" : undefined}
+            >
               {buildingMesh ? "Building 3D…" : meshArtifactReady ? "3D mesh built" : "Build 3D terrain"}
             </button>
           )}
@@ -1373,13 +1389,13 @@ export function App() {
               </span>
             )}
 
-            {activeTool === "Structures" && activeView !== "3D Terrain" && calibrationReady && (
+            {activeTool === "Structures" && calibrationReady && (
               <>
                 <button className="dw-chip" disabled={structurePolygon.length === 0 || analysisBusy} onClick={() => {
                   setStructureHeight(null);
                   setStructurePolygon((current) => current.slice(0, -1));
                 }}>Undo vertex</button>
-                <button className="dw-chip" data-active={Boolean(structureHeight)} disabled={structurePolygon.length < 3 || analysisBusy || Boolean(previewError)} onClick={() => void measureStructure()}>
+                <button className="dw-chip" data-active={Boolean(structureHeight)} disabled={structurePolygon.length < 3 || analysisBusy || (activeView !== "3D Terrain" && Boolean(previewError))} onClick={() => void measureStructure()}>
                   {analysisBusy ? "Measuring…" : "Measure footprint"}
                 </button>
               </>
@@ -1407,12 +1423,13 @@ export function App() {
               meshUrl={meshUrl}
               cameraMode={cameraMode}
               verticalExaggeration={verticalExaggeration}
+              groundSampleDistanceM={metadata?.ground_sample_distance_x}
               cursorPoint={probe?.point}
               analysisPath={terrainAnalysisPath}
               overlayUrl={terrainOverlayUrl}
               autoFlythrough={autoFlythrough}
               resetToken={cameraResetToken}
-              onSelectPoint={projectAnalystInteractive && activeTool === "Project" ? analyzeRasterPoint : undefined}
+              onSelectPoint={terrainToolInteractive ? analyzeRasterPoint : undefined}
               onPerformance={setTerrainPerformance}
               onRenderState={(state) => {
                 setTerrainRenderState(state);
@@ -1495,7 +1512,7 @@ export function App() {
                     ? "Prediction ↔ reference comparison"
                     : activeView === "3D Terrain"
                       ? activeLayer === "Texture"
-                        ? projectMesh?.surface_product === "dsm" || demoMode ? "Absolute DSM" : "Relative DSM"
+                        ? projectMesh?.surface_product === "dsm" || demoMode ? "Absolute DSM terrain" : "Relative DSM terrain"
                         : `${activeLayer} analytical overlay`
                       : renderedPreviewLayer === "residual"
                         ? "Prediction − reference"
@@ -1510,7 +1527,7 @@ export function App() {
                                 : renderedPreviewLayer === "confidence"
                                   ? "Model-native confidence"
                                   : renderedPreviewLayer === "optical"
-                                    ? "Optical RGB"
+                                    ? "Optical RGB · source imagery"
                                     : calibrationReady ? "Absolute DSM" : "Relative DSM"}
                 </strong>
                 <span>
@@ -1521,10 +1538,10 @@ export function App() {
                     : activeView === "3D Terrain"
                       ? rendererReady
                         ? activeLayer === "Texture"
-                          ? `${estimatorModel(projectManifest) ?? "DA3MONO-LARGE"} · rendered LOD ${meshLod} · ${verticalExaggeration}× display Z`
+                          ? `${estimatorModel(projectManifest) ?? "DA3MONO-LARGE"} prior · rendered LOD ${meshLod} · ${verticalExaggeration}× display Z`
                           : terrainOverlayError
                             ? "analytical overlay failed · source texture restored"
-                            : `${terrainOverlayLoading ? "loading overlay" : "analytical overlay rendered"} · terrain geometry unchanged · LOD ${meshLod}`
+                            : `${terrainOverlayLoading ? "loading overlay" : "analytical overlay active"} · terrain geometry unchanged · LOD ${meshLod}`
                         : terrainRenderState.message
                       : renderedPreviewLayer === "residual"
                         ? `${projectValidation?.valid_pixels.toLocaleString() ?? "—"} valid pixels · metres`
@@ -1534,7 +1551,11 @@ export function App() {
                             ? "model-native · not probability calibrated"
                             : renderedPreviewLayer === "hillshade" || renderedPreviewLayer === "contours"
                               ? "display derivative · numerical surface unchanged"
-                              : estimatorModel(projectManifest) ?? "persisted project raster"}
+                              : renderedPreviewLayer === "optical"
+                                ? "original optical pixels · no elevation encoded in the RGB layer"
+                                : calibrationReady
+                                  ? `${estimatorModel(projectManifest) ?? "DA3MONO-LARGE"} prior + evidence calibration`
+                                  : estimatorModel(projectManifest) ?? "persisted project raster"}
                 </span>
               </div>
               {(activeView !== "3D Terrain" || cameraMode === "topDown") && (
@@ -1559,18 +1580,22 @@ export function App() {
                         ? `${structureHeight.structure_height_m.toFixed(2)} m structure height`
                         : renderedPreviewLayer === "residual"
                           ? `RMSE ${projectValidation?.elevation.rmse_m.toFixed(3) ?? "—"} m`
-                          : calibrationReady ? "Metric elevation" : "Relative elevation"}
+                          : renderedPreviewLayer === "optical"
+                            ? calibrationReady ? "Metric DSM available" : "Source imagery"
+                            : calibrationReady ? "Metric elevation" : "Relative elevation"}
                   </strong>
                   <span>
                     {activeTool === "Structures" && structureHeight
-                      ? `top ${structureHeight.top_elevation_m.toFixed(2)} m · local ground ${structureHeight.ground_elevation_m.toFixed(2)} m`
+                      ? `roof ${structureHeight.top_elevation_m.toFixed(2)} m · fitted local ground ${structureHeight.ground_elevation_m.toFixed(2)} m`
                       : renderedPreviewLayer === "residual"
                         ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
                         : activeTool === "Measure" && measurement
-                          ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m"} · Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
+                          ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m ground"} · signed Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
                           : activeTool === "Profiles" && profile
-                            ? `${profile.sample_count} samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m"}`
-                            : calibrationReady ? "evidence-calibrated · metres" : geometryReady ? "dimensionless relative surface height" : "source imagery"}
+                            ? `${profile.sample_count} subpixel samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m ground"}`
+                            : renderedPreviewLayer === "optical"
+                              ? calibrationReady ? "evidence-calibrated DSM available · RGB remains source imagery" : "source imagery · no elevation claim"
+                              : calibrationReady ? "evidence-calibrated · metres" : geometryReady ? "dimensionless relative surface height" : "source imagery"}
                   </span>
                 </div>
               )}
@@ -1632,7 +1657,7 @@ export function App() {
             <div className="dw-empty-canvas">
               <div className="dw-empty-card">
                 <h2>{buildingMesh ? "Building analytical terrain" : "Terrain products ready for 3D"}</h2>
-                <p>{buildingMesh ? "Generating persistent hashed GLB LODs from the already-produced surface and source RGB." : "Build the persistent terrain LOD pyramid to enable Orbit, Fly, First Person, Top Down and synchronized 3D probing."}</p>
+                <p>{buildingMesh ? "Generating persistent hashed GLB LODs from the already-produced surface and source RGB." : "Build the persistent terrain LOD pyramid to enable Orbit, Fly, First Person, Top Down and synchronized 3D analysis."}</p>
               </div>
             </div>
           )}
@@ -1641,7 +1666,7 @@ export function App() {
         <footer className="dw-workspace-status">
           <span>{demoMode ? terrainRenderState.message : normalStatus}</span>
           <span>
-            {metadata?.crs ?? "Projection —"} · GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} m · {calibrationReady ? "DSM metres" : geometryReady ? "rDSM" : "Elevation —"}
+            {metadata?.crs ?? "Projection —"} · Ground GSD {metadata?.ground_sample_distance_x?.toFixed(3) ?? "—"} m · {calibrationReady ? "DSM metres" : geometryReady ? "rDSM" : "Elevation —"}
           </span>
         </footer>
       </section>
