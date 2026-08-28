@@ -26,17 +26,21 @@ describe("RT5 final workstation closure", () => {
     expect(app).toContain("rasterSurfaceReady");
   });
 
-  it("always moves raster-analysis tools to the DSM workspace even when a mesh already exists", () => {
+  it("preserves an already-active 3D workspace while keeping raster-analysis fallbacks on the DSM", () => {
     const app = source("../App.tsx");
-    expect(app).toContain('(activeTool === "Measure" || activeTool === "Profiles") && geometryReady');
+    expect(app).toContain('(activeTool === "Measure" || activeTool === "Profiles") && geometryReady && activeView !== "3D Terrain"');
+    expect(app).toContain('activeTool === "Structures" && calibrationReady && activeView !== "3D Terrain"');
     expect(app).not.toContain('(activeTool === "Measure" || activeTool === "Profiles") && geometryReady && !meshArtifactReady');
-    expect(app).toContain('activeTool === "Structures" && calibrationReady');
   });
 
-  it("prevents missing raster layers from accepting analyst clicks and avoids accidental 3D analysis-mode selection", () => {
+  it("enables evidence-native 3D point selection only for supported analyst tools", () => {
     const app = source("../App.tsx");
-    expect(app).toContain("const analystInteractive = !demoMode && Boolean(projectDir) && geometryReady && rasterSurfaceReady");
-    expect(app).toContain('onSelectPoint={projectAnalystInteractive && activeTool === "Project" ? analyzeRasterPoint : undefined}');
+    expect(app).toContain("const terrainToolInteractive = projectAnalystInteractive");
+    expect(app).toContain('activeTool === "Project"');
+    expect(app).toContain('activeTool === "Measure"');
+    expect(app).toContain('activeTool === "Profiles"');
+    expect(app).toContain('(activeTool === "Structures" && calibrationReady)');
+    expect(app).toContain('onSelectPoint={terrainToolInteractive ? analyzeRasterPoint : undefined}');
     expect(app).toContain('result.add("Measure")');
     expect(app).toContain('result.add("Profiles")');
     expect(app).toContain('result.add("Structures")');
