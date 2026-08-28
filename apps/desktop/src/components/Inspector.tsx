@@ -1,17 +1,18 @@
 import type {
   GroundControlPointFileReport,
   ProjectExportReport,
-  ProjectMeshReport,
   ProjectProbeResult,
   ProjectProfileResult,
   ProjectStructureHeightResult,
   RasterMetadata,
   ReferenceValidationReport,
+} from "../api";
+import type {
   TerrainPerformance,
   TerrainRenderState,
-} from "../api";
+} from "../workspace/TerrainViewport";
 import { AnalysisInspector } from "./AnalysisInspector";
-import { StatusPipeline } from "./StatusPipeline";
+import { StatusPipeline, type StageState } from "./StatusPipeline";
 
 export type ValidationEvidence = {
   dataset: string;
@@ -88,29 +89,59 @@ export function Inspector({
   autoLod = true,
   terrainPerformance,
 }: InspectorProps) {
+  const hasInput = metadata !== null;
+  const georeferenced = Boolean(metadata?.crs);
   const sourceName = metadata?.path ? fileName(metadata.path) : "—";
   const showValidation = activeTool === "Validation";
   const showExport = activeTool === "Export";
   const benchmarkDataset = validationEvidence?.dataset ? fileName(validationEvidence.dataset) : "—";
   const referenceName = projectValidation?.reference_path ? fileName(projectValidation.reference_path) : "—";
   const exportName = projectExport?.bundle_path ? fileName(projectExport.bundle_path) : "—";
+  const renderFailed = terrainRenderState.phase === "error";
+  const terrainStageState: StageState = rendererReady
+    ? "complete"
+    : renderFailed
+      ? "failed"
+      : meshArtifactReady
+        ? "active"
+        : "pending";
+  const subtitle = activeView === "3D Terrain"
+    ? rendererReady
+      ? "Interactive terrain renderer ready"
+      : renderFailed
+        ? "Terrain renderer requires attention"
+        : meshArtifactReady
+          ? "Preparing terrain renderer"
+          : "Terrain mesh not built"
+    : geometryReady
+      ? `${activeView} analytical workspace`
+      : hasInput
+        ? "Source imagery loaded"
+        : "No scene loaded";
 
   return (
     <aside className="dw-inspector" aria-label="Scene inspector">
       <header className="dw-inspector-header">
         <h2>Scene inspector</h2>
-        <p>{activeView} analytical workspace</p>
+        <p>{subtitle}</p>
       </header>
 
-      <StatusPipeline
-        geometryReady={geometryReady}
-        calibrationReady={calibrationReady}
-        validationReady={Boolean(projectValidation)}
-        terrainReady={meshArtifactReady}
-        exportReady={Boolean(projectExport)}
-        modelId={modelId}
-        terrainLabel={rendererReady ? `rendered LOD ${meshLod}` : meshArtifactReady ? terrainRenderState.phase : undefined}
-      />
+      <section className="dw-section">
+        <div className="dw-section-title">Project state</div>
+        <StatusPipeline stages={[
+          { label: "Input", state: hasInput ? "complete" : "pending", detail: hasInput ? "ready" : "" },
+          { label: "Geometry", state: geometryReady ? "complete" : hasInput ? "active" : "pending", detail: geometryReady ? (modelId ?? "DA3") : "" },
+          { label: "Calibration", state: calibrationReady ? "complete" : "pending", detail: calibrationReady ? "metric evidence" : georeferenced ? "DEM/GCP" : "relative" },
+          { label: "DSM", state: geometryReady ? "complete" : "pending", detail: geometryReady ? (calibrationReady ? "absolute" : "relative") : "" },
+          { label: "Validation", state: projectValidation ? "complete" : "pending", detail: projectValidation ? `${projectValidation.valid_pixels.toLocaleString()} px` : "scene reference" },
+          {
+            label: "3D terrain",
+            state: terrainStageState,
+            detail: rendererReady ? `rendered LOD ${meshLod}` : renderFailed ? "renderer failed" : meshArtifactReady ? "loading renderer" : "",
+          },
+          { label: "Export", state: projectExport ? "complete" : "pending", detail: projectExport ? byteLabel(projectExport.bundle_bytes) : "hash-audited ZIP" },
+        ]} />
+      </section>
 
       <details className="dw-inspector-disclosure">
         <summary>Geospatial metadata</summary>
@@ -129,7 +160,7 @@ export function Inspector({
             {gcpEvidence && <div className="dw-property"><dt>GCP evidence</dt><dd>{gcpEvidence.point_count} points · SHA {gcpEvidence.sha256.slice(0, 12)}…</dd></div>}
             {meshArtifactReady && <div className="dw-property"><dt>Terrain LOD</dt><dd>{meshLod} · {autoLod ? "auto" : "manual"}</dd></div>}
             {terrainPerformance && rendererReady && (
-              <div className="dw-property"><dt>Renderer</dt><dd>{terrainPerformance.fps.toFixed(0)} fps · {terrainPerformance.triangles.toLocaleString()} triangles</dd></div>
+              <div className="dw-property"><dt>Renderer</dt><dd>{terrainPerformance.fps.toFixed(1)} fps · {terrainPerformance.triangles.toLocaleString()} triangles · {terrainPerformance.drawCalls.toLocaleString()} calls</dd></div>
             )}
           </dl>
         </section>
@@ -169,7 +200,7 @@ export function Inspector({
           ) : (
             <div className="dw-validation-empty">
               <strong>{structureVertexCount >= 3 ? "Footprint ready" : "Select a footprint"}</strong>
-              <p>{structureVertexCount >= 3 ? `${structureVertexCount} vertices selected. Drag any numbered vertex to refine the footprint, then measure.` : "Click at least three vertices around one structure on the metric DSM. Vertices stay explicit, draggable and undoable before measurement."}</p>
+              <p>{structureVertexCount >= 3 ? `${structureVertexCount} vertices selected. Use Undo vertex or Backspace to refine, then measure.` : "Click at least three vertices around one structure on the metric DSM. The selection remains explicit and undoable before measurement."}</p>
             </div>
           )}
         </section>
