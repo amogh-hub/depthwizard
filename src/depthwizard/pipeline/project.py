@@ -23,6 +23,11 @@ class ProjectManifest:
     Schema v2 separates immutable source/geometry identity from mutable pre-completion calibration
     evidence. This allows a georeferenced project to reconstruct once, pause truthfully for DEM/GCP
     evidence, and resume calibration without recomputing the expensive geometry prior.
+
+    Registered artifacts are project-owned state. Their resolved paths must remain beneath the
+    project directory and their persisted bytes must match the SHA-256 identity recorded at
+    registration. This prevents a malformed or edited manifest from turning analytical/export paths
+    into arbitrary filesystem reads while preserving the source/evidence paths as external inputs.
     """
 
     project_dir: Path
@@ -45,6 +50,31 @@ class ProjectManifest:
     @property
     def path(self) -> Path:
         return self.project_dir / "project-manifest.json"
+
+    @property
+    def resolved_project_dir(self) -> Path:
+        return self.project_dir.resolve(strict=False)
+
+    def _confined_artifact_path(self, name: str, raw_path: str | Path) -> Path:
+        """Resolve one artifact path and require it to remain inside this project directory."""
+        resolved = Path(raw_path).resolve(strict=False)
+        project_root = self.resolved_project_dir
+        try:
+            relative = resolved.relative_to(project_root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"project artifact {name} escapes the project directory: {resolved}"
+            ) from exc
+        if not relative.parts:
+            raise RuntimeError(f"project artifact {name} points at the project directory itself")
+        return resolved
+
+    def _validate_registered_artifact_paths(self) -> None:
+        for name, payload in self.artifacts.items():
+            raw = payload.get("path")
+            if not isinstance(raw, str):
+                raise RuntimeError(f"project manifest {name} artifact path is malformed")
+            self._confined_artifact_path(name, raw)
 
     @classmethod
     def create_or_load(cls, project_dir: str | Path, source_path: str | Path) -> ProjectManifest:
@@ -120,7 +150,7 @@ class ProjectManifest:
         self.save()
 
     def verified_artifact_path(self, name: str) -> Path:
-        """Return a registered artifact only when its persisted bytes match the manifest identity."""
+        """Return a registered artifact only when location and bytes match manifest identity."""
         payload = self.artifacts.get(name)
         if not payload:
             raise RuntimeError(f"project manifest has no registered {name} artifact")
@@ -130,7 +160,7 @@ class ProjectManifest:
             raise RuntimeError(f"project manifest {name} artifact path is malformed")
         if not isinstance(expected, str) or len(expected) != 64:
             raise RuntimeError(f"project manifest {name} artifact has no valid SHA-256 identity")
-        path = Path(raw)
+        path = self._confined_artifact_path(name, raw)
         if not path.is_file():
             raise FileNotFoundError(f"persisted {name} artifact does not exist: {path}")
         actual = sha256_file(path)
@@ -146,7 +176,7 @@ class ProjectManifest:
         if entry.get("status") != "completed":
             return False
         # A completed stage is reusable evidence only if every registered artifact it claims still
-        # matches the SHA-256 identity frozen into the project manifest.
+        # matches the location and SHA-256 identity frozen into the project manifest.
         stage_artifacts = entry.get("artifacts", {})
         if isinstance(stage_artifacts, dict):
             for name in stage_artifacts:
@@ -163,12 +193,19 @@ class ProjectManifest:
         units: str | None,
         sha256: str,
     ) -> None:
-        artifact_path = Path(path)
+        artifact_path = self._confined_artifact_path(name, path)
+        if not artifact_path.is_file():
+            raise FileNotFoundError(f"cannot register missing project artifact {name}: {artifact_path}")
+        actual_sha256 = sha256_file(artifact_path)
+        if actual_sha256 != sha256:
+            raise RuntimeError(
+                f"cannot register project artifact {name}: supplied SHA-256 does not match bytes"
+            )
         self.artifacts[name] = {
-            "path": str(artifact_path.resolve(strict=False)),
+            "path": str(artifact_path),
             "semantics": semantics,
             "units": units,
-            "sha256": sha256,
+            "sha256": actual_sha256,
         }
         self.updated_at_utc = _utc_now()
         self.save()
@@ -178,7 +215,9 @@ class ProjectManifest:
         if not payload:
             return None
         raw = payload.get("path")
-        return Path(raw) if isinstance(raw, str) else None
+        if not isinstance(raw, str):
+            raise RuntimeError(f"project manifest {name} artifact path is malformed")
+        return self._confined_artifact_path(name, raw)
 
     def add_warning(self, message: str) -> None:
         if message not in self.warnings:
@@ -199,6 +238,7 @@ class ProjectManifest:
 
     def save(self) -> None:
         self.project_dir.mkdir(parents=True, exist_ok=True)
+        self._validate_registered_artifact_paths()
         self.updated_at_utc = _utc_now()
         payload = {
             "schema_version": 2,
@@ -237,15 +277,17 @@ class ProjectManifest:
                 if stages.get(ProcessingStage.COMPLETE.value, {}).get("status") == "completed"
                 else ProjectRunStatus.CREATED.value
             )
-            return cls(
+            manifest = cls(
                 project_dir=directory,
                 source_path=Path(payload["source_path"]),
                 status=inferred_status,
                 stages=stages,
             )
+            manifest._validate_registered_artifact_paths()
+            return manifest
         if schema_version != 2:
             raise ValueError(f"unsupported project manifest schema_version={schema_version}")
-        return cls(
+        manifest = cls(
             project_dir=directory,
             source_path=Path(payload["source_path"]),
             project_id=str(payload["project_id"]),
@@ -263,3 +305,5 @@ class ProjectManifest:
             warnings=payload.get("warnings", []),
             errors=payload.get("errors", []),
         )
+        manifest._validate_registered_artifact_paths()
+        return manifest
