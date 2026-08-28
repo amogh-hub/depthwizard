@@ -1,17 +1,32 @@
 model_id: DA3MONO-LARGE
 role: pretrained_monocular_geometry_prior
 upstream_repository: https://github.com/ByteDance-Seed/Depth-Anything-3
+upstream_source_commit: 3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
 upstream_model_source: depth-anything/DA3MONO-LARGE
+huggingface_revision: f465978e618db8cc79c83b8bbf24964857db1875
+checkpoint_file: model.safetensors
+checkpoint_sha256: 7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960
 license: Apache-2.0
 output_interpretation: relative_camera_depth_converted_to_dimensionless_relative_surface_height
+confidence_interpretation: model_native_confidence_not_probability_calibrated
 metric_elevation_claim: false
-runtime_status: adapter_implemented_runtime_checkpoint_not_yet_materialized
-checkpoint_sha256: null
-upstream_commit: null
-verification_required:
-  - capture exact upstream commit used
-  - materialize checkpoint locally
-  - capture checkpoint sha256
-  - run CUDA/MPS/CPU compatibility matrix
-  - record peak memory and tile latency
-  - compare against Depth Anything V2 baseline on identical scenes
+runtime_status: qualified_packaged_runtime_apple_silicon_mps
+qualification:
+  apple_silicon_mps:
+    status: passed
+    evidence: release_train_5_full_standalone_engineering_acceptance
+  packaged_offline_inference:
+    status: passed
+    evidence: release_train_5_full_standalone_engineering_acceptance
+  source_revision_pinning:
+    status: enforced
+  checkpoint_identity:
+    status: pinned
+remaining_validation:
+  - CUDA compatibility matrix is not yet qualified
+  - CPU performance/compatibility matrix is not yet qualified
+  - final peak-memory and tile-latency evidence belongs to finale performance qualification
+  - same-input Depth Anything V2 and Metric3D v2 baseline evidence belongs to the final scientific campaign
+claim_boundary: >-
+  DA3MONO-LARGE is the production relative-geometry prior. It is not an absolute satellite-height
+  oracle; metric elevation is produced only by DepthWizard evidence calibration.
