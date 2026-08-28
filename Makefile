@@ -95,8 +95,10 @@ release-train-3-acceptance: release-train-3-spatial-foundation-smoke release-tra
 release-train-4-analytical-smoke:
 	python -m scripts.release_train_4_scientific_analytical_smoke
 
+# The production sidecar imports the frozen monocular model/height-model stack, so a clean build
+# must install the ML extra explicitly rather than relying on torch already being present locally.
 sidecar-build:
-	python -m pip install -e ".[standalone]"
+	python -m pip install -e ".[ml,standalone]"
 	python -m scripts.build_standalone_sidecar
 
 release-train-5-sidecar-smoke:
@@ -115,24 +117,25 @@ release-train-5-standalone-acceptance: release-train-5-sidecar-smoke release-tra
 # an older FastAPI API surface (for example missing preview/legend workstation routes).
 # It deliberately avoids rerunning the already-earned heavy RT5 scientific acceptance campaign.
 release-train-5-workstation-build:
-	python -m pip install -e ".[dev,standalone]"
+	python -m pip install -e ".[ml,dev,standalone]"
 	$(MAKE) verify
 	python -m scripts.build_standalone_sidecar
 	cd apps/desktop && npm install --no-audit --no-fund && npm test && npm run tauri build
 
 # Final qualification is fail-closed on all three committed resolver locks. `uv sync --frozen`
-# creates/updates the project .venv strictly from uv.lock; npm uses `ci`; Rust verification uses
-# Cargo's `--locked` mode. Tauri then builds against that already-verified Cargo graph, and the
-# post-build diff check proves none of the committed resolver inputs drifted during packaging.
-# Do not use this target until `make dependency-locks` has been reviewed and the three locks have
-# been committed on the exact branch being qualified.
+# creates/updates the project .venv strictly from uv.lock and installs the ML, developer, and
+# standalone packaging surfaces required by the complete verification + scientific sidecar path;
+# npm uses `ci`; Rust verification uses Cargo's `--locked` mode. Tauri then builds against that
+# already-verified Cargo graph, and the post-build diff check proves none of the committed resolver
+# inputs drifted during packaging. Do not use this target until `make dependency-locks` has been
+# reviewed and the three locks have been committed on the exact branch being qualified.
 release-train-5-final-qualification:
 	test -f uv.lock
 	test -f apps/desktop/package-lock.json
 	test -f apps/desktop/src-tauri/Cargo.lock
 	git ls-files --error-unmatch uv.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock >/dev/null
 	test -z "$$(git status --porcelain)"
-	uv sync --frozen --python 3.12 --extra dev --extra standalone
+	uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
 	.venv/bin/python -m scripts.check_release_reproducibility --strict
 	.venv/bin/python scripts/verify.py
 	.venv/bin/python -m scripts.ensure_tauri_sidecar_stub
