@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
+from pyproj import Geod, Transformer
 from rasterio.transform import Affine, from_origin
 
 from depthwizard.contracts import (
@@ -105,16 +106,76 @@ def test_profile_reports_metric_distance_and_surface_delta(tmp_path: Path) -> No
     )
 
     assert result.sample_count == 11
-    assert result.horizontal_distance_pixels == 10.0
+    assert result.horizontal_distance_pixels == pytest.approx(10.0)
     assert result.horizontal_distance_m is not None
     assert 9.9 < result.horizontal_distance_m < 10.1
-    assert result.vertical_delta == 10.0
+    assert result.vertical_delta == pytest.approx(10.0)
     assert result.vertical_units == "m"
-    assert result.elevation_gain == 10.0
-    assert result.elevation_loss == 0.0
-    assert result.minimum_surface == 110.0
-    assert result.maximum_surface == 120.0
-    assert result.samples[-1].reference.value == 119.0
+    assert result.elevation_gain == pytest.approx(10.0)
+    assert result.elevation_loss == pytest.approx(0.0)
+    assert result.minimum_surface == pytest.approx(110.0)
+    assert result.maximum_surface == pytest.approx(120.0)
+    assert result.samples[-1].reference.value == pytest.approx(119.0)
+
+
+def test_profile_uses_subpixel_bilinear_samples(tmp_path: Path) -> None:
+    project, _ = _project_with_analytical_products(tmp_path)
+    result = sample_project_profile(
+        ProjectProfileRequest(
+            project_dir=project,
+            start=NormalizedPoint(x=0.15, y=0.5),
+            end=NormalizedPoint(x=0.85, y=0.5),
+            samples=8,
+        )
+    )
+
+    first = result.samples[0].surface.value
+    last = result.samples[-1].surface.value
+    assert first is not None and last is not None
+    assert first == pytest.approx(111.5, abs=1e-6)
+    assert last == pytest.approx(118.5, abs=1e-6)
+    assert result.vertical_delta == pytest.approx(7.0, abs=1e-6)
+    assert result.horizontal_distance_pixels == pytest.approx(7.0, abs=1e-6)
+
+
+def test_web_mercator_profile_uses_geodesic_ground_length(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    source = tmp_path / "rgb.tif"
+    source.touch()
+    dsm = project / "products" / "dsm.tif"
+    values = np.arange(121, dtype=np.float32).reshape(11, 11)
+    to_map = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    to_geo = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    center_x, center_y = to_map.transform(79.64, 30.61)
+    pixel = 38.219
+    transform = from_origin(center_x - 5.5 * pixel, center_y + 5.5 * pixel, pixel, pixel)
+    _write_surface(dsm, values, crs="EPSG:3857", transform=transform)
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        dsm,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(dsm),
+    )
+
+    result = sample_project_profile(
+        ProjectProfileRequest(
+            project_dir=project,
+            start=NormalizedPoint(x=0.0, y=0.5),
+            end=NormalizedPoint(x=1.0, y=0.5),
+            samples=11,
+        )
+    )
+    assert result.horizontal_distance_m is not None
+
+    x0, y0 = transform * (0.5, 5.5)
+    x1, y1 = transform * (10.5, 5.5)
+    lon0, lat0 = to_geo.transform(x0, y0)
+    lon1, lat1 = to_geo.transform(x1, y1)
+    _, _, expected = Geod(ellps="WGS84").inv(lon0, lat0, lon1, lat1)
+    assert result.horizontal_distance_m == pytest.approx(abs(expected), rel=1e-6)
+    assert result.horizontal_distance_m < pixel * 10 * 0.9
 
 
 def test_projected_profile_rejects_metric_xy_when_epsg_extent_is_inconsistent(
@@ -156,7 +217,7 @@ def test_projected_profile_rejects_metric_xy_when_epsg_extent_is_inconsistent(
         )
     )
 
-    assert profile.horizontal_distance_pixels == 10.0
+    assert profile.horizontal_distance_pixels == pytest.approx(10.0)
     assert profile.horizontal_distance_m is None
     assert all(sample.distance_m is None for sample in profile.samples)
     assert probe.map_x is not None
