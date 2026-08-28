@@ -31,6 +31,7 @@ type TerrainViewportProps = {
   meshUrl?: string;
   cameraMode: CameraMode;
   verticalExaggeration?: number;
+  groundSampleDistanceM?: number | null;
   cursorPoint?: NormalizedPoint | null;
   analysisPath?: NormalizedPoint[];
   overlayUrl?: string | null;
@@ -58,13 +59,18 @@ function navigationHelp(cameraMode: CameraMode, autoFlythrough: boolean): string
   if (cameraMode === "orbit") return "Orbit · drag to rotate · Shift/right-drag to pan · wheel to dolly";
   if (cameraMode === "topDown") return "Top down · drag to pan · wheel to zoom · Fit restores the scene";
   if (cameraMode === "fly") return "Fly · click terrain · WASD move · R/F rise/fall · drag to look · Shift accelerates";
-  return "First person · click terrain · WASD move · R/F rise/fall · drag to look · Shift accelerates · choose Orbit to exit";
+  return "First person · WASD move · R/F rise/fall · drag to look · terrain clearance enforced · Shift accelerates · choose Orbit to exit";
+}
+
+function materialArray(material: THREE.Material | THREE.Material[]): THREE.Material[] {
+  return Array.isArray(material) ? material : [material];
 }
 
 export function TerrainViewport({
   meshUrl,
   cameraMode,
   verticalExaggeration = 1,
+  groundSampleDistanceM,
   cursorPoint,
   analysisPath = [],
   overlayUrl,
@@ -165,9 +171,6 @@ export function TerrainViewport({
     orbit.enablePan = true;
     orbit.screenSpacePanning = false;
 
-    // FlyControls provides deterministic WASD + drag-to-look mechanics. DepthWizard constrains
-    // activation to an explicitly focused terrain canvas and uses separate speeds/entry framing
-    // for Fly versus First Person so keyboard input elsewhere in the workstation cannot move it.
     const freeCamera = new FlyControls(camera, renderer.domElement);
     freeCamera.movementSpeed = 80;
     freeCamera.rollSpeed = 0.30;
@@ -215,9 +218,12 @@ export function TerrainViewport({
     let terrainMeshes: THREE.Mesh[] = [];
     const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
     let overlayTexture: THREE.Texture | null = null;
-    let overlayMaterial: THREE.MeshBasicMaterial | null = null;
+    let overlayMaterials: THREE.Material[] = [];
     let appliedOverlayUrl: string | null = null;
     let overlayLoadGeneration = 0;
+    let pendingOverlayGeneration: number | null = null;
+    let pendingOverlayFrames = 0;
+    let pendingOverlayStartedAt = 0;
     let modelLoadedAt = 0;
     let rendererReady = false;
     let shiftBoost = false;
@@ -233,6 +239,17 @@ export function TerrainViewport({
     };
 
     const footprint = () => Math.max(sceneSize.x, sceneSize.z, 1);
+
+    const firstPersonClearance = () => {
+      const gsdClearance = groundSampleDistanceM && Number.isFinite(groundSampleDistanceM)
+        ? groundSampleDistanceM * 2.5
+        : 0;
+      return THREE.MathUtils.clamp(
+        Math.max(8, gsdClearance, footprint() * 0.0015),
+        8,
+        150,
+      );
+    };
 
     const updateNavigationSpeed = () => {
       const base = modeRef.current === "firstPerson" ? firstPersonBaseSpeed : flyBaseSpeed;
@@ -260,33 +277,55 @@ export function TerrainViewport({
       orbit.update();
     };
 
+    const surfaceAtWorld = (x: number, z: number): THREE.Vector3 | null => {
+      if (!loaded || terrainMeshes.length === 0) return null;
+      const bounds = new THREE.Box3().setFromObject(loaded);
+      if (x < bounds.min.x || x > bounds.max.x || z < bounds.min.z || z > bounds.max.z) return null;
+      const origin = new THREE.Vector3(
+        x,
+        bounds.max.y + Math.max(sceneSize.y, firstPersonClearance()) + 50,
+        z,
+      );
+      raycaster.set(origin, new THREE.Vector3(0, -1, 0));
+      const hit = raycaster.intersectObjects(terrainMeshes, false)[0];
+      return hit?.point.clone() ?? null;
+    };
+
     const surfacePoint = (point: NormalizedPoint): THREE.Vector3 | null => {
       if (!loaded || terrainMeshes.length === 0) return null;
       const bounds = new THREE.Box3().setFromObject(loaded);
       const size = bounds.getSize(new THREE.Vector3());
       const x = bounds.min.x + point.x * size.x;
       const z = bounds.max.z - point.y * size.z;
-      const origin = new THREE.Vector3(x, bounds.max.y + Math.max(size.y, 10) + 10, z);
-      raycaster.set(origin, new THREE.Vector3(0, -1, 0));
-      const hit = raycaster.intersectObjects(terrainMeshes, false)[0];
-      return hit?.point.clone() ?? null;
+      return surfaceAtWorld(x, z);
+    };
+
+    const constrainFirstPerson = () => {
+      if (!loaded) return;
+      const bounds = new THREE.Box3().setFromObject(loaded);
+      const inset = Math.max(footprint() * 0.0005, 0.01);
+      camera.position.x = THREE.MathUtils.clamp(camera.position.x, bounds.min.x + inset, bounds.max.x - inset);
+      camera.position.z = THREE.MathUtils.clamp(camera.position.z, bounds.min.z + inset, bounds.max.z - inset);
+      const ground = surfaceAtWorld(camera.position.x, camera.position.z);
+      if (ground) camera.position.y = Math.max(camera.position.y, ground.y + firstPersonClearance());
     };
 
     const enterFirstPerson = () => {
       if (!loaded) return;
-      const eyeSurface = surfacePoint({ x: 0.5, y: 0.58 });
+      const eyeSurface = surfacePoint({ x: 0.5, y: 0.60 });
       const lookSurface = surfacePoint({ x: 0.5, y: 0.48 });
       if (!eyeSurface) {
         fitView();
         return;
       }
-      const eyeHeight = THREE.MathUtils.clamp(sceneSize.y * 0.0015, 2.2, 8);
+      const clearance = firstPersonClearance();
       camera.up.set(0, 1, 0);
-      camera.position.copy(eyeSurface).add(new THREE.Vector3(0, eyeHeight, 0));
-      const lookTarget = (lookSurface ?? sceneCenter).clone().add(new THREE.Vector3(0, eyeHeight * 0.35, 0));
+      camera.position.copy(eyeSurface).add(new THREE.Vector3(0, clearance, 0));
+      const lookTarget = (lookSurface ?? sceneCenter).clone().add(new THREE.Vector3(0, clearance * 0.25, 0));
       camera.lookAt(lookTarget);
-      camera.near = Math.max(0.05, Math.min(0.5, eyeHeight / 10));
+      camera.near = THREE.MathUtils.clamp(clearance / 80, 0.1, 2.0);
       camera.updateProjectionMatrix();
+      constrainFirstPerson();
     };
 
     const positionMarker = (point: NormalizedPoint | null | undefined) => {
@@ -349,7 +388,15 @@ export function TerrainViewport({
       refreshBounds();
       positionMarker(cursorRef.current);
       refreshAnalysisPath();
+      if (modeRef.current === "firstPerson") constrainFirstPerson();
       return true;
+    };
+
+    const disposeOverlayMaterials = () => {
+      for (const material of overlayMaterials) material.dispose();
+      overlayMaterials = [];
+      overlayTexture?.dispose();
+      overlayTexture = null;
     };
 
     const restoreOriginalMaterials = () => {
@@ -357,15 +404,30 @@ export function TerrainViewport({
         const material = originalMaterials.get(mesh);
         if (material) mesh.material = material;
       }
-      overlayMaterial?.dispose();
-      overlayTexture?.dispose();
-      overlayMaterial = null;
-      overlayTexture = null;
+      disposeOverlayMaterials();
+      pendingOverlayGeneration = null;
+      pendingOverlayFrames = 0;
+    };
+
+    const overlayMaterialFrom = (source: THREE.Material, texture: THREE.Texture): THREE.MeshBasicMaterial => {
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        transparent: source.transparent,
+        opacity: source.opacity,
+        depthTest: source.depthTest,
+        depthWrite: source.depthWrite,
+        alphaTest: source.alphaTest,
+        toneMapped: false,
+      });
+      material.name = `DepthWizard analytical overlay · ${source.name || source.type}`;
+      overlayMaterials.push(material);
+      return material;
     };
 
     const applyOverlay = (nextUrl: string | null | undefined) => {
       const normalizedUrl = nextUrl ?? null;
-      if (normalizedUrl === appliedOverlayUrl) return;
+      if (normalizedUrl === appliedOverlayUrl && pendingOverlayGeneration === null) return;
       appliedOverlayUrl = normalizedUrl;
       overlayLoadGeneration += 1;
       const generation = overlayLoadGeneration;
@@ -382,13 +444,38 @@ export function TerrainViewport({
             texture.dispose();
             return;
           }
+          const image = texture.image as { width?: number; height?: number } | undefined;
+          if (!image?.width || !image?.height) {
+            texture.dispose();
+            appliedOverlayUrl = null;
+            setOverlayState({ phase: "error", message: "Analytical texture decoded without valid image dimensions." });
+            return;
+          }
+          if (terrainMeshes.some((mesh) => !mesh.geometry.getAttribute("uv"))) {
+            texture.dispose();
+            appliedOverlayUrl = null;
+            setOverlayState({ phase: "error", message: "Terrain mesh has no UV coordinates required for analytical projection." });
+            return;
+          }
           texture.colorSpace = THREE.SRGBColorSpace;
           texture.flipY = false;
+          texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+          texture.minFilter = THREE.LinearMipmapLinearFilter;
+          texture.magFilter = THREE.LinearFilter;
+          texture.generateMipmaps = true;
           texture.needsUpdate = true;
           overlayTexture = texture;
-          overlayMaterial = new THREE.MeshBasicMaterial({ map: texture });
-          for (const mesh of terrainMeshes) mesh.material = overlayMaterial;
-          setOverlayState({ phase: "ready", message: "Analytical overlay rendered" });
+
+          for (const mesh of terrainMeshes) {
+            const original = originalMaterials.get(mesh);
+            if (!original) continue;
+            const nextMaterials = materialArray(original).map((material) => overlayMaterialFrom(material, texture));
+            mesh.material = Array.isArray(original) ? nextMaterials : nextMaterials[0];
+          }
+          pendingOverlayGeneration = generation;
+          pendingOverlayFrames = 0;
+          pendingOverlayStartedAt = performance.now();
+          setOverlayState({ phase: "loading", message: "Analytical material applied · validating rendered frame…" });
         },
         undefined,
         (error) => {
@@ -429,7 +516,7 @@ export function TerrainViewport({
         applyExaggeration();
         refreshBounds();
         flyBaseSpeed = THREE.MathUtils.clamp(footprint() * 0.04, 80, 3000);
-        firstPersonBaseSpeed = THREE.MathUtils.clamp(footprint() * 0.015, 35, 1200);
+        firstPersonBaseSpeed = THREE.MathUtils.clamp(Math.max(firstPersonClearance() * 0.8, footprint() * 0.006), 20, 900);
         updateNavigationSpeed();
         fitView();
         positionMarker(cursorRef.current);
@@ -621,7 +708,10 @@ export function TerrainViewport({
       previousMode = mode;
 
       if (orbit.enabled) orbit.update();
-      if (freeCamera.enabled) freeCamera.update(dt);
+      if (freeCamera.enabled) {
+        freeCamera.update(dt);
+        if (mode === "firstPerson") constrainFirstPerson();
+      }
       renderer.render(scene, camera);
 
       const triangles = renderer.info.render.triangles;
@@ -637,6 +727,33 @@ export function TerrainViewport({
           });
         } else if (modelLoadedAt > 0 && performance.now() - modelLoadedAt > 5000) {
           fail("Terrain GLB loaded, but no renderable frame was produced within 5 seconds (0 triangles / 0 draw calls).");
+        }
+      }
+
+      if (pendingOverlayGeneration !== null) {
+        const validMaterialContract = Boolean(overlayTexture)
+          && terrainMeshes.length > 0
+          && terrainMeshes.every((mesh) => {
+            if (!mesh.geometry.getAttribute("uv")) return false;
+            return materialArray(mesh.material).every((material) => (
+              material instanceof THREE.MeshBasicMaterial
+              && material.map === overlayTexture
+              && material.side === THREE.DoubleSide
+            ));
+          });
+        if (triangles > 0 && drawCalls > 0 && validMaterialContract) {
+          pendingOverlayFrames += 1;
+          if (pendingOverlayFrames >= 2) {
+            pendingOverlayGeneration = null;
+            setOverlayState({ phase: "ready", message: "Analytical overlay rendered and frame-validated" });
+          }
+        } else if (performance.now() - pendingOverlayStartedAt > 3000) {
+          restoreOriginalMaterials();
+          appliedOverlayUrl = null;
+          setOverlayState({
+            phase: "error",
+            message: "Analytical material was applied but did not produce a valid rendered terrain frame; source texture restored.",
+          });
         }
       }
 
@@ -675,15 +792,14 @@ export function TerrainViewport({
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
-          const materials = Array.isArray(object.material) ? object.material : [object.material];
-          materials.forEach((material) => material.dispose());
+          materialArray(object.material).forEach((material) => material.dispose());
         }
       });
       pathLine.geometry.dispose();
       (pathLine.material as THREE.Material).dispose();
       renderer.domElement.remove();
     };
-  }, [meshUrl, retryGeneration, overlayRetryGeneration]);
+  }, [groundSampleDistanceM, meshUrl, retryGeneration, overlayRetryGeneration]);
 
   return (
     <div className="dw-terrain-viewport">
@@ -692,7 +808,7 @@ export function TerrainViewport({
         <div className="dw-terrain-mode-help" role="status">{navigationHelp(cameraMode, autoFlythrough)}</div>
       )}
       {overlayState.phase === "loading" && overlayUrl && (
-        <div className="dw-terrain-overlay-state" role="status">Loading analytical overlay…</div>
+        <div className="dw-terrain-overlay-state" role="status">{overlayState.message}</div>
       )}
       {overlayState.phase === "error" && overlayUrl && (
         <div className="dw-terrain-overlay-state dw-terrain-overlay-state--error" role="alert">
