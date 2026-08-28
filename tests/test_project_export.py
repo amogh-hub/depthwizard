@@ -163,7 +163,9 @@ def test_project_export_rejects_tampered_registered_artifact(tmp_path: Path) -> 
     try:
         build_project_export(ProjectExportRequest(project_dir=project_dir))
     except RuntimeError as exc:
-        assert "SHA-256" in str(exc)
+        message = str(exc)
+        assert "hash mismatch" in message
+        assert "will not consume mutated or stale scientific products" in message
     else:
         raise AssertionError("tampered artifact should have failed export packaging")
 
