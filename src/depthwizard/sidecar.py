@@ -8,6 +8,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from depthwizard.geometry_prior.da3_runtime_contract import (
+    DA3_RUNTIME_DEPENDENCY_MODULES,
+    verify_da3_runtime_dependencies,
+)
+
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _DA3_PRODUCTION_RUNTIME_MODULES = (
     "depth_anything_3.api",
@@ -56,8 +61,8 @@ def _parser() -> argparse.ArgumentParser:
         "--self-check-da3",
         action="store_true",
         help=(
-            "diagnostically import the frozen DA3 runtime closure and geometry helper after the "
-            "geospatial self-check; final RT5 acceptance still requires real offline DA3 inference"
+            "validate the complete frozen DA3 monocular import closure and geometry helper after "
+            "the geospatial self-check; final RT5 acceptance still requires real offline inference"
         ),
     )
     return parser
@@ -90,16 +95,14 @@ def validate_launch_environment(*, host: str, port: int) -> None:
 
 
 def packaged_geospatial_self_check(*, require_da3: bool = False) -> dict[str, object]:
-    """Exercise the frozen geospatial runtime without forcing heavy ML initialization.
+    """Exercise the frozen geospatial runtime and, when requested, the DA3 import closure.
 
-    The build-time qualification intentionally proves Rasterio/GDAL/PROJ correctness and exact
-    frozen-process startup only. A full DA3 import can take substantially longer on a cold macOS
-    process because it initializes the PyTorch/vision/model stack; using that import as the build
-    watchdog conflates package correctness with ML cold-start cost. The final RT5 acceptance is the
-    stronger gate: it launches the real packaged application offline and performs an actual DA3
-    reconstruction before validation, mesh generation, export, and lifecycle acceptance.
-
-    ``require_da3=True`` remains available as a targeted diagnostic probe. It is not the build gate.
+    The lightweight self-check proves Rasterio/GDAL/PROJ correctness and exact frozen-process
+    startup. ``require_da3=True`` additionally imports the complete curated DA3 monocular dependency
+    closure, the pinned DA3 production modules and the audited geometry helper without loading model
+    weights. Standalone packaging uses that stronger import-only probe before staging the runtime;
+    final RT5 acceptance remains the stronger scientific gate because it performs real offline DA3
+    reconstruction before validation, mesh generation, export and lifecycle acceptance.
     """
     _startup_trace("self_check_import_start")
 
@@ -153,12 +156,20 @@ def packaged_geospatial_self_check(*, require_da3: bool = False) -> dict[str, ob
                 )
     _startup_trace("self_check_rasterio_roundtrip_complete")
 
+    da3_dependency_modules_imported: list[str] = []
     da3_api_imported = False
     da3_runtime_modules_imported: list[str] = []
     da3_geometry_imported = False
     da3_affine_inverse_probe = "DEFERRED_TO_RT5_FULL_PACKAGED_INFERENCE"
     torch_version: str | None = None
     if require_da3:
+        _startup_trace("self_check_da3_dependency_closure_start")
+        da3_dependency_modules_imported = list(verify_da3_runtime_dependencies())
+        _startup_trace(
+            "self_check_da3_dependency_closure_complete",
+            module_count=len(da3_dependency_modules_imported),
+        )
+
         _startup_trace("self_check_da3_api_import_start")
         try:
             for module_name in _DA3_PRODUCTION_RUNTIME_MODULES:
@@ -170,7 +181,7 @@ def packaged_geospatial_self_check(*, require_da3: bool = False) -> dict[str, ob
         except ImportError as exc:
             missing = getattr(exc, "name", None)
             raise RuntimeError(
-                "Frozen DA3 runtime import closure is incomplete: "
+                "Frozen DA3 production module closure is incomplete: "
                 f"{type(exc).__name__}: {exc}; missing_module={missing!r}"
             ) from exc
         if getattr(da3_api, "DepthAnything3", None) is None:
@@ -203,7 +214,7 @@ def packaged_geospatial_self_check(*, require_da3: bool = False) -> dict[str, ob
         torch_version = torch.__version__
 
     report = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK",
         "rasterio_version": rasterio.__version__,
         "gdal_version": rasterio.__gdal_version__,
@@ -212,6 +223,8 @@ def packaged_geospatial_self_check(*, require_da3: bool = False) -> dict[str, ob
         "rasterio_serde_imported": rasterio_serde.__name__ == "rasterio.serde",
         "epsg_roundtrip": 32643,
         "da3_probe_required": require_da3,
+        "da3_dependency_modules_required": list(DA3_RUNTIME_DEPENDENCY_MODULES),
+        "da3_dependency_modules_imported": da3_dependency_modules_imported,
         "da3_api_imported": da3_api_imported,
         "da3_runtime_modules_required": list(_DA3_PRODUCTION_RUNTIME_MODULES),
         "da3_runtime_modules_imported": da3_runtime_modules_imported,
