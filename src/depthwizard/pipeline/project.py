@@ -12,9 +12,14 @@ from depthwizard.contracts import ProjectRunStatus
 from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
 
+PROJECT_MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 _ArtifactSignature = tuple[int, int, int]
 _ARTIFACT_INTEGRITY_CACHE: dict[tuple[str, str], _ArtifactSignature] = {}
 _ARTIFACT_INTEGRITY_LOCK = RLock()
+
+
+class ProjectIntegrityError(RuntimeError, ValueError):
+    """A persisted DepthWizard project violates its immutable/state-integrity contract."""
 
 
 def _utc_now() -> str:
@@ -43,16 +48,65 @@ def _verify_file_sha256_cached(path: Path, expected_sha256: str, *, context: str
     actual = sha256_file(path)
     signature_after = _artifact_signature(path)
     if signature_after != signature_before:
-        raise RuntimeError(f"{context} changed during SHA-256 integrity verification")
+        raise ProjectIntegrityError(f"{context} changed during SHA-256 integrity verification")
     if actual != expected_sha256:
         with _ARTIFACT_INTEGRITY_LOCK:
             _ARTIFACT_INTEGRITY_CACHE.pop(key, None)
-        raise RuntimeError(
+        raise ProjectIntegrityError(
             f"{context} hash mismatch; expected {expected_sha256}, got {actual}. "
             "DepthWizard will not consume mutated or stale scientific products."
         )
     with _ARTIFACT_INTEGRITY_LOCK:
         _ARTIFACT_INTEGRITY_CACHE[key] = signature_after
+
+
+def _read_manifest_payload(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise FileNotFoundError(f"project manifest does not exist: {path}")
+    with path.open("rb") as handle:
+        raw = handle.read(PROJECT_MANIFEST_MAX_BYTES + 1)
+    if len(raw) > PROJECT_MANIFEST_MAX_BYTES:
+        raise ProjectIntegrityError(
+            f"project manifest exceeds the {PROJECT_MANIFEST_MAX_BYTES // (1024 * 1024)} MiB limit"
+        )
+    try:
+        text = raw.decode("utf-8")
+        payload = json.loads(text)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProjectIntegrityError(f"project manifest is not valid UTF-8 JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ProjectIntegrityError("project manifest root must be a JSON object")
+    return payload
+
+
+def _object_field(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    raw = payload.get(name, {})
+    if not isinstance(raw, dict):
+        raise ProjectIntegrityError(f"project manifest field {name!r} must be an object")
+    if any(not isinstance(key, str) for key in raw):
+        raise ProjectIntegrityError(f"project manifest field {name!r} contains a non-string key")
+    return raw
+
+
+def _artifact_registry(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = _object_field(payload, "artifacts")
+    if any(not isinstance(value, dict) for value in raw.values()):
+        raise ProjectIntegrityError("project manifest artifact entries must be JSON objects")
+    return {key: value for key, value in raw.items() if isinstance(value, dict)}
+
+
+def _warning_list(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("warnings", [])
+    if not isinstance(raw, list) or any(not isinstance(value, str) for value in raw):
+        raise ProjectIntegrityError("project manifest warnings must be an array of strings")
+    return list(raw)
+
+
+def _error_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("errors", [])
+    if not isinstance(raw, list) or any(not isinstance(value, dict) for value in raw):
+        raise ProjectIntegrityError("project manifest errors must be an array of objects")
+    return [value for value in raw if isinstance(value, dict)]
 
 
 @dataclass
@@ -102,18 +156,20 @@ class ProjectManifest:
         try:
             relative = resolved.relative_to(project_root)
         except ValueError as exc:
-            raise RuntimeError(
+            raise ProjectIntegrityError(
                 f"project artifact {name} escapes the project directory: {resolved}"
             ) from exc
         if not relative.parts:
-            raise RuntimeError(f"project artifact {name} points at the project directory itself")
+            raise ProjectIntegrityError(
+                f"project artifact {name} points at the project directory itself"
+            )
         return resolved
 
     def _validate_registered_artifact_paths(self) -> None:
         for name, payload in self.artifacts.items():
             raw = payload.get("path")
             if not isinstance(raw, str):
-                raise RuntimeError(f"project manifest {name} artifact path is malformed")
+                raise ProjectIntegrityError(f"project manifest {name} artifact path is malformed")
             self._confined_artifact_path(name, raw)
 
     def _validate_registered_artifact_integrity(self) -> None:
@@ -128,7 +184,7 @@ class ProjectManifest:
         if manifest_path.is_file():
             manifest = cls.load(directory)
             if manifest.source_path.resolve(strict=False) != source.resolve(strict=False):
-                raise RuntimeError(
+                raise ProjectIntegrityError(
                     "existing DepthWizard project manifest belongs to a different source raster"
                 )
             return manifest
@@ -197,13 +253,15 @@ class ProjectManifest:
         """Return a registered artifact only when location and bytes match manifest identity."""
         payload = self.artifacts.get(name)
         if not payload:
-            raise RuntimeError(f"project manifest has no registered {name} artifact")
+            raise ProjectIntegrityError(f"project manifest has no registered {name} artifact")
         raw = payload.get("path")
         expected = payload.get("sha256")
         if not isinstance(raw, str):
-            raise RuntimeError(f"project manifest {name} artifact path is malformed")
+            raise ProjectIntegrityError(f"project manifest {name} artifact path is malformed")
         if not isinstance(expected, str) or len(expected) != 64:
-            raise RuntimeError(f"project manifest {name} artifact has no valid SHA-256 identity")
+            raise ProjectIntegrityError(
+                f"project manifest {name} artifact has no valid SHA-256 identity"
+            )
         path = self._confined_artifact_path(name, raw)
         if not path.is_file():
             raise FileNotFoundError(f"persisted {name} artifact does not exist: {path}")
@@ -255,7 +313,7 @@ class ProjectManifest:
             return None
         raw = payload.get("path")
         if not isinstance(raw, str):
-            raise RuntimeError(f"project manifest {name} artifact path is malformed")
+            raise ProjectIntegrityError(f"project manifest {name} artifact path is malformed")
         return self._confined_artifact_path(name, raw)
 
     def add_warning(self, message: str) -> None:
@@ -307,42 +365,63 @@ class ProjectManifest:
     @classmethod
     def load(cls, project_dir: str | Path) -> ProjectManifest:
         directory = Path(project_dir)
-        payload = json.loads((directory / "project-manifest.json").read_text(encoding="utf-8"))
-        schema_version = int(payload.get("schema_version", 1))
+        payload = _read_manifest_payload(directory / "project-manifest.json")
+        raw_schema_version = payload.get("schema_version", 1)
+        if not isinstance(raw_schema_version, int) or isinstance(raw_schema_version, bool):
+            raise ProjectIntegrityError("project manifest schema_version must be an integer")
+        schema_version = raw_schema_version
+        raw_source_path = payload.get("source_path")
+        if not isinstance(raw_source_path, str) or not raw_source_path:
+            raise ProjectIntegrityError("project manifest source_path must be a non-empty string")
+
         if schema_version == 1:
-            stages = payload.get("stages", {})
+            stages = _object_field(payload, "stages")
             inferred_status = (
                 ProjectRunStatus.COMPLETE.value
                 if stages.get(ProcessingStage.COMPLETE.value, {}).get("status") == "completed"
+                and isinstance(stages.get(ProcessingStage.COMPLETE.value), dict)
                 else ProjectRunStatus.CREATED.value
             )
             manifest = cls(
                 project_dir=directory,
-                source_path=Path(payload["source_path"]),
+                source_path=Path(raw_source_path),
                 status=inferred_status,
                 stages=stages,
             )
             manifest._validate_registered_artifact_paths()
             return manifest
         if schema_version != 2:
-            raise ValueError(f"unsupported project manifest schema_version={schema_version}")
+            raise ProjectIntegrityError(
+                f"unsupported project manifest schema_version={schema_version}"
+            )
+
+        project_id = payload.get("project_id")
+        if not isinstance(project_id, str) or not project_id:
+            raise ProjectIntegrityError("project manifest project_id must be a non-empty string")
+        raw_status = payload.get("status", ProjectRunStatus.CREATED.value)
+        if not isinstance(raw_status, str):
+            raise ProjectIntegrityError("project manifest status must be a string")
+        raw_job_id = payload.get("job_id")
+        if raw_job_id is not None and not isinstance(raw_job_id, str):
+            raise ProjectIntegrityError("project manifest job_id must be a string or null")
+
         manifest = cls(
             project_dir=directory,
-            source_path=Path(payload["source_path"]),
-            project_id=str(payload["project_id"]),
-            job_id=payload.get("job_id"),
-            status=str(payload.get("status", ProjectRunStatus.CREATED.value)),
+            source_path=Path(raw_source_path),
+            project_id=project_id,
+            job_id=raw_job_id,
+            status=raw_status,
             created_at_utc=str(payload.get("created_at_utc", _utc_now())),
             updated_at_utc=str(payload.get("updated_at_utc", _utc_now())),
             source_sha256=payload.get("source_sha256"),
             input_kind=payload.get("input_kind"),
             geometry_config_sha256=payload.get("geometry_config_sha256"),
             run_config_sha256=payload.get("run_config_sha256"),
-            estimator=payload.get("estimator", {}),
-            artifacts=payload.get("artifacts", {}),
-            stages=payload.get("stages", {}),
-            warnings=payload.get("warnings", []),
-            errors=payload.get("errors", []),
+            estimator=_object_field(payload, "estimator"),
+            artifacts=_artifact_registry(payload),
+            stages=_object_field(payload, "stages"),
+            warnings=_warning_list(payload),
+            errors=_error_list(payload),
         )
         manifest._validate_registered_artifact_paths()
         manifest._validate_registered_artifact_integrity()
