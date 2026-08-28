@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -15,6 +16,10 @@ from depthwizard.mesh.project_mesh import build_project_mesh
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.provenance.manifest import sha256_file
 from depthwizard.service import app
+
+
+def _fixture_sha(label: str) -> str:
+    return hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
 def _write_source(path: Path) -> None:
@@ -74,8 +79,8 @@ def _project(tmp_path: Path, *, with_mesh: bool = True) -> Path:
     manifest.set_identity(
         source_sha256=sha256_file(source),
         input_kind="georeferenced",
-        geometry_config_sha256="geometry-export-test",
-        run_config_sha256="run-export-test",
+        geometry_config_sha256=_fixture_sha("geometry-export-test"),
+        run_config_sha256=_fixture_sha("run-export-test"),
     )
     manifest.register_artifact(
         "dsm",
