@@ -47,9 +47,10 @@ requirements:
     clause: "Use lower-resolution DEM evidence such as SRTM to map scale-agnostic depth to metric elevation"
     implementation:
       - depthwizard.io.raster.reproject_to_match
+      - depthwizard.io.raster.ground_sample_distance_m
       - depthwizard.calibration.evidence.calibrate_relative_height_with_dem
       - depthwizard.pipeline.runtime.ProductionElevationRuntime
-    verification: "coarse-DEM integration test + spatial-frequency matching + calibration residual benchmark"
+    verification: "coarse-DEM spatial-frequency/support test + geodesic-GSD contract + fail-closed missing-support test + calibration residual benchmark"
     evidence: "calibration_dem_report.json"
 
   - id: PS-CAL-GCP-001
@@ -113,8 +114,10 @@ requirements:
     implementation:
       - depthwizard.evaluation.metrics.slope_degrees
       - depthwizard.evaluation.project_analysis subpixel transects
+      - depthwizard.evaluation.project_validation geodesic-grid slope validation
+      - depthwizard.evaluation.report legacy geodesic-grid validation
       - desktop slope/measure/profile tools with local-ground/geodesic distances
-    verification: "analytic planar-slope tests + geodesic-distance tests + reference slope comparison"
+    verification: "analytic planar-slope tests + Web-Mercator geodesic-distance regression + reference slope comparison"
     evidence: "slope_validation.json"
 
   - id: PS-METRICS-001
@@ -172,8 +175,9 @@ requirements:
     implementation:
       - Tauri desktop application
       - packaged loopback Python scientific sidecar with per-session authentication
+      - independent 256-bit boot nonce proving the expected child process before runtime acceptance
       - offline-after-model-install operation and owned lifecycle
-    verification: "packaged app lifecycle/process/validate/mesh/export acceptance + final clean-machine test"
+    verification: "identity-bound packaged boot + lifecycle/process/validate/mesh/export acceptance + final clean-machine test"
     evidence: "standalone_acceptance_report.md"
 
   - id: PS-STABILITY-001
@@ -190,5 +194,6 @@ requirements:
     implementation:
       - monorepo + MASTER_SPEC + ADRs + traceability + API/user/deployment docs
       - pinned DA3 model/source identity and explicit claim boundaries
-    verification: "reproducibility dry run from clean environment + release-lock audit"
+      - exact npm top-level versions plus npm/Cargo/Python lock audit contract
+    verification: "reproducibility dry run from clean environment + three-surface release-lock audit"
     evidence: "reproducibility_report.md"
