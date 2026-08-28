@@ -107,6 +107,10 @@ def estimate_project_structure_height(
         warnings.append(
             "Selected footprint does not rise above the robust local-ground estimate; verify the structure selection."
         )
+    if estimate.structure_pixels < 9:
+        warnings.append(
+            "Selected footprint has fewer than nine valid DSM pixels; structural height has limited independent spatial support."
+        )
 
     return ProjectStructureHeightResult(
         project_id=manifest.project_id,
@@ -119,8 +123,9 @@ def estimate_project_structure_height(
         ground_pixels=estimate.ground_pixels,
         warnings=warnings,
         semantics=(
-            "Analyst-selected structural height = robust median DSM elevation inside the explicit "
-            "footprint minus robust median elevation in the surrounding local-ground ring. The "
-            "selection is not an automatic building classification."
+            "Analyst-selected structural height = robust median DSM roof elevation inside the "
+            "explicit footprint minus a robust local ground plane fitted only to the surrounding "
+            "ring and extrapolated beneath the footprint. This reduces hillside bias. The selection "
+            "is explicit analyst evidence and is not an automatic building classification."
         ),
     )
