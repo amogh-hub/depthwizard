@@ -27,6 +27,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
     "resources": {
       "resources/depthwizard-core-runtime/": "depthwizard-core-runtime/"
     }

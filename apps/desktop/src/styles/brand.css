@@ -1,0 +1,46 @@
+/* DepthWizard final product identity: logo-only chrome and centered project context. */
+
+.dw-topbar {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  column-gap: 14px;
+}
+
+.dw-brand {
+  width: 32px;
+  min-width: 32px;
+  gap: 0;
+}
+
+.dw-brand > span:not(.dw-mark) {
+  display: none;
+}
+
+.dw-mark {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 0;
+  background: transparent url("/depthwizard-mark.png") center / contain no-repeat;
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+  overflow: hidden;
+}
+
+.dw-project-title {
+  width: min(100%, 560px);
+  min-width: 0;
+  justify-self: center;
+  justify-content: center;
+  gap: 0;
+  text-align: center;
+}
+
+.dw-project-title strong {
+  display: block;
+  max-width: 100%;
+}
+
+.dw-project-title > span {
+  display: none;
+}
