@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { FlyControls } from "three/examples/jsm/controls/FlyControls.js";
-import { FirstPersonControls } from "three/examples/jsm/controls/FirstPersonControls.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { NormalizedPoint } from "../api";
@@ -58,7 +57,7 @@ function navigationHelp(cameraMode: CameraMode, autoFlythrough: boolean): string
   if (autoFlythrough) return "Flythrough active · deterministic camera tour · click Flythrough again to stop";
   if (cameraMode === "orbit") return "Orbit · drag to rotate · Shift/right-drag to pan · wheel to dolly";
   if (cameraMode === "topDown") return "Top down · drag to pan · wheel to zoom · Fit restores the scene";
-  if (cameraMode === "fly") return "Fly · W/S forward/back · A/D left/right · R/F rise/fall · drag to look · Shift accelerates";
+  if (cameraMode === "fly") return "Fly · WASD move · R/F rise/fall · drag to look · Shift accelerates";
   return "First person · WASD move · R/F rise/fall · drag to look · Shift accelerates · choose Orbit to exit";
 }
 
@@ -165,15 +164,12 @@ export function TerrainViewport({
     orbit.enablePan = true;
     orbit.screenSpacePanning = false;
 
-    const fly = new FlyControls(camera, renderer.domElement);
-    fly.movementSpeed = 80;
-    fly.rollSpeed = 0.35;
-    fly.dragToLook = true;
-
-    const firstPerson = new FirstPersonControls(camera, renderer.domElement);
-    firstPerson.movementSpeed = 35;
-    firstPerson.lookSpeed = 0.08;
-    firstPerson.lookVertical = true;
+    // A single drag-to-look free-camera controller backs both Fly and First Person. The modes
+    // deliberately differ in navigation speed, not in hidden/unpredictable mouse semantics.
+    const freeCamera = new FlyControls(camera, renderer.domElement);
+    freeCamera.movementSpeed = 80;
+    freeCamera.rollSpeed = 0.30;
+    freeCamera.dragToLook = true;
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -235,10 +231,9 @@ export function TerrainViewport({
 
     const footprint = () => Math.max(sceneSize.x, sceneSize.z, 1);
 
-    const updateNavigationSpeeds = () => {
-      const multiplier = shiftBoost ? 4 : 1;
-      fly.movementSpeed = flyBaseSpeed * multiplier;
-      firstPerson.movementSpeed = firstPersonBaseSpeed * multiplier;
+    const updateNavigationSpeed = () => {
+      const base = modeRef.current === "firstPerson" ? firstPersonBaseSpeed : flyBaseSpeed;
+      freeCamera.movementSpeed = base * (shiftBoost ? 4 : 1);
     };
 
     const fitView = () => {
@@ -414,7 +409,7 @@ export function TerrainViewport({
         refreshBounds();
         flyBaseSpeed = THREE.MathUtils.clamp(footprint() * 0.04, 80, 3000);
         firstPersonBaseSpeed = THREE.MathUtils.clamp(footprint() * 0.015, 35, 1200);
-        updateNavigationSpeeds();
+        updateNavigationSpeed();
         fitView();
         positionMarker(cursorRef.current);
         refreshAnalysisPath();
@@ -448,7 +443,6 @@ export function TerrainViewport({
       renderer.setSize(width, height, false);
       camera.aspect = Math.max(width / Math.max(height, 1), 0.01);
       camera.updateProjectionMatrix();
-      firstPerson.handleResize();
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
@@ -492,13 +486,13 @@ export function TerrainViewport({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Shift" && !shiftBoost) {
         shiftBoost = true;
-        updateNavigationSpeeds();
+        updateNavigationSpeed();
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === "Shift" && shiftBoost) {
         shiftBoost = false;
-        updateNavigationSpeeds();
+        updateNavigationSpeed();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -521,8 +515,7 @@ export function TerrainViewport({
       const dt = Math.min(clock.getDelta(), 0.05);
       const touring = autoFlythroughRef.current && Boolean(loaded) && rendererReady;
       orbit.enabled = rendererReady && !touring && (mode === "orbit" || mode === "topDown");
-      fly.enabled = rendererReady && !touring && mode === "fly";
-      firstPerson.enabled = rendererReady && !touring && mode === "firstPerson";
+      freeCamera.enabled = rendererReady && !touring && (mode === "fly" || mode === "firstPerson");
 
       if (mode === "topDown") {
         orbit.enableRotate = false;
@@ -534,6 +527,24 @@ export function TerrainViewport({
         orbit.screenSpacePanning = false;
         if (!shiftPan) orbit.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
         orbit.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+      }
+
+      if (mode !== previousMode) {
+        updateNavigationSpeed();
+        if (mode === "topDown" && loaded) {
+          const distance = footprint() * 1.05;
+          camera.up.set(0, 0, -1);
+          camera.position.set(sceneCenter.x, sceneCenter.y + distance, sceneCenter.z + 0.001);
+          camera.lookAt(sceneCenter);
+          orbit.target.copy(sceneCenter);
+        } else if (mode === "orbit" && loaded && previousMode && previousMode !== "orbit") {
+          camera.up.set(0, 1, 0);
+          orbit.target.copy(sceneCenter);
+          camera.lookAt(sceneCenter);
+          orbit.update();
+        } else if (mode !== "topDown") {
+          camera.up.set(0, 1, 0);
+        }
       }
 
       applyExaggeration();
@@ -574,21 +585,12 @@ export function TerrainViewport({
         );
         camera.lookAt(sceneCenter);
         orbit.target.copy(sceneCenter);
-      } else if (mode !== previousMode && mode === "topDown" && loaded) {
-        const distance = footprint() * 1.05;
-        camera.up.set(0, 0, -1);
-        camera.position.set(sceneCenter.x, sceneCenter.y + distance, sceneCenter.z + 0.001);
-        camera.lookAt(sceneCenter);
-        orbit.target.copy(sceneCenter);
-      } else if (mode !== "topDown") {
-        camera.up.set(0, 1, 0);
       }
       wasAutoFlythrough = touring;
       previousMode = mode;
 
       if (orbit.enabled) orbit.update();
-      if (fly.enabled) fly.update(dt);
-      if (firstPerson.enabled) firstPerson.update(dt);
+      if (freeCamera.enabled) freeCamera.update(dt);
       renderer.render(scene, camera);
 
       const triangles = renderer.info.render.triangles;
@@ -634,8 +636,7 @@ export function TerrainViewport({
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       orbit.dispose();
-      fly.dispose();
-      firstPerson.dispose();
+      freeCamera.dispose();
       restoreOriginalMaterials();
       renderer.dispose();
       scene.traverse((object) => {
