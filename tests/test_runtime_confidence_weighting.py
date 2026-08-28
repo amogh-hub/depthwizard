@@ -93,7 +93,10 @@ def test_runtime_falls_back_truthfully_when_native_confidence_is_degenerate(tmp_
     )
 
     outcome = ProductionElevationRuntime()._calibrate(manifest, request, geometry)
-    weighting = outcome.evidence["dem"]["confidence_weighting"]
+    dem_evidence = outcome.evidence["dem"]
+    assert isinstance(dem_evidence, dict)
+    weighting = dem_evidence["confidence_weighting"]
+    assert isinstance(weighting, dict)
     assert weighting["active"] is False
     assert weighting["reason"] == "degenerate_model_native_confidence_range"
     assert any("continued without confidence weighting" in warning for warning in manifest.warnings)
