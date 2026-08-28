@@ -6,6 +6,38 @@ on:
   pull_request:
 
 jobs:
+  dependency-lock-bootstrap:
+    name: dependency lock bootstrap
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v6
+      - name: Resolve Python lock
+        run: uv lock
+      - name: Resolve npm lock
+        working-directory: apps/desktop
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Resolve Cargo lock
+        working-directory: apps/desktop/src-tauri
+        run: cargo generate-lockfile
+      - name: Upload deterministic lock candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: depthwizard-dependency-locks
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            uv.lock
+            apps/desktop/package-lock.json
+            apps/desktop/src-tauri/Cargo.lock
+
   python-core:
     runs-on: ubuntu-latest
     strategy:
