@@ -94,6 +94,13 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
     assert 'pip install -e ".[dev,standalone]"' not in target
 
 
+def test_verify_pins_pyright_to_invoking_python() -> None:
+    root = Path(__file__).resolve().parents[1]
+    verify = (root / "scripts" / "verify.py").read_text(encoding="utf-8")
+
+    assert '"pyright",\n        "--pythonpath",\n        sys.executable,' in verify
+
+
 def test_all_scientific_sidecar_build_targets_install_ml_extra() -> None:
     root = Path(__file__).resolve().parents[1]
     makefile = (root / "Makefile").read_text(encoding="utf-8")
