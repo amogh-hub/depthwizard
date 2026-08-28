@@ -78,7 +78,10 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
 
     assert "git ls-files --error-unmatch uv.lock" in target
     assert 'test -z "$$(git status --porcelain)"' in target
-    assert "uv sync --frozen --python 3.12 --extra dev --extra standalone" in target
+    assert (
+        "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
+        in target
+    )
     assert "npm ci --no-audit --no-fund" in target
     assert "cargo clippy --locked" in target
     assert "cargo test --locked" in target
@@ -87,3 +90,18 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
         "apps/desktop/src-tauri/Cargo.lock"
     ) in target
     assert 'pip install -e ".[dev,standalone]"' not in target
+
+
+def test_all_scientific_sidecar_build_targets_install_ml_extra() -> None:
+    root = Path(__file__).resolve().parents[1]
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+
+    sidecar = makefile.split("sidecar-build:\n", 1)[1].split(
+        "\nrelease-train-5-sidecar-smoke:", 1
+    )[0]
+    workstation = makefile.split("release-train-5-workstation-build:\n", 1)[1].split(
+        "\n# Final qualification", 1
+    )[0]
+
+    assert 'pip install -e ".[ml,standalone]"' in sidecar
+    assert 'pip install -e ".[ml,dev,standalone]"' in workstation
