@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ def test_gcp_csv_import_preserves_metric_evidence(tmp_path: Path) -> None:
         "500010,1400010,108.75,1\n",
         encoding="utf-8",
     )
+    expected_bytes = path.read_bytes()
 
     report = inspect_ground_control_point_file(path)
 
@@ -21,7 +23,7 @@ def test_gcp_csv_import_preserves_metric_evidence(tmp_path: Path) -> None:
     assert report.minimum_elevation_m == 101.25
     assert report.maximum_elevation_m == 108.75
     assert report.points[0].weight == 2.0
-    assert len(report.sha256) == 64
+    assert report.sha256 == hashlib.sha256(expected_bytes).hexdigest()
     assert "does not transform or infer coordinates" in report.semantics
 
 
