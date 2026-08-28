@@ -122,20 +122,22 @@ release-train-5-workstation-build:
 	python -m scripts.build_standalone_sidecar
 	cd apps/desktop && npm install --no-audit --no-fund && npm test && npm run tauri build
 
-# Final qualification is fail-closed on all three committed resolver locks. `uv sync --frozen`
-# creates/updates the project .venv strictly from uv.lock and installs the ML, developer, and
-# standalone packaging surfaces required by the complete verification + scientific sidecar path;
-# npm uses `ci`; Rust verification uses Cargo's `--locked` mode. Tauri then builds against that
-# already-verified Cargo graph, and the post-build diff check proves none of the committed resolver
-# inputs drifted during packaging. Do not use this target until `make dependency-locks` has been
-# reviewed and the three locks have been committed on the exact branch being qualified.
+# Final qualification is fail-closed on all three committed resolver locks. `uv lock --check`
+# proves pyproject.toml and uv.lock still describe the same Python resolution before `uv sync
+# --frozen` creates/updates the project .venv strictly from uv.lock. The ML extra contains the full
+# curated DA3 monocular runtime closure; the explicit dependency import preflight prevents an
+# incomplete scientific environment from reaching PyInstaller. npm uses `ci`; Rust verification
+# uses Cargo's `--locked` mode. Tauri then builds against that already-verified graph, and the
+# post-build diff check proves none of the committed resolver inputs drifted during packaging.
 release-train-5-final-qualification:
 	test -f uv.lock
 	test -f apps/desktop/package-lock.json
 	test -f apps/desktop/src-tauri/Cargo.lock
 	git ls-files --error-unmatch uv.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock >/dev/null
 	test -z "$$(git status --porcelain)"
+	uv lock --check
 	uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
+	.venv/bin/python -c "from depthwizard.geometry_prior.da3_runtime_contract import verify_da3_runtime_dependencies; modules = verify_da3_runtime_dependencies(); print('DA3 runtime dependency imports PASS:', len(modules))"
 	.venv/bin/python -c "import torch, torchvision; from torch import nn; assert nn.Module is not None; print('Scientific runtime imports PASS:', torch.__version__, torchvision.__version__)"
 	.venv/bin/python -m scripts.check_release_reproducibility --strict
 	.venv/bin/python scripts/verify.py
