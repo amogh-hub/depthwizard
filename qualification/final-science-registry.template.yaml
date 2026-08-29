@@ -1,0 +1,75 @@
+schema_version: 1
+scenes:
+  # Training-lineage declaration only. Replace with a real source image from the development sensor lineage.
+  - scene_id: train-lineage-01
+    dataset: development-lineage
+    split: train
+    terrain: urban
+    geographic_group: train-lineage-group-01
+    sensor: NEON-AOP-CAMERA
+    rgb_path: FILL_ME/train-lineage-01-rgb.tif
+    reference_path: null
+    nominal_gsd_m: 0.10
+    license_id: FILL_ME
+    notes: Production/development sensor lineage declaration; must not share geographic_group with evaluation scenes.
+
+  - scene_id: urban-potsdam-01
+    dataset: ISPRS-Potsdam
+    split: test
+    terrain: urban
+    geographic_group: potsdam-urban-group-01
+    sensor: ISPRS-RGB-AERIAL
+    rgb_path: FILL_ME/potsdam/urban-potsdam-01-rgb.tif
+    reference_path: FILL_ME/potsdam/urban-potsdam-01-independent-dsm.tif
+    nominal_gsd_m: 0.05
+    license_id: ISPRS-Potsdam-terms
+    notes: Reference must be the published absolute DSM; calibration evidence must come from a separate source.
+
+  - scene_id: sparse-cper-01
+    dataset: NEON-CPER
+    split: test
+    terrain: sparse
+    geographic_group: neon-cper-group-01
+    sensor: NEON-AOP-CAMERA
+    rgb_path: FILL_ME/neon/cper/sparse-cper-01-rgb.tif
+    reference_path: FILL_ME/neon/cper/sparse-cper-01-independent-lidar-dsm.tif
+    nominal_gsd_m: 0.10
+    license_id: CC-BY-4.0-NEON
+    notes: Match RGB and LiDAR DSM acquisition year/window. Calibration must not use this LiDAR acquisition/reference.
+
+  - scene_id: hilly-niwo-01
+    dataset: NEON-NIWO
+    split: test
+    terrain: hilly
+    geographic_group: neon-niwo-group-01
+    sensor: NEON-AOP-CAMERA
+    rgb_path: FILL_ME/neon/niwo/hilly-niwo-01-rgb.tif
+    reference_path: FILL_ME/neon/niwo/hilly-niwo-01-independent-lidar-dsm.tif
+    nominal_gsd_m: 0.10
+    license_id: CC-BY-4.0-NEON
+    notes: Match RGB and LiDAR DSM acquisition year/window. Calibration must be independently sourced.
+
+  - scene_id: forested-harv-01
+    dataset: NEON-HARV
+    split: test
+    terrain: forested
+    geographic_group: neon-harv-group-01
+    sensor: NEON-AOP-CAMERA
+    rgb_path: FILL_ME/neon/harv/forested-harv-01-rgb.tif
+    reference_path: FILL_ME/neon/harv/forested-harv-01-independent-lidar-dsm.tif
+    nominal_gsd_m: 0.10
+    license_id: CC-BY-4.0-NEON
+    notes: Match RGB and LiDAR DSM acquisition year/window. Prefer corrected/released HARV LiDAR data.
+
+  # Cross-sensor scene must use a sensor not present in train.
+  - scene_id: cross-vaihingen-01
+    dataset: ISPRS-Vaihingen
+    split: cross_sensor_test
+    terrain: urban
+    geographic_group: vaihingen-cross-sensor-group-01
+    sensor: ISPRS-IRRG-AERIAL
+    rgb_path: FILL_ME/vaihingen/cross-vaihingen-01-rgb.tif
+    reference_path: FILL_ME/vaihingen/cross-vaihingen-01-independent-dsm.tif
+    nominal_gsd_m: 0.09
+    license_id: ISPRS-Vaihingen-terms
+    notes: Genuine cross-sensor holdout; calibration evidence must be separate from the final DSM reference.
