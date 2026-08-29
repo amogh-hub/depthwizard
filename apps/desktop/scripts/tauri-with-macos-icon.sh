@@ -11,9 +11,9 @@ if [[ ! -x "$TAURI_BIN" ]]; then
   exit 1
 fi
 
-# Only prepare the macOS bundle icon set for actual macOS builds. Other Tauri
-# subcommands and non-macOS platforms pass straight through unchanged.
-if [[ "$(uname -s)" != "Darwin" ]] || [[ "${1:-}" != "build" ]]; then
+# Non-build commands use the committed compile-safe Tauri configuration directly.
+# Only bundle builds need the generated Retina/ICNS icon family.
+if [[ "${1:-}" != "build" ]]; then
   exec "$TAURI_BIN" "$@"
 fi
 
@@ -25,6 +25,7 @@ fi
 TMP_DIR="$(mktemp -d)"
 ORIGINAL_ICONS="$TMP_DIR/original-icons"
 EXTRACTED_ICONSET="$TMP_DIR/validated.iconset"
+BUNDLE_OVERRIDE="$TMP_DIR/tauri.bundle-icons.conf.json"
 mkdir -p "$ORIGINAL_ICONS"
 cp -R "$ICON_DIR/." "$ORIGINAL_ICONS/"
 
@@ -37,8 +38,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Generate the complete platform icon family with Tauri's official generator.
-# This produces the PNG sizes plus a valid macOS ICNS instead of asking the
-# bundler to infer an ICNS slot from one arbitrary PNG.
+# The repository itself intentionally keeps only icons/icon.png so raw Cargo
+# compilation, Clippy, tests and CI never depend on generated bundle assets.
 rm -rf "$ICON_DIR"
 mkdir -p "$ICON_DIR"
 "$TAURI_BIN" icon "$SOURCE_ICON" --output "$ICON_DIR"
@@ -57,24 +58,45 @@ for icon in "${required_icons[@]}"; do
   fi
 done
 
-# Fail closed if Apple's own icon tooling cannot decode the generated ICNS.
-iconutil -c iconset "$ICON_DIR/icon.icns" -o "$EXTRACTED_ICONSET"
-if [[ ! -d "$EXTRACTED_ICONSET" ]]; then
-  echo "DepthWizard: generated macOS ICNS failed iconutil validation." >&2
-  exit 1
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  # Fail closed if Apple's own icon tooling cannot decode the generated ICNS.
+  iconutil -c iconset "$ICON_DIR/icon.icns" -o "$EXTRACTED_ICONSET"
+  if [[ ! -d "$EXTRACTED_ICONSET" ]]; then
+    echo "DepthWizard: generated macOS ICNS failed iconutil validation." >&2
+    exit 1
+  fi
+
+  PNG_INFO="$(file "$ICON_DIR/128x128@2x.png")"
+  if [[ "$PNG_INFO" != *"PNG image data"* ]] || [[ "$PNG_INFO" != *"RGBA"* ]]; then
+    echo "DepthWizard: generated Retina PNG failed RGBA validation:" >&2
+    echo "$PNG_INFO" >&2
+    exit 1
+  fi
 fi
 
-PNG_INFO="$(file "$ICON_DIR/128x128@2x.png")"
-if [[ "$PNG_INFO" != *"PNG image data"* ]] || [[ "$PNG_INFO" != *"RGBA"* ]]; then
-  echo "DepthWizard: generated Retina PNG failed RGBA validation:" >&2
-  echo "$PNG_INFO" >&2
-  exit 1
-fi
+# Tauri v2 merges --config over the committed tauri.conf.json. Keep the base
+# config compile-safe with icons/icon.png, and override bundle.icon only for the
+# actual packaging command so Dock/DMG receive the complete generated family.
+cat > "$BUNDLE_OVERRIDE" <<'JSON'
+{
+  "bundle": {
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
+JSON
 
-echo "DepthWizard: generated and validated the complete Tauri macOS icon set from the canonical app mark."
+echo "DepthWizard: generated and validated the complete bundle icon set from the canonical app mark."
+echo "DepthWizard: raw Cargo uses tracked icons/icon.png; Tauri packaging uses the temporary Retina/ICNS override."
 
+shift
 set +e
-"$TAURI_BIN" "$@"
+"$TAURI_BIN" build --config "$BUNDLE_OVERRIDE" "$@"
 STATUS=$?
 set -e
 exit "$STATUS"
