@@ -16,14 +16,22 @@ if [[ -n "$(git status --porcelain)" ]]; then
   git status --short >&2
   exit 2
 fi
+if [[ ! -x "$REPO/.venv/bin/python" ]]; then
+  echo "ERROR: expected project Python at $REPO/.venv/bin/python" >&2
+  exit 2
+fi
 
 git fetch --quiet origin "$QUAL_BRANCH"
 rm -rf "$KIT"
 mkdir -p "$KIT"
 git archive "origin/$QUAL_BRANCH" qualification | tar -x -C "$KIT"
 
+# Catch Python, shell and template syntax errors before any network/model/long-duration work.
+"$REPO/.venv/bin/python" "$KIT/qualification/selfcheck_evidence_kit.py" \
+  --kit-root "$KIT/qualification"
+
 cat <<EOF
-DepthWizard evidence kit materialized without changing the production checkout.
+DepthWizard evidence kit materialized and syntax-checked without changing the production checkout.
 
 Frozen production HEAD:
   $FROZEN_HEAD
