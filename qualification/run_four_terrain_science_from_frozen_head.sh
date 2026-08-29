@@ -69,6 +69,15 @@ printf '\n=== 1/9 ACQUIRE FROZEN CO-ACQUIRED NEON RGB + SEALED DSM REFERENCES ==
   --output-root "$REPO/workspace/final-science-data/neon" \
   --report "$REPO/workspace/final-science-data/neon-acquisition.json"
 
+printf '\n=== 1A/9 PRE-REFERENCE NEON CALIBRATION-FEASIBILITY SELECTION ===\n'
+"$PY" "$KIT/qualification/select_neon_calibration_feasible_tiles.py" \
+  --repo "$REPO" \
+  --output-root workspace/final-science-data/neon \
+  --acquisition-report workspace/final-science-data/neon-acquisition.json \
+  --feasibility-report workspace/final-science-data/neon-calibration-feasibility.json \
+  --predictions-root workspace/final-science-data/predictions \
+  --copdem-cache workspace/final-science-data/calibration/copdem-cache
+
 printf '\n=== 2/9 FREEZE SIX-SCENE REGISTRY (4 TEST TERRAINS + CROSS-SENSOR + TRAIN LINEAGE) ===\n'
 "$PY" "$KIT/qualification/build_final_science_registry.py" \
   --repo "$REPO" \
