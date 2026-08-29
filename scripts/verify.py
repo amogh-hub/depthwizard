@@ -43,6 +43,7 @@ if __name__ == "__main__":
         "scripts/evaluate_potsdam_external.py",
         "scripts/evaluate_potsdam_external_v2.py",
         "scripts/evaluate_final_science_campaign.py",
+        "scripts/freeze_final_science_manifest.py",
         "scripts/preflight_potsdam_external_v2_execution.py",
         "scripts/production_runtime_smoke.py",
         "scripts/release_train_2_validation_smoke.py",
