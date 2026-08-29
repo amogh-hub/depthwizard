@@ -3,14 +3,14 @@
 
 Frozen scene policy:
 - train lineage: first deterministic OrthoLoC training DOP (reference not required)
-- urban test: ISPRS Potsdam 2_14
+- urban test: first fresh valid Potsdam tile frozen by input preflight
 - sparse test: NEON CPER deterministic co-acquired RGB/DSM tile
 - hilly test: NEON NIWO deterministic co-acquired RGB/DSM tile
 - forested test: NEON HARV deterministic co-acquired RGB/DSM tile
-- cross-sensor holdout: ISPRS Potsdam 3_14
+- cross-sensor holdout: second fresh valid Potsdam tile frozen by input preflight
 
-Potsdam 2_14 and 3_14 are intentionally outside the consumed DepthWizard external-v2 tile set
-(2_10, 3_13, 5_11, 6_14).
+The input preflight excludes all DepthWizard external-v2 consumed Potsdam tiles
+(2_10, 3_13, 5_11, 6_14) and validates metadata without decoding reference heights.
 """
 
 from __future__ import annotations
@@ -28,8 +28,6 @@ from depthwizard.data.registry import DatasetRegistry, load_registry
 from depthwizard.evaluation.potsdam import FROZEN_POTSDAM_TILE_IDS, resolve_potsdam_tile_paths
 
 FROZEN_HEAD = "339bdf485149f552db846543b9e09377b567c19c"
-URBAN_TEST_TILE = "2_14"
-CROSS_SENSOR_TILE = "3_14"
 
 
 def _git_head(root: Path) -> str:
@@ -54,6 +52,26 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError(f"JSON root must be an object: {path}")
     return payload
+
+
+def _potsdam_selection(preflight: dict[str, Any]) -> tuple[str, str]:
+    if preflight.get("status") != "PASS_FINAL_SCIENCE_INPUT_PREFLIGHT":
+        raise RuntimeError(
+            "final-science input preflight is not PASS; do not freeze a registry from incomplete inputs"
+        )
+    potsdam = preflight.get("potsdam")
+    if not isinstance(potsdam, dict):
+        raise RuntimeError("input preflight is missing Potsdam selection")
+    urban = potsdam.get("urban_test_tile")
+    cross = potsdam.get("cross_sensor_tile")
+    if not isinstance(urban, str) or not isinstance(cross, str) or not urban or not cross:
+        raise RuntimeError("input preflight did not freeze two Potsdam tile IDs")
+    if urban == cross:
+        raise RuntimeError("urban and cross-sensor Potsdam scenes must be distinct")
+    consumed = set(FROZEN_POTSDAM_TILE_IDS)
+    if urban in consumed or cross in consumed:
+        raise RuntimeError("input preflight selected a consumed Potsdam tile")
+    return urban, cross
 
 
 def _neon_scene(acquisition: dict[str, Any], site: str, terrain: str) -> dict[str, Any]:
@@ -136,9 +154,9 @@ def _potsdam_scene(root: Path, tile_id: str, *, split: str, role: str) -> dict[s
         "nominal_gsd_m": 0.05,
         "license_id": "ISPRS Potsdam benchmark terms",
         "notes": (
-            f"Frozen unused tile {tile_id}; official RGB input and absolute DSM reference on the same "
-            "UTM grid. Reference DSM is evaluation-only and must remain unopened/unhashed until "
-            "prediction freeze."
+            f"Preflight-frozen unused tile {tile_id}; official RGB input and absolute DSM reference "
+            "on the same UTM grid. Reference DSM is evaluation-only and must remain unopened/unhashed "
+            "until prediction freeze."
         ),
     }
 
@@ -150,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--neon-report",
         type=Path,
         default=Path("workspace/final-science-data/neon-acquisition.json"),
+    )
+    parser.add_argument(
+        "--input-preflight",
+        type=Path,
+        default=Path("workspace/final-science-data/input-preflight.json"),
     )
     parser.add_argument(
         "--potsdam-root",
@@ -181,18 +204,20 @@ def main() -> int:
     acquisition = _read_json((repo / args.neon_report).resolve(strict=True))
     if acquisition.get("reference_values_opened_or_hashed") is not False:
         raise RuntimeError("NEON acquisition report does not preserve the sealed-reference boundary")
+    preflight = _read_json((repo / args.input_preflight).resolve(strict=True))
+    urban_test_tile, cross_sensor_tile = _potsdam_selection(preflight)
     potsdam_root = (repo / args.potsdam_root).resolve(strict=True)
     ortholoc_root = (repo / args.ortholoc_train_root).resolve(strict=False)
 
     scenes = [
         _ortholoc_train_scene(ortholoc_root),
-        _potsdam_scene(potsdam_root, URBAN_TEST_TILE, split="test", role="urban-test"),
+        _potsdam_scene(potsdam_root, urban_test_tile, split="test", role="urban-test"),
         _neon_scene(acquisition, "CPER", "sparse"),
         _neon_scene(acquisition, "NIWO", "hilly"),
         _neon_scene(acquisition, "HARV", "forested"),
         _potsdam_scene(
             potsdam_root,
-            CROSS_SENSOR_TILE,
+            cross_sensor_tile,
             split="cross_sensor_test",
             role="cross-sensor",
         ),
@@ -208,7 +233,7 @@ def main() -> int:
         raise RuntimeError("final test split does not contain exactly the required four terrain classes")
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS_FINAL_SCIENCE_REGISTRY_FREEZE",
         "git_head": FROZEN_HEAD,
         "registry": str(output),
@@ -216,8 +241,9 @@ def main() -> int:
         "test_terrain_coverage": sorted(registry.terrain_coverage().get("test", set())),
         "cross_sensor_scene_count": sum(1 for scene in registry.scenes if scene.split == "cross_sensor_test"),
         "consumed_potsdam_tiles_excluded": list(FROZEN_POTSDAM_TILE_IDS),
-        "frozen_potsdam_test_tile": URBAN_TEST_TILE,
-        "frozen_potsdam_cross_sensor_tile": CROSS_SENSOR_TILE,
+        "frozen_potsdam_test_tile": urban_test_tile,
+        "frozen_potsdam_cross_sensor_tile": cross_sensor_tile,
+        "input_preflight": str((repo / args.input_preflight).resolve(strict=True)),
         "reference_rasters_opened_or_hashed": False,
     }
     report_path = (repo / args.report).resolve(strict=False)
