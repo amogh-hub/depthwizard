@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "bash scripts/tauri-with-macos-icon.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
