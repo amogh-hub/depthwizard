@@ -25,7 +25,6 @@ fi
 TMP_DIR="$(mktemp -d)"
 ORIGINAL_ICONS="$TMP_DIR/original-icons"
 EXTRACTED_ICONSET="$TMP_DIR/validated.iconset"
-BUNDLE_OVERRIDE="$TMP_DIR/tauri.bundle-icons.conf.json"
 mkdir -p "$ORIGINAL_ICONS"
 cp -R "$ICON_DIR/." "$ORIGINAL_ICONS/"
 
@@ -74,22 +73,11 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   fi
 fi
 
-# Tauri v2 merges --config over the committed tauri.conf.json. Keep the base
-# config compile-safe with icons/icon.png, and override bundle.icon only for the
-# actual packaging command so Dock/DMG receive the complete generated family.
-cat > "$BUNDLE_OVERRIDE" <<'JSON'
-{
-  "bundle": {
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
-  }
-}
-JSON
+# Tauri v2 merges raw JSON supplied through --config over tauri.conf.json.
+# Keep the committed config compile-safe with only icons/icon.png, then replace
+# bundle.icon exclusively for the packaging command. Using raw JSON avoids any
+# alternate config-file directory affecting relative asset paths.
+BUNDLE_OVERRIDE='{"bundle":{"icon":["icons/32x32.png","icons/128x128.png","icons/128x128@2x.png","icons/icon.icns","icons/icon.ico"]}}'
 
 echo "DepthWizard: generated and validated the complete bundle icon set from the canonical app mark."
 echo "DepthWizard: raw Cargo uses tracked icons/icon.png; Tauri packaging uses the temporary Retina/ICNS override."
