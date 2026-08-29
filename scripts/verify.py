@@ -58,6 +58,8 @@ if __name__ == "__main__":
         "scripts/release_train_5_app_bundle_smoke.py",
         "scripts/release_train_5_full_acceptance.py",
         "scripts/release_train_7_soak.py",
+        "scripts/verify_problem_statement_inputs.py",
+        "scripts/check_sih26175_completion.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_height_model.py",
