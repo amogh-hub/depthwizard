@@ -10,6 +10,7 @@ from PIL import Image
 from rasterio.enums import Resampling
 
 from depthwizard.pipeline.project import ProjectManifest
+from depthwizard.visualization.relative_scale import relative_display_vertical_scale
 
 PreviewLayer = Literal[
     "optical",
@@ -138,12 +139,24 @@ def _read_scalar(path: Path, *, layer: PreviewLayer, max_side: int) -> np.ndarra
     return _scalar_rgb(values, layer=layer, valid=valid)
 
 
-def _hillshade_rgb(path: Path, *, max_side: int) -> np.ndarray:
+def _hillshade_rgb(path: Path, *, max_side: int, relative_surface: bool = False) -> np.ndarray:
     values, valid = _read_scalar_values(path, max_side=max_side)
     if values.shape[0] < 2 or values.shape[1] < 2:
         raise ValueError("hillshade preview requires at least a 2x2 surface")
-    fill = np.where(valid, values, np.nanmedian(values[valid]))
-    grad_y, grad_x = np.gradient(fill.astype(np.float64))
+    fill_value = float(np.nanmedian(values[valid]))
+    fill = np.where(valid, values, fill_value).astype(np.float64)
+    if relative_surface:
+        # A dimensionless rDSM has no physical dz/dx angle. Use the same deterministic display-only
+        # normalization policy as the 3D mesh so relief illumination remains visible without ever
+        # claiming degrees or changing the persisted rDSM values.
+        display_scale = relative_display_vertical_scale(
+            fill,
+            valid,
+            span_x=max(values.shape[1] - 1, 1),
+            span_y=max(values.shape[0] - 1, 1),
+        )
+        fill = (fill - fill_value) * display_scale
+    grad_y, grad_x = np.gradient(fill)
     slope = np.arctan(np.hypot(grad_x, grad_y))
     aspect = np.arctan2(-grad_x, grad_y)
     azimuth = np.deg2rad(315.0)
@@ -175,11 +188,13 @@ def _contour_rgb(path: Path, *, max_side: int) -> np.ndarray:
     return np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
 
 
-def _surface_path(manifest: ProjectManifest) -> Path:
-    for name in ("dsm", "rdsm"):
-        path = manifest.artifact_path(name)
-        if path is not None and path.is_file():
-            return path
+def _surface_path(manifest: ProjectManifest) -> tuple[Path, bool]:
+    dsm = manifest.artifact_path("dsm")
+    if dsm is not None and dsm.is_file():
+        return dsm, False
+    rdsm = manifest.artifact_path("rdsm")
+    if rdsm is not None and rdsm.is_file():
+        return rdsm, True
     raise FileNotFoundError("project has no persisted DSM/rDSM surface for derived visualization")
 
 
@@ -194,9 +209,15 @@ def render_project_layer_preview(
         path = manifest.source_path
         pixels = _read_optical(path, max_side=max_side)
     elif layer == "hillshade":
-        pixels = _hillshade_rgb(_surface_path(manifest), max_side=max_side)
+        path, relative_surface = _surface_path(manifest)
+        pixels = _hillshade_rgb(
+            path,
+            max_side=max_side,
+            relative_surface=relative_surface,
+        )
     elif layer == "contours":
-        pixels = _contour_rgb(_surface_path(manifest), max_side=max_side)
+        path, _relative_surface = _surface_path(manifest)
+        pixels = _contour_rgb(path, max_side=max_side)
     else:
         path = manifest.artifact_path(layer)
         if path is None or not path.is_file():
