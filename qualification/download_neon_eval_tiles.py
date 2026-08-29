@@ -22,8 +22,8 @@ import json
 import math
 import os
 import re
-import shutil
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -44,6 +44,9 @@ DEFAULT_SITES = {
 }
 RGB_RE = re.compile(r"_(?P<easting>\d{5,8})_(?P<northing>\d{5,9})_image\.tif$", re.I)
 DSM_RE = re.compile(r"_(?P<easting>\d{5,8})_(?P<northing>\d{5,9})_DSM\.tif$", re.I)
+DOWNLOAD_ATTEMPTS = 6
+DOWNLOAD_CHUNK = 1024 * 1024
+DOWNLOAD_TIMEOUT_SECONDS = 300
 
 GRAPHQL_QUERY = r"""
 query Site($siteCode: String!) {
@@ -236,41 +239,141 @@ def _select_pair(
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        for chunk in iter(lambda: stream.read(DOWNLOAD_CHUNK), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
+def _download_headers(url: str, token: str, *, start: int) -> dict[str, str]:
+    headers = {
+        "User-Agent": "DepthWizard-SIH26175-evidence-kit/2",
+        "Accept-Encoding": "identity",
+    }
+    if urllib.parse.urlparse(url).netloc.endswith("neonscience.org"):
+        headers["X-API-Token"] = token
+    if start > 0:
+        headers["Range"] = f"bytes={start}-"
+    return headers
+
+
+def _retryable_http(code: int) -> bool:
+    return code in {408, 425, 429, 500, 502, 503, 504}
+
+
 def _download(item: dict[str, Any], destination: Path, token: str) -> dict[str, Any]:
+    """Download one NEON file with bounded retries and byte-range resume.
+
+    Completed destination files are reused only when their size matches NEON metadata when
+    available. Interrupted transfers remain as ``.part`` files. A retry requests the remaining
+    byte range; if the server ignores Range and returns HTTP 200, the partial file is safely
+    truncated and that response is treated as a clean restart rather than appended corruption.
+    Reference DSM bytes are still never opened or hashed by this function.
+    """
     name = _file_name(item)
     url = _file_url(item)
     if name is None or url is None:
         raise NeonEvidenceError("NEON file entry is missing name/url")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_file() and destination.stat().st_size > 0:
-        return {"path": str(destination.resolve()), "bytes": destination.stat().st_size, "reused": True}
-    tmp = destination.with_suffix(destination.suffix + ".part")
-    tmp.unlink(missing_ok=True)
-    headers = {"User-Agent": "DepthWizard-SIH26175-evidence-kit/1"}
-    if urllib.parse.urlparse(url).netloc.endswith("neonscience.org"):
-        headers["X-API-Token"] = token
-    request = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=300) as response, tmp.open("wb") as output:
-            shutil.copyfileobj(response, output, length=1024 * 1024)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
-    if not tmp.is_file() or tmp.stat().st_size <= 0:
-        tmp.unlink(missing_ok=True)
-        raise NeonEvidenceError(f"download produced an empty file: {name}")
     expected = _file_size(item)
-    if expected is not None and tmp.stat().st_size != expected:
-        actual = tmp.stat().st_size
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    if destination.is_file():
+        actual = destination.stat().st_size
+        if actual > 0 and (expected is None or actual == expected):
+            return {"path": str(destination.resolve()), "bytes": actual, "reused": True}
+        destination.unlink(missing_ok=True)
+
+    tmp = destination.with_suffix(destination.suffix + ".part")
+    if tmp.is_file() and expected is not None and tmp.stat().st_size > expected:
         tmp.unlink(missing_ok=True)
-        raise NeonEvidenceError(f"download size mismatch for {name}: expected={expected}, actual={actual}")
-    tmp.replace(destination)
-    return {"path": str(destination.resolve()), "bytes": destination.stat().st_size, "reused": False}
+
+    last_error: BaseException | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        start = tmp.stat().st_size if tmp.is_file() else 0
+        if expected is not None and start == expected and start > 0:
+            tmp.replace(destination)
+            return {
+                "path": str(destination.resolve()),
+                "bytes": destination.stat().st_size,
+                "reused": False,
+                "resumed": True,
+                "attempts": attempt - 1,
+            }
+
+        request = urllib.request.Request(
+            url,
+            headers=_download_headers(url, token, start=start),
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+                status = int(response.getcode())
+                mode = "ab" if start > 0 and status == 206 else "wb"
+                if start > 0 and status == 206:
+                    content_range = response.headers.get("Content-Range", "")
+                    if not content_range.startswith(f"bytes {start}-"):
+                        raise NeonEvidenceError(
+                            f"invalid NEON resume Content-Range for {name}: {content_range!r}"
+                        )
+                elif start > 0 and status == 200:
+                    print(
+                        f"NEON server ignored resume range for {name}; restarting this file from byte 0.",
+                        file=sys.stderr,
+                    )
+                    start = 0
+                    mode = "wb"
+                elif status not in {200, 206}:
+                    raise NeonEvidenceError(f"unexpected NEON download HTTP {status} for {name}")
+
+                with tmp.open(mode) as output:
+                    while True:
+                        chunk = response.read(DOWNLOAD_CHUNK)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+
+            actual = tmp.stat().st_size if tmp.is_file() else 0
+            if actual <= 0:
+                raise NeonEvidenceError(f"download produced an empty file: {name}")
+            if expected is not None and actual != expected:
+                raise NeonEvidenceError(
+                    f"download size mismatch for {name}: expected={expected}, actual={actual}"
+                )
+            tmp.replace(destination)
+            return {
+                "path": str(destination.resolve()),
+                "bytes": destination.stat().st_size,
+                "reused": False,
+                "resumed": start > 0,
+                "attempts": attempt,
+            }
+
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if not _retryable_http(exc.code):
+                detail = exc.read().decode("utf-8", errors="replace")[:2000]
+                raise NeonEvidenceError(
+                    f"NEON HTTP {exc.code} downloading {name}: {detail}"
+                ) from exc
+        except NeonEvidenceError:
+            raise
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, urllib.error.URLError, OSError) as exc:
+            last_error = exc
+
+        if attempt >= DOWNLOAD_ATTEMPTS:
+            break
+        preserved = tmp.stat().st_size if tmp.is_file() else 0
+        delay = min(30, 2 ** (attempt - 1))
+        print(
+            f"Transient NEON transfer interruption for {name}; preserving {preserved} bytes and "
+            f"retrying in {delay}s ({attempt}/{DOWNLOAD_ATTEMPTS}).",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+
+    preserved = tmp.stat().st_size if tmp.is_file() else 0
+    raise NeonEvidenceError(
+        f"NEON download failed after {DOWNLOAD_ATTEMPTS} attempts for {name}; "
+        f"preserved_partial_bytes={preserved}; last_error={last_error!r}"
+    ) from last_error
 
 
 def _number(value: object, context: str) -> float:
@@ -300,7 +403,6 @@ def acquire_site(site: str, terrain: str, release: str, root: Path, token: str) 
     rgb_download = _download(rgb_item, scene_dir / "rgb" / rgb_name, token)
     dsm_download = _download(dsm_item, scene_dir / "reference-sealed" / dsm_name, token)
     rgb_path = Path(str(rgb_download["path"]))
-    dsm_path = Path(str(dsm_download["path"]))
     return {
         "site": site,
         "site_name": metadata.get("siteName"),
