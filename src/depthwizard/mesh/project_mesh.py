@@ -20,6 +20,10 @@ from depthwizard.mesh.terrain import export_lod_pyramid
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
+from depthwizard.visualization.relative_scale import (
+    RELATIVE_DISPLAY_SCALE_POLICY,
+    relative_display_vertical_scale,
+)
 
 SurfaceProduct = Literal["dsm", "rdsm"]
 HorizontalUnits = Literal["m", "px"]
@@ -129,8 +133,8 @@ def _surface_semantics(
     if surface_product == "dsm":
         return "textured_metric_dsm_terrain_pixel_xy_untrusted_spatial_scale"
     if horizontal_units == "m":
-        return "textured_relative_surface_terrain_metric_xy"
-    return "textured_relative_surface_terrain_pixel_xy"
+        return "textured_relative_surface_terrain_metric_xy_display_normalized_z"
+    return "textured_relative_surface_terrain_pixel_xy_display_normalized_z"
 
 
 def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
@@ -141,6 +145,11 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
     view cannot feed evaluation evidence back into reconstruction or calibration. Horizontal metric
     scale is used only when the persisted raster passes the shared CRS/GSD trust contract; otherwise
     the mesh falls back to a pixel XY grid instead of manufacturing metres.
+
+    Metric DSM meshes preserve physical Z at 1x. Dimensionless rDSM meshes cannot have a physical
+    XY:Z aspect ratio, so their *display geometry only* receives a deterministic robust Z scale that
+    maps P02-P98 relief to 12% of the shorter horizontal scene span. Persisted rDSM values and every
+    probe/profile/calibration/evaluation path remain unchanged and in raw relative units.
     """
     project_dir = request.project_dir
     if not (project_dir / "project-manifest.json").is_file():
@@ -165,9 +174,27 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
         horizontal_units = "m"
     metric_horizontal_scale_trusted = horizontal_units == "m"
 
+    elevation, valid = _read_surface(surface_path)
+    raster_shape = (int(elevation.shape[0]), int(elevation.shape[1]))
+    horizontal_span_x = max(raster_shape[1] - 1, 1) * gsd_x
+    horizontal_span_y = max(raster_shape[0] - 1, 1) * gsd_y
+    if surface_product == "rdsm":
+        display_vertical_scale = relative_display_vertical_scale(
+            elevation,
+            valid,
+            span_x=horizontal_span_x,
+            span_y=horizontal_span_y,
+        )
+        display_vertical_center = float(np.median(elevation[valid].astype(np.float64)))
+        display_scale_policy = RELATIVE_DISPLAY_SCALE_POLICY
+    else:
+        display_vertical_scale = 1.0
+        display_vertical_center = 0.0
+        display_scale_policy = "metric_identity_v1"
+
     build_config_sha = _canonical_sha256(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "max_finest_samples": request.max_finest_samples,
             "lod_levels": request.lod_levels,
             "surface_product": surface_product,
@@ -177,6 +204,8 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             "gsd_x": gsd_x,
             "gsd_y": gsd_y,
             "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
+            "display_vertical_scale_policy": display_scale_policy,
+            "display_vertical_scale": display_vertical_scale,
         }
     )
     mesh_dir = project_dir / "mesh"
@@ -205,10 +234,13 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             "gsd_x": gsd_x,
             "gsd_y": gsd_y,
             "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
+            "display_vertical_scale": display_vertical_scale,
+            "display_vertical_center_raw": display_vertical_center,
+            "display_vertical_scale_policy": display_scale_policy,
+            "display_only_normalization": surface_product == "rdsm",
         },
     )
     try:
-        elevation, valid = _read_surface(surface_path)
         rgb = read_rgb(source_path)
         if rgb.shape[:2] != elevation.shape:
             raise ValueError(
@@ -216,13 +248,18 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
             )
 
         vertical_units: VerticalUnits = "m" if surface_product == "dsm" else "relative"
-        raster_shape = (int(elevation.shape[0]), int(elevation.shape[1]))
         strides = _lod_strides(raster_shape, request.max_finest_samples, request.lod_levels)
+        if surface_product == "rdsm":
+            mesh_elevation = (
+                (elevation.astype(np.float64) - display_vertical_center) * display_vertical_scale
+            ).astype(np.float32)
+        else:
+            mesh_elevation = elevation
 
         mesh_dir.mkdir(parents=True, exist_ok=True)
         exports = export_lod_pyramid(
             mesh_dir,
-            elevation,
+            mesh_elevation,
             rgb,
             gsd_x=gsd_x,
             gsd_y=gsd_y,
@@ -305,6 +342,10 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
                 "gsd_x": gsd_x,
                 "gsd_y": gsd_y,
                 "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
+                "display_vertical_scale": display_vertical_scale,
+                "display_vertical_center_raw": display_vertical_center,
+                "display_vertical_scale_policy": display_scale_policy,
+                "display_only_normalization": surface_product == "rdsm",
                 "lod_strides": list(strides),
                 "valid_pixels": int(valid.sum()),
             },
@@ -326,6 +367,10 @@ def build_project_mesh(request: ProjectMeshBuildRequest) -> ProjectMeshReport:
                 "gsd_x": gsd_x,
                 "gsd_y": gsd_y,
                 "metric_horizontal_scale_trusted": metric_horizontal_scale_trusted,
+                "display_vertical_scale": display_vertical_scale,
+                "display_vertical_center_raw": display_vertical_center,
+                "display_vertical_scale_policy": display_scale_policy,
+                "display_only_normalization": surface_product == "rdsm",
                 "error": str(exc),
             },
             elapsed_seconds=time.perf_counter() - started,
