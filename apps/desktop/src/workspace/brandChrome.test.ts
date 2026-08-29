@@ -46,7 +46,7 @@ describe("DepthWizard product identity chrome", () => {
     expect(wrapper).toContain('"128x128@2x.png"');
     expect(wrapper).toContain('"icon.icns"');
     expect(wrapper).toContain('"icon.ico"');
-    expect(wrapper).toContain("tauri.bundle-icons.conf.json");
+    expect(wrapper).toContain("BUNDLE_OVERRIDE=");
     expect(wrapper).toContain('build --config "$BUNDLE_OVERRIDE"');
     expect(wrapper).toContain("raw Cargo uses tracked icons/icon.png");
   });
