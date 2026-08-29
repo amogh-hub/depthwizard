@@ -2,9 +2,11 @@
 
 This branch is an **operations-only companion** to the already-qualified production source.
 
-## Non-negotiable source identity
+## Frozen production identity
 
-Production branch: `engineering/rt5-rt7-hardening-one-go`
+Production branch:
+
+`engineering/rt5-rt7-hardening-one-go`
 
 Frozen qualified commit:
 
@@ -14,13 +16,23 @@ Stable alias:
 
 `release/sih26175-frozen-339bdf4`
 
-**Do not merge this qualification branch into production.** Run every real acceptance harness while the working checkout itself is at the frozen production SHA. The files on this branch are templates/runbooks only.
+**Do not merge this qualification branch into production.** Run real qualification while the working checkout itself remains at the frozen production SHA. RT5 is already closed on that source identity.
 
-## Closed already
+GitHub Actions are not required for the remaining work.
 
-RT5 full packaged engineering acceptance is closed on `339bdf...`. Do not rerun icon, Cargo, navbar, Tauri packaging architecture, or core engineering unless a remaining gate exposes a concrete reproducible defect.
+## Bootstrap without checking this branch out
 
-## Five remaining gates
+While the working checkout is still the frozen production branch:
+
+```bash
+cd /Users/amoghrb/Documents/depthwizard
+git fetch origin qualification/evidence-kit-339bdf4
+bash <(git show origin/qualification/evidence-kit-339bdf4:qualification/bootstrap_evidence_kit.sh)
+```
+
+The bootstrap materializes this operations kit under `/tmp` and leaves the repository clean.
+
+## Exactly five remaining gates
 
 1. `four_terrain_science`
 2. `operator_workstation`
@@ -28,58 +40,127 @@ RT5 full packaged engineering acceptance is closed on `339bdf...`. Do not rerun 
 4. `two_hour_stability`
 5. `clean_machine_standalone`
 
-## GitHub Actions
+## 1. Four-terrain science — automated path
 
-The final qualification does **not** depend on GitHub Actions. The remaining gates are inherently data/hardware/human evidence and must run on local/finale machines or a clean Mac.
+The evidence kit now contains a guarded end-to-end runner:
 
-## Four-terrain science
+`qualification/run_four_terrain_science_from_frozen_head.sh`
 
-Use `final-science-registry.template.yaml` and `final-science-predictions-draft.template.yaml` as scaffolding only. Replace every `FILL_ME` path with real licensed data before freezing.
+It performs:
 
-Minimum evidence roles:
+1. deterministic co-acquired NEON RGB/DSM selection and download for:
+   - CPER → sparse
+   - NIWO → hilly
+   - HARV → forested
+2. deterministic OrthoLoC training-lineage scene acquisition;
+3. frozen registry construction;
+4. fixed untouched ISPRS Potsdam scene policy:
+   - `2_14` → urban `test`
+   - `3_14` → `cross_sensor_test`
+5. production `DA3MONO-LARGE` reconstruction through the frozen CLI;
+6. independent Copernicus GLO-30 calibration evidence acquisition/mosaicking;
+7. metric DSM calibration;
+8. prediction/checkpoint/calibration-evidence SHA freeze;
+9. only after the freeze, independent reference evaluation;
+10. final four-terrain contract verification;
+11. SIH26175 completion checker refresh.
 
-- urban test: ISPRS Potsdam RGB + independent absolute DSM
-- sparse test: NEON CPER RGB + LiDAR DSM
-- hilly test: NEON NIWO RGB + LiDAR DSM
-- forested test: NEON HARV RGB + LiDAR DSM
-- >=1 genuine cross-sensor holdout
+The four Potsdam tiles previously consumed by DepthWizard external-v2 are hard-excluded:
 
-For every evaluated scene keep three sources independent:
+`2_10`, `3_13`, `5_11`, `6_14`
 
-1. RGB input
-2. coarse DEM or sparse GCP calibration evidence
-3. final independent DSM/LiDAR reference
+### Required local inputs
 
-Never derive calibration evidence by downsampling the final reference.
+NEON's download endpoint requires a personal API token. Keep it only in the shell:
 
-Mandatory ordering:
+```bash
+export NEON_API_TOKEN='YOUR_TOKEN'
+```
 
-1. freeze source head
-2. freeze registry and evaluation windows
-3. generate production metric DSM predictions without opening final references in the evaluator
-4. freeze prediction SHA-256 identities with `scripts/freeze_final_science_manifest.py`
-5. only then run `scripts/evaluate_final_science_campaign.py`
+Never commit that credential.
 
-Expected final files in `artifacts/final-science/`:
+The existing Potsdam root must contain official RGB + absolute DSM files for `2_14` and `3_14`:
 
-- `domain_generalization_report.json`
-- `terrain_breakdown.csv`
-- `scene_metrics.csv`
-- `sensor_breakdown.csv`
+`data/external/isprs-potsdam`
 
-## Two-hour stability
+The runner fails closed if those untouched files are missing.
 
-While checked out at the frozen production SHA, execute the helper from this branch without checking this branch out:
+### Reference-separation rule
+
+For every evaluated scene:
+
+1. RGB is the single-view input;
+2. Copernicus GLO-30 is calibration-only evidence;
+3. the ISPRS/NEON DSM is evaluation-only reference.
+
+The NEON downloader is intentionally reference-safe: it may download reference bytes but does not open or hash the DSM. `prepare_metric_predictions.py` never opens registry reference paths. `freeze_final_science_manifest.py` then freezes prediction/checkpoint/calibration identities. Only after that PASS does the final evaluator decode reference elevations.
+
+Expected output:
+
+`artifacts/final-science/domain_generalization_report.json`
+
+plus terrain, scene and sensor CSV reports.
+
+## 2. Operator workstation — real human-visible evidence
+
+Use:
+
+- `qualification/templates/operator-observation.yaml`
+- `qualification/build_operator_evidence.py`
+
+Every frozen operator check starts `observed: false`. The builder emits `PASS_SIH26175_OPERATOR_ACCEPTANCE` only when every required check is explicitly observed and has an evidence reference.
+
+Required coverage includes literal JPG/PNG/GeoTIFF behavior, optical/DSM views, 3D texture and analytical overlays, all camera modes, LOD, vertical exaggeration, probe/measure/profile, genuine urban structure height, independent validation/reference/residual, projection accuracy, export and relaunch/reopen.
+
+## 3. Sustained rendering — computed from real telemetry
+
+Use:
+
+- `qualification/templates/rendering-samples.example.csv`
+- `qualification/build_rendering_evidence.py`
+
+Required CSV columns:
+
+`elapsed_seconds,fps,camera_position,rendering_mode,navigating`
+
+The builder computes the statistics itself and refuses PASS unless:
+
+- duration ≥ 60 seconds;
+- sample count ≥ 55;
+- mean FPS ≥ 30;
+- p05 FPS ≥ 30;
+- navigation was exercised;
+- both `aerial` and `low` camera positions occurred;
+- both `texture` and `analytical_overlay` modes occurred.
+
+## 4. Two-hour stability — fully automated real packaged soak
+
+Run the existing guarded helper while checked out at the frozen production SHA:
 
 ```bash
 git fetch origin qualification/evidence-kit-339bdf4
 bash <(git show origin/qualification/evidence-kit-339bdf4:qualification/run_two_hour_soak_from_frozen_head.sh)
 ```
 
-That helper refuses to run unless HEAD is exactly `339bdf...` and the worktree is clean.
+It invokes the frozen `scripts/release_train_7_soak.py`. Only ≥7200 monitored healthy seconds earns `PASS_TWO_HOUR_PACKAGED_SOAK`.
 
-## Operator / FPS / clean-machine evidence
+## 5. Clean-machine standalone — real second-Mac evidence
 
-The JSON files under `qualification/templates/` are **pending templates only**. Never change their status to PASS unless the corresponding real evidence has been observed and recorded.
+Use on the clean Mac:
 
-The authoritative checker is still `scripts/check_sih26175_completion.py` on the frozen production commit.
+- `qualification/templates/clean-machine-observation.yaml`
+- `qualification/build_clean_machine_evidence.py`
+
+Every observation starts false. The builder requires all clean-machine behaviors to be explicitly true and computes a deterministic SHA-256 tree identity of the installed `DepthWizard.app` bundle before emitting `PASS_CLEAN_MACHINE_STANDALONE`.
+
+## Final staging
+
+After real operator, rendering and clean-machine evidence files exist, use:
+
+`qualification/stage_manual_evidence_from_frozen_head.sh`
+
+It first checks the frozen git identity and PASS literals, then copies the three evidence files to the authoritative artifact paths and runs `scripts/check_sih26175_completion.py` for full field-level validation.
+
+## Source-change lock
+
+Do not reopen icons, navbar, raw Cargo, Tauri packaging architecture, production estimator policy, or other core engineering unless one of the five remaining evidence gates exposes a concrete reproducible defect.
