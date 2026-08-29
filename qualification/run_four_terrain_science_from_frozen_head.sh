@@ -54,12 +54,11 @@ else
     echo "ERROR: final-science input preflight failed with unexpected status $rc" >&2
     exit "$rc"
   fi
-  printf '\n=== 0A/9 ACQUIRE TWO FRESH OFFICIAL POTSDAM PAIRS ===\n'
+  printf '\n=== 0A/9 SELECTIVELY ACQUIRE TWO FRESH OFFICIAL POTSDAM PAIRS ===\n'
   "$PY" "$KIT/qualification/download_potsdam_fresh_pairs_official.py" \
     --tile 2_14 \
     --tile 3_14 \
     --dataset-root "$REPO/data/external/isprs-potsdam" \
-    --cache-root "$REPO/workspace/final-science-data/potsdam-official-cache" \
     --report "$REPO/workspace/final-science-data/potsdam-acquisition.json"
   printf '\n=== 0B/9 RE-RUN METADATA-ONLY INPUT PREFLIGHT ===\n'
   run_preflight
