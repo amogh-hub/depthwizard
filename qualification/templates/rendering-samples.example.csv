@@ -1,0 +1,4 @@
+elapsed_seconds,fps,camera_position,rendering_mode,navigating
+0,60,aerial,texture,true
+1,60,aerial,texture,true
+2,60,low,analytical_overlay,true
