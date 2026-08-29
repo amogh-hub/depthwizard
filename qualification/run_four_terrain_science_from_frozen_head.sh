@@ -73,7 +73,7 @@ printf '\n=== 2/9 FREEZE SIX-SCENE REGISTRY (4 TEST TERRAINS + CROSS-SENSOR + TR
 "$PY" "$KIT/qualification/build_final_science_registry.py" \
   --repo "$REPO" \
   --neon-report workspace/final-science-data/neon-acquisition.json \
-  --preflight-report workspace/final-science-data/input-preflight.json \
+  --input-preflight workspace/final-science-data/input-preflight.json \
   --potsdam-root data/external/isprs-potsdam \
   --output workspace/final-science-data/frozen-registry.yaml \
   --report workspace/final-science-data/registry-freeze-report.json
