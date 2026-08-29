@@ -37,12 +37,18 @@ git archive "$QUAL_REF" qualification | tar -x -C "$KIT"
 
 PY="$REPO/.venv/bin/python"
 
-printf '\n=== 1/7 ACQUIRE CO-ACQUIRED NEON RGB + SEALED DSM REFERENCES ===\n'
-"$PY" "$KIT/qualification/download_neon_eval_tiles.py" \
+printf '\n=== 0/8 METADATA-ONLY INPUT PREFLIGHT ===\n'
+"$PY" "$KIT/qualification/preflight_four_terrain_inputs.py" \
+  --availability "$REPO/workspace/final-science-data/neon-availability.json" \
+  --potsdam-root "$REPO/data/external/isprs-potsdam" \
+  --report "$REPO/workspace/final-science-data/input-preflight.json"
+
+printf '\n=== 1/8 ACQUIRE FROZEN CO-ACQUIRED NEON RGB + SEALED DSM REFERENCES ===\n'
+"$PY" "$KIT/qualification/download_neon_eval_tiles_locked.py" \
   --output-root "$REPO/workspace/final-science-data/neon" \
   --report "$REPO/workspace/final-science-data/neon-acquisition.json"
 
-printf '\n=== 2/7 FREEZE SIX-SCENE REGISTRY (4 TEST TERRAINS + CROSS-SENSOR + TRAIN LINEAGE) ===\n'
+printf '\n=== 2/8 FREEZE SIX-SCENE REGISTRY (4 TEST TERRAINS + CROSS-SENSOR + TRAIN LINEAGE) ===\n'
 "$PY" "$KIT/qualification/build_final_science_registry.py" \
   --repo "$REPO" \
   --neon-report workspace/final-science-data/neon-acquisition.json \
@@ -50,7 +56,7 @@ printf '\n=== 2/7 FREEZE SIX-SCENE REGISTRY (4 TEST TERRAINS + CROSS-SENSOR + TR
   --output workspace/final-science-data/frozen-registry.yaml \
   --report workspace/final-science-data/registry-freeze-report.json
 
-printf '\n=== 3/7 GENERATE PRODUCTION DA3 METRIC DSMs WITHOUT OPENING REFERENCES ===\n'
+printf '\n=== 3/8 GENERATE PRODUCTION DA3 METRIC DSMs WITHOUT OPENING REFERENCES ===\n'
 "$PY" "$KIT/qualification/prepare_metric_predictions.py" \
   --repo "$REPO" \
   --registry workspace/final-science-data/frozen-registry.yaml \
@@ -58,7 +64,7 @@ printf '\n=== 3/7 GENERATE PRODUCTION DA3 METRIC DSMs WITHOUT OPENING REFERENCES
   --copdem-cache workspace/final-science-data/calibration/copdem-cache \
   --draft workspace/final-science-data/predictions-draft.yaml
 
-printf '\n=== 4/7 FREEZE CHECKPOINT / PREDICTION / CALIBRATION-EVIDENCE IDENTITIES ===\n'
+printf '\n=== 4/8 FREEZE CHECKPOINT / PREDICTION / CALIBRATION-EVIDENCE IDENTITIES ===\n'
 rm -f \
   "$REPO/workspace/final-science-data/frozen-predictions.yaml" \
   "$REPO/workspace/final-science-data/frozen-predictions-freeze-report.json"
@@ -82,14 +88,14 @@ assert p["reference_rasters_opened_or_hashed"] is False, p
 print("Prediction identity freeze: PASS")
 PY
 
-printf '\n=== 5/7 ONLY NOW EXPOSE INDEPENDENT REFERENCES TO FINAL EVALUATOR ===\n'
+printf '\n=== 5/8 ONLY NOW EXPOSE INDEPENDENT REFERENCES TO FINAL EVALUATOR ===\n'
 rm -rf "$REPO/artifacts/final-science"
 "$PY" "$REPO/scripts/evaluate_final_science_campaign.py" \
   "$REPO/workspace/final-science-data/frozen-registry.yaml" \
   "$REPO/workspace/final-science-data/frozen-predictions.yaml" \
   "$REPO/artifacts/final-science"
 
-printf '\n=== 6/7 VERIFY FOUR-TERRAIN REPORT CONTRACT ===\n'
+printf '\n=== 6/8 VERIFY FOUR-TERRAIN REPORT CONTRACT ===\n'
 REPORT="$REPO/artifacts/final-science/domain_generalization_report.json"
 "$PY" - "$REPORT" <<'PY'
 import json, math, sys
@@ -107,7 +113,7 @@ for name in ("urban", "sparse", "hilly", "forested"):
 print("Four-terrain science contract: PASS")
 PY
 
-printf '\n=== 7/7 REFRESH SIH26175 COMPLETION STATE ===\n'
+printf '\n=== 7/8 REFRESH SIH26175 COMPLETION STATE ===\n'
 "$PY" "$REPO/scripts/check_sih26175_completion.py"
 
 printf '\n============================================================\n'
