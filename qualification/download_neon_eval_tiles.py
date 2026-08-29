@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""Download one deterministic, co-acquired NEON RGB/DSM tile per final-science site.
+
+This helper is deliberately reference-safe. It uses only NEON metadata and filenames to
+select the paired tile, downloads the reference DSM bytes, but never opens or hashes the DSM.
+The final reference evaluator must remain the first code path that decodes reference heights.
+
+Required environment:
+  NEON_API_TOKEN   NEON Data API token (never written to disk or stdout)
+
+Default sites:
+  CPER -> sparse test
+  NIWO -> hilly test
+  HARV -> forested test
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import re
+import shutil
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from pyproj import Transformer
+
+API_BASE = "https://data.neonscience.org/api/v0"
+GRAPHQL_URL = "https://data.neonscience.org/graphql"
+RGB_PRODUCT = "DP3.30010.001"
+DSM_PRODUCT = "DP3.30024.001"
+DEFAULT_RELEASE = "RELEASE-2026"
+DEFAULT_SITES = {
+    "CPER": "sparse",
+    "NIWO": "hilly",
+    "HARV": "forested",
+}
+RGB_RE = re.compile(r"_(?P<easting>\d{5,8})_(?P<northing>\d{5,9})_image\.tif$", re.I)
+DSM_RE = re.compile(r"_(?P<easting>\d{5,8})_(?P<northing>\d{5,9})_DSM\.tif$", re.I)
+
+GRAPHQL_QUERY = r"""
+query Site($siteCode: String!) {
+  site(siteCode: $siteCode) {
+    siteCode
+    siteName
+    siteLatitude
+    siteLongitude
+    dataProducts {
+      dataProductCode
+      availableMonths
+      availableReleases {
+        release
+        availableMonths
+      }
+    }
+  }
+}
+"""
+
+
+class NeonEvidenceError(RuntimeError):
+    """NEON evidence acquisition contract violation."""
+
+
+def _request_json(url: str, *, token: str | None = None, payload: bytes | None = None) -> dict[str, Any]:
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "DepthWizard-SIH26175-evidence-kit/1",
+    }
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["X-API-Token"] = token
+    request = urllib.request.Request(url, data=payload, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:2000]
+        raise NeonEvidenceError(f"NEON HTTP {exc.code} for {url}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise NeonEvidenceError(f"NEON request failed for {url}: {exc}") from exc
+    decoded = json.loads(raw)
+    if not isinstance(decoded, dict):
+        raise NeonEvidenceError(f"NEON response root is not an object: {url}")
+    if decoded.get("errors"):
+        raise NeonEvidenceError(f"NEON API returned errors for {url}: {decoded['errors']!r}")
+    return decoded
+
+
+def _site_metadata(site: str) -> dict[str, Any]:
+    payload = json.dumps(
+        {"query": GRAPHQL_QUERY, "variables": {"siteCode": site}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    decoded = _request_json(GRAPHQL_URL, payload=payload)
+    data = decoded.get("data")
+    site_payload = data.get("site") if isinstance(data, dict) else None
+    if not isinstance(site_payload, dict):
+        raise NeonEvidenceError(f"{site}: NEON site metadata is unavailable")
+    return site_payload
+
+
+def _product_info(site_payload: dict[str, Any], code: str) -> dict[str, Any]:
+    products = site_payload.get("dataProducts")
+    if not isinstance(products, list):
+        raise NeonEvidenceError("NEON site metadata is missing dataProducts")
+    for product in products:
+        if isinstance(product, dict) and product.get("dataProductCode") == code:
+            return product
+    raise NeonEvidenceError(f"site has no availability for {code}")
+
+
+def _released_months(product: dict[str, Any], release: str) -> set[str]:
+    released = product.get("availableReleases")
+    if not isinstance(released, list):
+        return set()
+    for item in released:
+        if not isinstance(item, dict) or item.get("release") != release:
+            continue
+        months = item.get("availableMonths")
+        if isinstance(months, list):
+            return {str(month) for month in months if isinstance(month, str)}
+    return set()
+
+
+def _choose_month(site_payload: dict[str, Any], release: str) -> str:
+    rgb = _product_info(site_payload, RGB_PRODUCT)
+    dsm = _product_info(site_payload, DSM_PRODUCT)
+    rgb_release = _released_months(rgb, release)
+    dsm_release = _released_months(dsm, release)
+    common_release = sorted(rgb_release & dsm_release)
+    if common_release:
+        return common_release[-1]
+
+    def all_months(product: dict[str, Any]) -> set[str]:
+        value = product.get("availableMonths")
+        if not isinstance(value, list):
+            return set()
+        return {str(month) for month in value if isinstance(month, str)}
+
+    common = sorted(all_months(rgb) & all_months(dsm))
+    if not common:
+        raise NeonEvidenceError("no common RGB/LiDAR acquisition month exists")
+    return common[-1]
+
+
+def _file_list(product: str, site: str, month: str, release: str, token: str) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode({"package": "basic", "release": release})
+    url = f"{API_BASE}/data/{product}/{site}/{month}?{query}"
+    payload = _request_json(url, token=token)
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise NeonEvidenceError(f"{product} {site} {month}: response is missing data")
+    files = data.get("files")
+    if not isinstance(files, list):
+        raise NeonEvidenceError(f"{product} {site} {month}: response is missing files")
+    return [item for item in files if isinstance(item, dict)]
+
+
+def _file_name(item: dict[str, Any]) -> str | None:
+    for key in ("name", "fileName", "filename"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return Path(value).name
+    return None
+
+
+def _file_url(item: dict[str, Any]) -> str | None:
+    for key in ("url", "fileUrl", "downloadUrl"):
+        value = item.get(key)
+        if isinstance(value, str) and value.startswith(("https://", "http://")):
+            return value
+    return None
+
+
+def _file_size(item: dict[str, Any]) -> int | None:
+    for key in ("size", "fileSize", "sizeBytes"):
+        value = item.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
+def _coord_index(files: list[dict[str, Any]], regex: re.Pattern[str]) -> dict[tuple[int, int], dict[str, Any]]:
+    result: dict[tuple[int, int], dict[str, Any]] = {}
+    for item in files:
+        name = _file_name(item)
+        if name is None:
+            continue
+        match = regex.search(name)
+        if match is None:
+            continue
+        key = (int(match.group("easting")), int(match.group("northing")))
+        if key in result:
+            raise NeonEvidenceError(f"duplicate NEON raster coordinate in response: {key}")
+        result[key] = item
+    return result
+
+
+def _utm_epsg(latitude: float, longitude: float) -> int:
+    zone = int(math.floor((longitude + 180.0) / 6.0)) + 1
+    zone = max(1, min(60, zone))
+    return (32600 if latitude >= 0.0 else 32700) + zone
+
+
+def _select_pair(
+    *,
+    rgb_files: list[dict[str, Any]],
+    dsm_files: list[dict[str, Any]],
+    latitude: float,
+    longitude: float,
+) -> tuple[tuple[int, int], dict[str, Any], dict[str, Any], int]:
+    rgb = _coord_index(rgb_files, RGB_RE)
+    dsm = _coord_index(dsm_files, DSM_RE)
+    common = sorted(set(rgb) & set(dsm))
+    if not common:
+        raise NeonEvidenceError("NEON RGB and DSM responses contain no common 1 km tile coordinate")
+    epsg = _utm_epsg(latitude, longitude)
+    transformer = Transformer.from_crs(4326, epsg, always_xy=True)
+    site_e, site_n = transformer.transform(longitude, latitude)
+    selected = min(
+        common,
+        key=lambda coord: (coord[0] + 500.0 - site_e) ** 2 + (coord[1] + 500.0 - site_n) ** 2,
+    )
+    return selected, rgb[selected], dsm[selected], epsg
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download(item: dict[str, Any], destination: Path, token: str) -> dict[str, Any]:
+    name = _file_name(item)
+    url = _file_url(item)
+    if name is None or url is None:
+        raise NeonEvidenceError("NEON file entry is missing name/url")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file() and destination.stat().st_size > 0:
+        return {"path": str(destination.resolve()), "bytes": destination.stat().st_size, "reused": True}
+    tmp = destination.with_suffix(destination.suffix + ".part")
+    tmp.unlink(missing_ok=True)
+    headers = {"User-Agent": "DepthWizard-SIH26175-evidence-kit/1"}
+    if urllib.parse.urlparse(url).netloc.endswith("neonscience.org"):
+        headers["X-API-Token"] = token
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response, tmp.open("wb") as output:
+            shutil.copyfileobj(response, output, length=1024 * 1024)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    if not tmp.is_file() or tmp.stat().st_size <= 0:
+        tmp.unlink(missing_ok=True)
+        raise NeonEvidenceError(f"download produced an empty file: {name}")
+    expected = _file_size(item)
+    if expected is not None and tmp.stat().st_size != expected:
+        actual = tmp.stat().st_size
+        tmp.unlink(missing_ok=True)
+        raise NeonEvidenceError(f"download size mismatch for {name}: expected={expected}, actual={actual}")
+    tmp.replace(destination)
+    return {"path": str(destination.resolve()), "bytes": destination.stat().st_size, "reused": False}
+
+
+def _number(value: object, context: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise NeonEvidenceError(f"{context} is missing or non-numeric")
+    return float(value)
+
+
+def acquire_site(site: str, terrain: str, release: str, root: Path, token: str) -> dict[str, Any]:
+    metadata = _site_metadata(site)
+    month = _choose_month(metadata, release)
+    latitude = _number(metadata.get("siteLatitude"), f"{site}.siteLatitude")
+    longitude = _number(metadata.get("siteLongitude"), f"{site}.siteLongitude")
+    rgb_files = _file_list(RGB_PRODUCT, site, month, release, token)
+    dsm_files = _file_list(DSM_PRODUCT, site, month, release, token)
+    coord, rgb_item, dsm_item, epsg = _select_pair(
+        rgb_files=rgb_files,
+        dsm_files=dsm_files,
+        latitude=latitude,
+        longitude=longitude,
+    )
+    easting, northing = coord
+    scene_dir = root / site / month / f"{easting}_{northing}"
+    rgb_name = _file_name(rgb_item)
+    dsm_name = _file_name(dsm_item)
+    assert rgb_name is not None and dsm_name is not None
+    rgb_download = _download(rgb_item, scene_dir / "rgb" / rgb_name, token)
+    dsm_download = _download(dsm_item, scene_dir / "reference-sealed" / dsm_name, token)
+    rgb_path = Path(str(rgb_download["path"]))
+    dsm_path = Path(str(dsm_download["path"]))
+    return {
+        "site": site,
+        "site_name": metadata.get("siteName"),
+        "terrain": terrain,
+        "release": release,
+        "month": month,
+        "site_latitude": latitude,
+        "site_longitude": longitude,
+        "selected_tile": {"easting": easting, "northing": northing, "utm_epsg": epsg},
+        "rgb_product": RGB_PRODUCT,
+        "reference_product": DSM_PRODUCT,
+        "rgb": {
+            **rgb_download,
+            "filename": rgb_name,
+            "sha256": _sha256(rgb_path),
+        },
+        "reference": {
+            **dsm_download,
+            "filename": dsm_name,
+            "sha256": None,
+            "opened_or_hashed": False,
+            "claim_boundary": "Reference bytes downloaded only; elevation values were not opened and SHA-256 was intentionally not computed before prediction freeze.",
+        },
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Acquire deterministic NEON RGB/DSM final-science tiles.")
+    parser.add_argument("--output-root", type=Path, default=Path("workspace/final-science-data/neon"))
+    parser.add_argument("--release", default=DEFAULT_RELEASE)
+    parser.add_argument(
+        "--site",
+        action="append",
+        help="Optional four-letter site code. Repeatable. Defaults to CPER, NIWO, HARV.",
+    )
+    parser.add_argument("--report", type=Path, default=Path("workspace/final-science-data/neon-acquisition.json"))
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    token = os.environ.get("NEON_API_TOKEN", "").strip()
+    if not token:
+        raise SystemExit("NEON_API_TOKEN is required. Create it in the NEON portal and export it only in your shell; never commit it.")
+    sites = args.site or list(DEFAULT_SITES)
+    unique_sites = list(dict.fromkeys(site.strip().upper() for site in sites))
+    output: list[dict[str, Any]] = []
+    for site in unique_sites:
+        if len(site) != 4 or not site.isalnum():
+            raise SystemExit(f"invalid NEON site code: {site!r}")
+        terrain = DEFAULT_SITES.get(site)
+        if terrain is None:
+            raise SystemExit(f"site {site!r} has no frozen terrain assignment; allowed={sorted(DEFAULT_SITES)}")
+        print(f"Acquiring {site} ({terrain}) ...", file=sys.stderr)
+        output.append(acquire_site(site, terrain, args.release, args.output_root, token))
+    report = {
+        "schema_version": 1,
+        "status": "PASS_NEON_FINAL_SCIENCE_ACQUISITION",
+        "reference_values_opened_or_hashed": False,
+        "release": args.release,
+        "scenes": output,
+    }
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({"status": report["status"], "report": str(args.report), "scene_count": len(output)}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
