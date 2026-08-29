@@ -42,32 +42,35 @@ The bootstrap materializes this operations kit under `/tmp` and leaves the repos
 
 ## 1. Four-terrain science — automated path
 
-The evidence kit now contains a guarded end-to-end runner:
+The evidence kit contains a guarded end-to-end runner:
 
 `qualification/run_four_terrain_science_from_frozen_head.sh`
 
 It performs:
 
-1. deterministic co-acquired NEON RGB/DSM selection and download for:
-   - CPER → sparse
-   - NIWO → hilly
-   - HARV → forested
-2. deterministic OrthoLoC training-lineage scene acquisition;
-3. frozen registry construction;
-4. fixed untouched ISPRS Potsdam scene policy:
-   - `2_14` → urban `test`
-   - `3_14` → `cross_sensor_test`
-5. production `DA3MONO-LARGE` reconstruction through the frozen CLI;
-6. independent Copernicus GLO-30 calibration evidence acquisition/mosaicking;
-7. metric DSM calibration;
-8. prediction/checkpoint/calibration-evidence SHA freeze;
-9. only after the freeze, independent reference evaluation;
-10. final four-terrain contract verification;
-11. SIH26175 completion checker refresh.
+1. metadata-only input preflight;
+2. deterministic co-acquired NEON RGB/DSM selection and download for:
+   - CPER `2024-06` RELEASE-2026 → sparse;
+   - NIWO `2024-07` RELEASE-2026 → hilly;
+   - HARV `2024-08` RELEASE-2026 → forested;
+3. deterministic OrthoLoC training-lineage scene acquisition;
+4. frozen registry construction;
+5. deterministic selection of two valid, unused local ISPRS Potsdam RGB/DSM pairs:
+   - first pair → urban `test`;
+   - second pair → `cross_sensor_test`;
+6. production `DA3MONO-LARGE` reconstruction through the frozen CLI;
+7. independent Copernicus GLO-30 calibration evidence acquisition/mosaicking;
+8. metric DSM calibration;
+9. prediction/checkpoint/calibration-evidence SHA freeze;
+10. only after the freeze, independent reference evaluation;
+11. final four-terrain contract verification;
+12. SIH26175 completion checker refresh.
 
 The four Potsdam tiles previously consumed by DepthWizard external-v2 are hard-excluded:
 
 `2_10`, `3_13`, `5_11`, `6_14`
+
+The preflight prefers `2_14` and `3_14` when both are already present and valid. Otherwise it deterministically chooses the first two other valid unused official RGB/DSM pairs already available locally. It never decodes reference DSM heights during selection.
 
 ### Required local inputs
 
@@ -79,11 +82,13 @@ export NEON_API_TOKEN='YOUR_TOKEN'
 
 Never commit that credential.
 
-The existing Potsdam root must contain official RGB + absolute DSM files for `2_14` and `3_14`:
+The Potsdam root is:
 
 `data/external/isprs-potsdam`
 
-The runner fails closed if those untouched files are missing.
+It must contain at least two valid official RGB + absolute DSM tile pairs that are not among the four consumed historical tiles. If fewer than two exist, the preflight exits with a compact inventory so additional official Potsdam data can be acquired without guessing.
+
+Official source: ISPRS Urban Semantic Labelling Benchmark Potsdam share. ISPRS states that Potsdam contains 38 5 cm TOP/DSM patches on the same UTM WGS84 grid and that full reference data are available through the official Seafile download.
 
 ### Reference-separation rule
 
