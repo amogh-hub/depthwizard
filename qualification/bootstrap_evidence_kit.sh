@@ -44,7 +44,11 @@ Useful commands:
   # Resolve public NEON common acquisitions (metadata only)
   $REPO/.venv/bin/python $KIT/qualification/neon_common_acquisitions.py
 
-  # Four-terrain science (requires NEON_API_TOKEN and unused Potsdam 2_14 + 3_14 files)
+  # Probe the official Potsdam file share without a full download
+  $REPO/.venv/bin/python $KIT/qualification/download_potsdam_fresh_pairs_official.py --inventory-only
+
+  # Four-terrain science (requires NEON_API_TOKEN and two valid unused Potsdam pairs;
+  # the official acquisition helper can obtain 2_14 + 3_14 when absent)
   bash $KIT/qualification/run_four_terrain_science_from_frozen_head.sh
 
   # Full qualifying two-hour packaged soak
