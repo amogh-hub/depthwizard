@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "status": "PENDING_CLEAN_MACHINE_STANDALONE",
+  "git_head": "339bdf485149f552db846543b9e09377b567c19c",
+  "application_sha256": "",
+  "packaged_app_launch": false,
+  "no_user_visible_terminal": false,
+  "owned_sidecar_boot": false,
+  "offline_after_model_install": false,
+  "end_to_end_reconstruction": false,
+  "metric_calibration": false,
+  "terrain_3d": false,
+  "export_and_reopen": false,
+  "evidence": [],
+  "notes": "Run on a genuinely clean/suitably isolated Mac. Do not set PASS until each field is directly observed and the exact packaged application identity is recorded."
+}
