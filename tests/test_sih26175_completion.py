@@ -171,7 +171,9 @@ def test_completion_gate_rejects_missing_operator_evidence(
     report = completion.evaluate_completion(head=HEAD, repo_clean=True, **paths)
 
     assert report["status"] == "INCOMPLETE_SIH26175_PROBLEM_STATEMENT"
-    assert "operator_workstation" in report["blocking_gates"]
+    blocking_gates = report["blocking_gates"]
+    assert isinstance(blocking_gates, list)
+    assert "operator_workstation" in blocking_gates
 
 
 def test_completion_gate_rejects_unreported_correlation(tmp_path: Path) -> None:
