@@ -4,8 +4,9 @@ import argparse
 import json
 import math
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "artifacts" / "acceptance" / "sih26175"
