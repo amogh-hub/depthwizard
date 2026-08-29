@@ -1,0 +1,29 @@
+schema_version: 1
+model_id: calibrated-da3-production
+checkpoint_path: FILL_ME/model/checkpoint-or-frozen-model-identity-file
+predictions:
+  - scene_id: urban-potsdam-01
+    prediction_path: FILL_ME/predictions/urban-potsdam-01-dsm.tif
+    calibration_evidence_paths:
+      - FILL_ME/calibration/urban-potsdam-01-independent-coarse-dem.tif
+    notes: Final reference DSM must not be opened by the evaluator before this prediction identity is frozen.
+
+  - scene_id: sparse-cper-01
+    prediction_path: FILL_ME/predictions/sparse-cper-01-dsm.tif
+    calibration_evidence_paths:
+      - FILL_ME/calibration/sparse-cper-01-independent-coarse-dem.tif
+
+  - scene_id: hilly-niwo-01
+    prediction_path: FILL_ME/predictions/hilly-niwo-01-dsm.tif
+    calibration_evidence_paths:
+      - FILL_ME/calibration/hilly-niwo-01-independent-coarse-dem.tif
+
+  - scene_id: forested-harv-01
+    prediction_path: FILL_ME/predictions/forested-harv-01-dsm.tif
+    calibration_evidence_paths:
+      - FILL_ME/calibration/forested-harv-01-independent-coarse-dem.tif
+
+  - scene_id: cross-vaihingen-01
+    prediction_path: FILL_ME/predictions/cross-vaihingen-01-dsm.tif
+    calibration_evidence_paths:
+      - FILL_ME/calibration/cross-vaihingen-01-independent-coarse-dem.tif
