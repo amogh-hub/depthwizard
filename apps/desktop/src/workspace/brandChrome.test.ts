@@ -27,18 +27,27 @@ describe("DepthWizard product identity chrome", () => {
     expect(brand).toBeGreaterThan(finalChrome);
   });
 
-  it("uses the product mark for web and the complete packaged application icon family", () => {
+  it("keeps raw Cargo compile-safe while packaging the complete generated icon family", () => {
     const html = source("../../index.html");
     const tauri = JSON.parse(source("../../src-tauri/tauri.conf.json")) as {
       bundle?: { icon?: string[] };
     };
-    const icons = tauri.bundle?.icon ?? [];
+    const baseIcons = tauri.bundle?.icon ?? [];
+    const wrapper = source("../../scripts/tauri-with-macos-icon.sh");
 
     expect(html).toContain('href=\"/depthwizard-mark.png\"');
-    expect(icons).toContain("icons/32x32.png");
-    expect(icons).toContain("icons/128x128.png");
-    expect(icons).toContain("icons/128x128@2x.png");
-    expect(icons).toContain("icons/icon.icns");
-    expect(icons).toContain("icons/icon.ico");
+
+    // Raw cargo fmt/clippy/test must be able to compile from a clean checkout.
+    expect(baseIcons).toEqual(["icons/icon.png"]);
+
+    // Actual Tauri packaging generates and injects the full Retina/native family.
+    expect(wrapper).toContain('"32x32.png"');
+    expect(wrapper).toContain('"128x128.png"');
+    expect(wrapper).toContain('"128x128@2x.png"');
+    expect(wrapper).toContain('"icon.icns"');
+    expect(wrapper).toContain('"icon.ico"');
+    expect(wrapper).toContain("tauri.bundle-icons.conf.json");
+    expect(wrapper).toContain('build --config "$BUNDLE_OVERRIDE"');
+    expect(wrapper).toContain("raw Cargo uses tracked icons/icon.png");
   });
 });
