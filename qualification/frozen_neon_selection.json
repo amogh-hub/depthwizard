@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "selection_policy": "newest_common_non_provisional_RELEASE-2026_acquisition_observed_2026-08-29",
+  "rgb_product": "DP3.30010.001",
+  "dsm_product": "DP3.30024.001",
+  "release": "RELEASE-2026",
+  "sites": {
+    "CPER": {
+      "terrain": "sparse",
+      "month": "2024-06"
+    },
+    "NIWO": {
+      "terrain": "hilly",
+      "month": "2024-07"
+    },
+    "HARV": {
+      "terrain": "forested",
+      "month": "2024-08",
+      "note": "2025-08 was PROVISIONAL and is intentionally excluded"
+    }
+  }
+}
