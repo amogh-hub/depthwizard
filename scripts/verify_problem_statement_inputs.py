@@ -4,10 +4,10 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import rasterio
+from PIL import Image
 from rasterio.transform import from_origin
 
 from depthwizard.io.raster import inspect_raster, read_rgb
@@ -44,26 +44,24 @@ def _rgb_fixture() -> np.ndarray:
     ).astype(np.uint8)
 
 
-def _write_rgb(
-    path: Path,
-    *,
-    driver: str,
-    georeferenced: bool,
-) -> None:
+def _write_non_georeferenced_rgb(path: Path, *, image_format: str) -> None:
+    data = np.moveaxis(_rgb_fixture(), 0, -1)
+    Image.fromarray(data, mode="RGB").save(path, format=image_format)
+
+
+def _write_georeferenced_tiff(path: Path) -> None:
     data = _rgb_fixture()
-    kwargs: dict[str, Any] = {
-        "driver": driver,
-        "height": data.shape[1],
-        "width": data.shape[2],
-        "count": 3,
-        "dtype": "uint8",
-    }
-    if georeferenced:
-        kwargs.update(
-            crs="EPSG:32643",
-            transform=from_origin(500000.0, 1400000.0, 2.0, 2.0),
-        )
-    with rasterio.open(path, "w", **kwargs) as dst:
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=data.shape[1],
+        width=data.shape[2],
+        count=3,
+        dtype="uint8",
+        crs="EPSG:32643",
+        transform=from_origin(500000.0, 1400000.0, 2.0, 2.0),
+    ) as dst:
         dst.write(data)
 
 
@@ -135,9 +133,9 @@ def run_input_format_qualification(output_dir: Path = DEFAULT_OUTPUT_DIR) -> dic
     png_path = fixture_dir / "single-view-rgb.png"
     jpg_path = fixture_dir / "single-view-rgb.jpg"
     tiff_path = fixture_dir / "single-view-rgb.tiff"
-    _write_rgb(png_path, driver="PNG", georeferenced=False)
-    _write_rgb(jpg_path, driver="JPEG", georeferenced=False)
-    _write_rgb(tiff_path, driver="GTiff", georeferenced=True)
+    _write_non_georeferenced_rgb(png_path, image_format="PNG")
+    _write_non_georeferenced_rgb(jpg_path, image_format="JPEG")
+    _write_georeferenced_tiff(tiff_path)
 
     formats = {
         "png": _assert_non_georeferenced(png_path, label="PNG"),
