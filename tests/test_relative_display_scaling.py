@@ -116,7 +116,10 @@ def test_rdsm_mesh_has_visible_relief_without_mutating_raw_semantics(tmp_path: P
     assert report.surface_product == "rdsm"
     assert report.horizontal_units == "px"
     assert report.vertical_units == "relative"
-    assert report.relief == raw_relief
+    # The report computes the difference after promoting persisted float32 samples to float64,
+    # while this fixture's NumPy subtraction is rounded in float32. They must agree to float32
+    # precision; bit-exact equality would test arithmetic implementation rather than semantics.
+    assert np.isclose(report.relief, raw_relief, rtol=1e-6, atol=1e-7)
     assert "display_normalized_z" in report.semantics
 
     manifest = ProjectManifest.load(project_dir)
