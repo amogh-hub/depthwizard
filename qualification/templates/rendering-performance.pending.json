@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "status": "PENDING_SUSTAINED_3D_PERFORMANCE",
+  "git_head": "339bdf485149f552db846543b9e09377b567c19c",
+  "duration_seconds": 0.0,
+  "sample_count": 0,
+  "mean_fps": 0.0,
+  "p05_fps": 0.0,
+  "navigation_exercised": false,
+  "camera_positions": [],
+  "rendering_modes": [],
+  "evidence": [],
+  "notes": "PASS requires >=60 s, >=55 one-second samples, mean FPS >=30, p05 FPS >=30, navigation exercised, aerial+low camera positions, and texture+analytical_overlay rendering. Do not promote to PASS without measured evidence."
+}
