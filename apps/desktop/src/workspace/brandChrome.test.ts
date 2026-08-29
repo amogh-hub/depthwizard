@@ -27,10 +27,18 @@ describe("DepthWizard product identity chrome", () => {
     expect(brand).toBeGreaterThan(finalChrome);
   });
 
-  it("uses the product mark for web and packaged application identity", () => {
+  it("uses the product mark for web and the complete packaged application icon family", () => {
     const html = source("../../index.html");
-    const tauri = source("../../src-tauri/tauri.conf.json");
+    const tauri = JSON.parse(source("../../src-tauri/tauri.conf.json")) as {
+      bundle?: { icon?: string[] };
+    };
+    const icons = tauri.bundle?.icon ?? [];
+
     expect(html).toContain('href=\"/depthwizard-mark.png\"');
-    expect(tauri).toContain('\"icons/icon.png\"');
+    expect(icons).toContain("icons/32x32.png");
+    expect(icons).toContain("icons/128x128.png");
+    expect(icons).toContain("icons/128x128@2x.png");
+    expect(icons).toContain("icons/icon.icns");
+    expect(icons).toContain("icons/icon.ico");
   });
 });
