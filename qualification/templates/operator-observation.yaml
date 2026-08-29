@@ -1,0 +1,31 @@
+finale_hardware: FILL_ME
+session_evidence:
+  - FILL_ME
+checks:
+  geo_tiff_metric_dsm: {observed: false, evidence: [], notes: ""}
+  nongeo_png_rdsm: {observed: false, evidence: [], notes: ""}
+  nongeo_jpg_rdsm: {observed: false, evidence: [], notes: ""}
+  optical_source_view: {observed: false, evidence: [], notes: ""}
+  dsm_view: {observed: false, evidence: [], notes: ""}
+  texture_projection_3d: {observed: false, evidence: [], notes: ""}
+  dsm_overlay_3d: {observed: false, evidence: [], notes: ""}
+  slope_overlay_3d: {observed: false, evidence: [], notes: ""}
+  hillshade_3d: {observed: false, evidence: [], notes: ""}
+  contours_3d: {observed: false, evidence: [], notes: ""}
+  orbit_navigation: {observed: false, evidence: [], notes: ""}
+  fly_navigation: {observed: false, evidence: [], notes: ""}
+  first_person_navigation: {observed: false, evidence: [], notes: ""}
+  top_down_navigation: {observed: false, evidence: [], notes: ""}
+  deterministic_flythrough: {observed: false, evidence: [], notes: ""}
+  auto_and_manual_lod: {observed: false, evidence: [], notes: ""}
+  vertical_exaggeration: {observed: false, evidence: [], notes: ""}
+  probe_3d: {observed: false, evidence: [], notes: ""}
+  measure_3d: {observed: false, evidence: [], notes: ""}
+  profile_3d: {observed: false, evidence: [], notes: ""}
+  structure_height_urban: {observed: false, evidence: [], notes: ""}
+  reference_validation_independent: {observed: false, evidence: [], notes: ""}
+  reference_view: {observed: false, evidence: [], notes: ""}
+  residual_view: {observed: false, evidence: [], notes: ""}
+  projection_accuracy_visual: {observed: false, evidence: [], notes: ""}
+  export_bundle: {observed: false, evidence: [], notes: ""}
+  relaunch_reopen: {observed: false, evidence: [], notes: ""}
