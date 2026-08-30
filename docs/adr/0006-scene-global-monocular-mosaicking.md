@@ -22,7 +22,7 @@ mosaic imprint.
 
 1. DA3 tile inference returns **affine-preserving height evidence** (`-depth`) rather than a tile-local
    dimensionless normalization.
-2. Overlap harmonization operates on that affine evidence before any scene-relative clipping or scaling.
+2. Overlap harmonization operates on that affine evidence before any scene-relative scaling.
 3. Full affine tile scaling is treated as a high-risk correction. It is accepted only when:
    - overlap support is sufficient;
    - both overlap fields contain robust variation;
@@ -30,8 +30,9 @@ mosaic imprint.
    - the fitted scale remains within [0.25, 4.0]; and
    - affine correction improves median overlap error by at least 10% over offset-only alignment.
    Otherwise, only the robust median offset is applied.
-4. After all tiles are harmonized and feather-blended, one P01-P99 normalization defines the
-   dimensionless relative-height convention for the complete scene.
+4. After all tiles are harmonized and feather-blended, one **unclipped affine** P01-P99 normalization
+   defines the dimensionless relative-height convention for the complete scene. P01 maps to 0 and P99
+   maps to 1, while scientifically real extrema remain below 0 or above 1 rather than being flattened.
 5. A near-constant assembled scene remains flat. The normalizer must never manufacture relief when the
    robust scene span is effectively zero.
 6. Metric calibration remains downstream and unchanged. The reference DSM remains evaluation-only and
@@ -42,6 +43,8 @@ mosaic imprint.
 
 - Higher relative-height values continue to mean surfaces closer to the nadir camera / higher terrain.
 - rDSM remains dimensionless and makes no metre claim before evidence calibration.
+- Robust scene normalization establishes only an affine convention; it must not clip structural
+  extrema. Display renderers may clip robustly for visualization without modifying the scientific raster.
 - DEM/GCP calibration remains the only path to metric elevation.
 - RGB radiometric normalization remains scene-global and independent of elevation normalization.
 - Confidence remains model-native and is not represented as a calibrated probability.
