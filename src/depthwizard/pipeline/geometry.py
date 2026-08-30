@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.io import DatasetReader
 from rasterio.windows import Window
 
 from depthwizard.calibration.robust import robust_affine_calibration
@@ -173,7 +174,7 @@ def _bool_metadata(prediction: GeometryPriorOutput, key: str) -> bool:
 
 
 def _infer_tile(
-    src: rasterio.io.DatasetReader,
+    src: DatasetReader,
     tile: TileWindow,
     prior: GeometryPrior,
     stats: RGBNormalizationStats,
@@ -211,7 +212,7 @@ def _validate_prediction_contract(
 
 
 def _assemble_lattice(
-    src: rasterio.io.DatasetReader,
+    src: DatasetReader,
     tiles: list[TileWindow],
     prior: GeometryPrior,
     stats: RGBNormalizationStats,
