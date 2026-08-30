@@ -139,15 +139,23 @@ def test_rdsm_mesh_has_visible_relief_without_mutating_raw_semantics(tmp_path: P
     assert displayed_relief / shorter_horizontal <= 0.25
 
 
-def test_relative_hillshade_uses_display_scale_without_claiming_slope(tmp_path: Path) -> None:
+def test_relative_hillshade_is_readable_without_claiming_physical_slope(tmp_path: Path) -> None:
     project_dir, _raw_rdsm = _relative_project(tmp_path)
     rdsm_path = ProjectManifest.load(project_dir).artifact_path("rdsm")
     assert rdsm_path is not None
 
     raw = _hillshade_rgb(rdsm_path, max_side=512, relative_surface=False)
     normalized = _hillshade_rgb(rdsm_path, max_side=512, relative_surface=True)
-    raw_dynamic_range = int(np.ptp(raw[..., 0].astype(np.int16)))
-    normalized_dynamic_range = int(np.ptp(normalized[..., 0].astype(np.int16)))
+    raw_gray = raw[..., 0].astype(np.float64)
+    normalized_gray = normalized[..., 0].astype(np.float64)
+    raw_dynamic_range = float(np.ptp(raw_gray))
+    normalized_dynamic_range = float(np.ptp(normalized_gray))
+    p02, median, p98 = np.percentile(normalized_gray, [2.0, 50.0, 98.0])
 
+    # The old relative path technically gained a few grayscale levels but still clustered almost
+    # entirely near white. Require a genuinely readable shadow/highlight distribution instead.
     assert normalized_dynamic_range > raw_dynamic_range
-    assert normalized_dynamic_range >= 20
+    assert normalized_dynamic_range >= 180.0
+    assert p02 <= 50.0
+    assert 80.0 <= median <= 190.0
+    assert p98 >= 225.0
