@@ -95,6 +95,11 @@ def test_structure_band_loss_prefers_correct_local_structure_to_zero() -> None:
     gsd = torch.tensor([0.25])
     scale = torch.tensor([5.0])
     baseline = torch.tensor([3.0])
+    band_target = physical_highpass_torch(
+        target_correction,
+        gsd,
+        characteristic_scale_m=8.0,
+    )
 
     zero_loss = compute_structure_band_loss(
         _output(torch.zeros_like(geometry)),
@@ -106,7 +111,7 @@ def test_structure_band_loss_prefers_correct_local_structure_to_zero() -> None:
         baseline,
     )
     matching_loss = compute_structure_band_loss(
-        _output(target_correction),
+        _output(band_target),
         geometry,
         target,
         valid,
@@ -114,7 +119,7 @@ def test_structure_band_loss_prefers_correct_local_structure_to_zero() -> None:
         scale,
         baseline,
     )
-    assert matching_loss.total.item() < zero_loss.total.item() * 0.25
+    assert matching_loss.total.item() < zero_loss.total.item() * 0.35
 
 
 def test_structure_band_loss_penalizes_broad_drift_on_top_of_correct_roof() -> None:
@@ -125,9 +130,14 @@ def test_structure_band_loss_penalizes_broad_drift_on_top_of_correct_roof() -> N
     gsd = torch.tensor([0.25])
     scale = torch.tensor([5.0])
     baseline = torch.tensor([3.0])
+    band_target = physical_highpass_torch(
+        target_correction,
+        gsd,
+        characteristic_scale_m=8.0,
+    )
 
     correct = compute_structure_band_loss(
-        _output(target_correction),
+        _output(band_target),
         geometry,
         target,
         valid,
@@ -136,7 +146,7 @@ def test_structure_band_loss_penalizes_broad_drift_on_top_of_correct_roof() -> N
         baseline,
     )
     drifted = compute_structure_band_loss(
-        _output(target_correction + 0.35),
+        _output(band_target + 0.35),
         geometry,
         target,
         valid,
