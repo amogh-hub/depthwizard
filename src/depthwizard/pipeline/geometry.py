@@ -222,7 +222,7 @@ def infer_geometry_scene(
                 False,
             )
             if not isinstance(requested_scene_normalization, bool):
-                raise ValueError(
+                raise TypeError(
                     f"geometry prior metadata {_SCENE_NORMALIZE_METADATA_KEY!r} must be boolean"
                 )
             if scene_normalization_required is None:
