@@ -8,7 +8,8 @@ checkpoint_file: model.safetensors
 checkpoint_sha256: 7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960
 license: Apache-2.0
 output_interpretation: affine_relative_surface_height_evidence_then_scene_global_dimensionless_normalization
-mosaic_normalization_policy: scene_global_p01_p99_after_overlap_harmonization
+mosaic_normalization_policy: scene_global_unclipped_affine_p01_p99_after_overlap_harmonization
+scene_extrema_clipped: false
 tile_local_height_normalization: forbidden
 confidence_interpretation: model_native_confidence_not_probability_calibrated
 metric_elevation_claim: false
@@ -33,4 +34,6 @@ claim_boundary: >-
   DA3MONO-LARGE is the production relative-geometry prior. It is not an absolute satellite-height
   oracle; metric elevation is produced only by DepthWizard evidence calibration. Tiled inference
   preserves affine depth evidence through overlap harmonization and defines the dimensionless
-  relative-height convention only once on the assembled scene.
+  relative-height convention only once on the assembled scene. Scene P01/P99 set a robust affine
+  origin/scale but scientific extrema are retained rather than clipped; display layers may clip only
+  for visualization.
