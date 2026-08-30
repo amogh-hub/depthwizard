@@ -1,7 +1,7 @@
 diff --git a/scripts/train_urban_structure_v6.py b/scripts/train_urban_structure_v6.py
 --- a/scripts/train_urban_structure_v6.py
 +++ b/scripts/train_urban_structure_v6.py
-@@ -3,9 +3,11 @@ from __future__ import annotations
+@@ -3,11 +3,13 @@ from __future__ import annotations
  import json
  import os
  import time
@@ -9,10 +9,10 @@ diff --git a/scripts/train_urban_structure_v6.py b/scripts/train_urban_structure
  from dataclasses import asdict, dataclass
  from pathlib import Path
  
++from affine import Affine
  import numpy as np
  import rasterio
  import torch
-+from affine import Affine
  from rasterio.enums import Resampling
  from rasterio.transform import from_bounds
  from rasterio.warp import reproject
