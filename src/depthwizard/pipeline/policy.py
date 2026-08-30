@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from enum import Enum
 
+PRODUCTION_GEOMETRY_PIPELINE_REVISION = "scene-global-affine-mosaic-v2"
+
 
 class EstimatorPath(str, Enum):
     """Production estimator paths exposed by the permanent runtime contract."""
@@ -30,9 +32,13 @@ class EstimatorDecision:
     evidence: tuple[PromotionEvidence, ...]
 
     def as_dict(self) -> dict[str, object]:
+        # This serialized identity is included in the persisted geometry-config hash. Geometry
+        # algorithm revisions therefore invalidate stale rDSM caches even when model/tile settings
+        # are otherwise identical.
         return {
             "selected_path": self.selected_path.value,
             "selected_model_id": self.selected_model_id,
+            "geometry_pipeline_revision": PRODUCTION_GEOMETRY_PIPELINE_REVISION,
             "reason": self.reason,
             "evidence": [asdict(item) for item in self.evidence],
         }
