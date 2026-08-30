@@ -62,9 +62,13 @@ def main() -> None:
     relative_finite = relative[np.isfinite(relative)]
     minimum = float(np.min(relative_finite))
     maximum = float(np.max(relative_finite))
-    if minimum < -1e-5 or maximum > 1.00001:
+    p01, p99 = np.percentile(relative_finite, [1.0, 99.0])
+    p01_value = float(p01)
+    p99_value = float(p99)
+    if abs(p01_value) > 1e-4 or abs(p99_value - 1.0) > 1e-4:
         raise SystemExit(
-            "DA3 smoke test failed: scene-global relative-height normalization is outside [0, 1]"
+            "DA3 smoke test failed: scene-global P01/P99 did not map to the relative-height "
+            f"affine convention [0, 1]: {p01_value}, {p99_value}"
         )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,6 +78,8 @@ def main() -> None:
     if output.confidence is not None:
         np.save(OUT_DIR / "confidence.npy", np.asarray(output.confidence, dtype=np.float32))
 
+    # Visualization remains robustly clipped for display only; the persisted scientific relative
+    # field above deliberately retains values below P01 and above P99.
     visual_u8 = np.nan_to_num(relative, nan=0.0)
     visual_u8 = (np.clip(visual_u8, 0.0, 1.0) * 255.0).astype(np.uint8)
     Image.fromarray(visual_u8, mode="L").save(OUT_DIR / "relative_height_vis.png")
@@ -94,7 +100,10 @@ def main() -> None:
         "affine_height_evidence_max": evidence_maximum,
         "relative_height_min": minimum,
         "relative_height_max": maximum,
+        "relative_height_p01": p01_value,
+        "relative_height_p99": p99_value,
         "scene_normalization_required": True,
+        "scene_extrema_clipped": False,
         "confidence_present": output.confidence is not None,
         "wall_time_seconds": elapsed,
     }
@@ -109,7 +118,11 @@ def main() -> None:
         "Affine height evidence range:",
         f"{evidence_minimum:.6f} .. {evidence_maximum:.6f}",
     )
-    print(f"Scene-global relative-height range: {minimum:.6f} .. {maximum:.6f}")
+    print(
+        "Scene-global relative-height robust range (P01..P99):",
+        f"{p01_value:.6f} .. {p99_value:.6f}",
+    )
+    print(f"Unclipped scene extrema: {minimum:.6f} .. {maximum:.6f}")
     print(f"Wall time: {elapsed:.2f} s")
     print("Artifacts:", OUT_DIR)
 
