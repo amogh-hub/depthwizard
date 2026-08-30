@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
+from rasterio.io import DatasetReader
 from rasterio.windows import Window
 
 from depthwizard.calibration.robust import robust_affine_calibration
@@ -75,7 +76,6 @@ def normalize_relative_height_scene(
     span = float(hi - lo)
     out = np.full(field.shape, np.nan, dtype=np.float32)
     if span <= 1e-6:
-        # A genuinely near-constant scene must stay flat; inventing contrast would create relief.
         out[valid] = 0.0
         return out
 
@@ -132,7 +132,7 @@ def _harmonize_tile(
     additive shift. A full affine scale correction is accepted only when the overlap contains real
     variation, the two predictions are positively correlated, the scale is bounded, and the affine
     fit materially improves median overlap error over offset-only alignment. This prevents a weak or
-    nearly flat overlap from rescaling an entire 1024-pixel tile and imprinting the inference grid.
+    nearly flat overlap from rescaling an entire tile and imprinting the inference grid.
     """
     mask = overlap_mask & np.isfinite(tile_height) & np.isfinite(existing)
     if int(mask.sum()) < min_overlap_pixels:
@@ -190,7 +190,7 @@ def _bool_metadata(prediction: GeometryPriorOutput, key: str) -> bool:
 
 
 def _read_and_infer_tile(
-    src: rasterio.io.DatasetReader,
+    src: DatasetReader,
     tile: TileWindow,
     prior: GeometryPrior,
     stats: RGBNormalizationStats,
@@ -220,7 +220,7 @@ def _overview_shape(height: int, width: int, max_edge: int) -> tuple[int, int]:
 
 
 def _infer_global_scaffold(
-    src: rasterio.io.DatasetReader,
+    src: DatasetReader,
     prior: GeometryPrior,
     stats: RGBNormalizationStats,
     band_indices: tuple[int, int, int],
