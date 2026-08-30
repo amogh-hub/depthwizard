@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "status": "PENDING_SIH26175_OPERATOR_ACCEPTANCE",
-  "git_head": "339bdf485149f552db846543b9e09377b567c19c",
+  "git_head": "2ec539aea010b974a2781b240fe76c67a99d06a8",
   "finale_hardware": "FILL_ME",
   "checks": {
     "geo_tiff_metric_dsm": {"status": "PENDING", "evidence": [], "notes": ""},
@@ -28,7 +28,7 @@
     "reference_validation_independent": {"status": "PENDING", "evidence": [], "notes": "Reference must be independent of calibration evidence."},
     "reference_view": {"status": "PENDING", "evidence": [], "notes": ""},
     "residual_view": {"status": "PENDING", "evidence": [], "notes": ""},
-    "projection_accuracy_visual": {"status": "PENDING", "evidence": [], "notes": "Include exact-head 3D picking/projection smoke."},
+    "projection_accuracy_visual": {"status": "PENDING", "evidence": [], "notes": "Include corrected-head 3D picking/projection smoke."},
     "export_bundle": {"status": "PENDING", "evidence": [], "notes": ""},
     "relaunch_reopen": {"status": "PENDING", "evidence": [], "notes": ""}
   }
