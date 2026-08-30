@@ -26,7 +26,7 @@ def depth_to_affine_height_evidence(depth: np.ndarray) -> np.ndarray:
     predictions have been harmonized. Percentile-normalizing each inference tile independently
     destroys inter-tile low-frequency information and can imprint the tile grid into the final
     surface. ``-depth`` keeps the required height ordering (nearer surface = higher evidence) while
-    leaving scale/offset available to the overlap harmonizer and later scene-global normalization.
+    leaving scale/offset available to the scene scaffold and later normalization.
     """
     d = np.asarray(depth, dtype=np.float32)
     valid = np.isfinite(d)
@@ -188,6 +188,7 @@ class DA3MonocularPrior(GeometryPrior):
                 "device": device,
                 "output_semantics": "affine_relative_surface_height_evidence",
                 "scene_normalize_relative_height": True,
+                "scene_global_scaffold": True,
                 "confidence_semantics": "model_native_not_probability_calibrated",
                 "license": "Apache-2.0",
             },
