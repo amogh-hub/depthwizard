@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from enum import Enum
 
-PRODUCTION_GEOMETRY_PIPELINE_REVISION = "scene-global-affine-mosaic-v2"
+PRODUCTION_GEOMETRY_PIPELINE_REVISION = "dual-lattice-affine-mosaic-v4"
 
 
 class EstimatorPath(str, Enum):
