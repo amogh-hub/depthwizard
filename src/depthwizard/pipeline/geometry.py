@@ -5,19 +5,30 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.windows import Window
 
 from depthwizard.calibration.robust import robust_affine_calibration
-from depthwizard.geometry_prior.base import GeometryPrior
+from depthwizard.geometry_prior.base import GeometryPrior, GeometryPriorOutput
 from depthwizard.preprocess.stats import (
     RGBNormalizationStats,
     estimate_rgb_normalization_stats,
     normalize_with_stats,
 )
 from depthwizard.tiling.blend import WeightedTileAccumulator
-from depthwizard.tiling.grid import generate_tiles
+from depthwizard.tiling.grid import TileWindow, generate_tiles
+
+from .scaffold import (
+    align_tile_to_scaffold,
+    high_frequency_residual,
+    resize_field_to_shape,
+)
 
 _SCENE_NORMALIZE_METADATA_KEY = "scene_normalize_relative_height"
+_SCENE_SCAFFOLD_METADATA_KEY = "scene_global_scaffold"
+_GLOBAL_SCAFFOLD_MAX_EDGE = 1536
+_ALIGNMENT_SIGMA_FRACTION = 0.125
+_RESIDUAL_SIGMA_FRACTION = 0.25
 _MIN_SCALE_CORRELATION = 0.35
 _MIN_AFFINE_ERROR_IMPROVEMENT = 0.10
 _MIN_HARMONIZATION_SCALE = 0.25
@@ -121,7 +132,7 @@ def _harmonize_tile(
     additive shift. A full affine scale correction is accepted only when the overlap contains real
     variation, the two predictions are positively correlated, the scale is bounded, and the affine
     fit materially improves median overlap error over offset-only alignment. This prevents a weak or
-    nearly flat overlap from rescaling an entire 1024-pixel tile and imprinting the inference grid.
+    nearly flat overlap from rescaling an entire tile and imprinting the inference grid.
     """
     mask = overlap_mask & np.isfinite(tile_height) & np.isfinite(existing)
     if int(mask.sum()) < min_overlap_pixels:
@@ -171,6 +182,74 @@ def _harmonize_tile(
     return (fit.scale * tile_height + fit.offset).astype(np.float32), True
 
 
+def _bool_metadata(prediction: GeometryPriorOutput, key: str) -> bool:
+    value = prediction.metadata.get(key, False)
+    if not isinstance(value, bool):
+        raise TypeError(f"geometry prior metadata {key!r} must be boolean")
+    return value
+
+
+def _read_and_infer_tile(
+    src: rasterio.io.DatasetReader,
+    tile: TileWindow,
+    prior: GeometryPrior,
+    stats: RGBNormalizationStats,
+    band_indices: tuple[int, int, int],
+) -> GeometryPriorOutput:
+    window = Window.from_slices(
+        (tile.y, tile.y + tile.height),
+        (tile.x, tile.x + tile.width),
+    )
+    rgb = src.read(list(band_indices), window=window).astype(np.float32)
+    rgb = np.moveaxis(rgb, 0, -1)
+    normalized = normalize_with_stats(rgb, stats)
+    prediction = prior.infer(normalized)
+    if prediction.relative_height.shape != (tile.height, tile.width):
+        raise ValueError(
+            f"geometry prior returned {prediction.relative_height.shape} for tile "
+            f"{(tile.height, tile.width)}"
+        )
+    return prediction
+
+
+def _overview_shape(height: int, width: int, max_edge: int) -> tuple[int, int]:
+    if max_edge <= 0:
+        raise ValueError("max_edge must be positive")
+    scale = min(1.0, max_edge / max(height, width))
+    return max(2, int(round(height * scale))), max(2, int(round(width * scale)))
+
+
+def _infer_global_scaffold(
+    src: rasterio.io.DatasetReader,
+    prior: GeometryPrior,
+    stats: RGBNormalizationStats,
+    band_indices: tuple[int, int, int],
+    *,
+    expected_model_id: str,
+) -> GeometryPriorOutput:
+    overview_height, overview_width = _overview_shape(
+        src.height,
+        src.width,
+        _GLOBAL_SCAFFOLD_MAX_EDGE,
+    )
+    rgb = src.read(
+        list(band_indices),
+        out_shape=(len(band_indices), overview_height, overview_width),
+        resampling=Resampling.bilinear,
+    ).astype(np.float32)
+    rgb = np.moveaxis(rgb, 0, -1)
+    normalized = normalize_with_stats(rgb, stats)
+    prediction = prior.infer(normalized)
+    if prediction.model_id != expected_model_id:
+        raise ValueError("geometry prior model_id changed between tile and global-scaffold inference")
+    if prediction.relative_height.shape != (overview_height, overview_width):
+        raise ValueError(
+            "geometry prior returned an unexpected global-scaffold shape: "
+            f"{prediction.relative_height.shape} != {(overview_height, overview_width)}"
+        )
+    return prediction
+
+
 def infer_geometry_scene(
     source_path: str | Path,
     prior: GeometryPrior,
@@ -183,69 +262,120 @@ def infer_geometry_scene(
 ) -> GeometrySceneOutput:
     """Run memory-bounded overlapping geometry inference on a full remote-sensing scene.
 
-    Each new relative-height tile may be robustly aligned to the already accumulated overlap. A
-    geometry prior may additionally request scene-global normalization through explicit metadata;
-    that normalization occurs only after all affine-preserving tile evidence has been harmonized and
-    blended.
+    Priors may request a scene-global scaffold. For those priors, one overview inference establishes
+    the scene-wide low-frequency geometry. High-resolution tiles are aligned to that scaffold and
+    contribute only high-frequency residual detail, preventing independent tile context from
+    manufacturing broad tile-sized plateaus. Other priors retain the overlap-harmonized mosaic path.
+    Scene-global normalization, when requested, remains the final scientific affine convention.
     """
     stats = estimate_rgb_normalization_stats(source_path, band_indices=band_indices)
     with rasterio.open(source_path) as src:
         if src.count < 3:
             raise ValueError("geometry inference requires at least three RGB bands")
         tiles = generate_tiles(src.height, src.width, tile_size=tile_size, overlap=overlap)
-        height_acc = WeightedTileAccumulator(src.height, src.width)
-        confidence_acc: WeightedTileAccumulator | None = None
-        model_id: str | None = None
-        harmonized_tiles = 0
-        scene_normalization_required: bool | None = None
+        first_prediction = _read_and_infer_tile(src, tiles[0], prior, stats, band_indices)
+        model_id = first_prediction.model_id
+        scene_normalization_required = _bool_metadata(
+            first_prediction,
+            _SCENE_NORMALIZE_METADATA_KEY,
+        )
+        scaffold_requested = _bool_metadata(
+            first_prediction,
+            _SCENE_SCAFFOLD_METADATA_KEY,
+        )
+        use_scaffold = scaffold_requested and len(tiles) > 1
 
-        for tile in tiles:
-            window = Window.from_slices(
-                (tile.y, tile.y + tile.height),
-                (tile.x, tile.x + tile.width),
+        scaffold: np.ndarray | None = None
+        residual_acc: WeightedTileAccumulator | None = None
+        height_acc: WeightedTileAccumulator | None = None
+        if use_scaffold:
+            overview_prediction = _infer_global_scaffold(
+                src,
+                prior,
+                stats,
+                band_indices,
+                expected_model_id=model_id,
             )
-            rgb = src.read(list(band_indices), window=window).astype(np.float32)
-            rgb = np.moveaxis(rgb, 0, -1)
-            normalized = normalize_with_stats(rgb, stats)
-            prediction = prior.infer(normalized)
-            if prediction.relative_height.shape != (tile.height, tile.width):
-                raise ValueError(
-                    f"geometry prior returned {prediction.relative_height.shape} for tile "
-                    f"{(tile.height, tile.width)}"
-                )
-            model_id = prediction.model_id if model_id is None else model_id
+            if _bool_metadata(overview_prediction, _SCENE_NORMALIZE_METADATA_KEY) != (
+                scene_normalization_required
+            ):
+                raise ValueError("geometry prior scene-normalization contract changed for scaffold")
+            if not _bool_metadata(overview_prediction, _SCENE_SCAFFOLD_METADATA_KEY):
+                raise ValueError("geometry prior disabled the scaffold contract during overview inference")
+            scaffold = resize_field_to_shape(
+                overview_prediction.relative_height,
+                (src.height, src.width),
+            )
+            residual_acc = WeightedTileAccumulator(src.height, src.width)
+        else:
+            height_acc = WeightedTileAccumulator(src.height, src.width)
+
+        confidence_acc: WeightedTileAccumulator | None = None
+        harmonized_tiles = 0
+
+        for index, tile in enumerate(tiles):
+            prediction = (
+                first_prediction
+                if index == 0
+                else _read_and_infer_tile(src, tile, prior, stats, band_indices)
+            )
             if prediction.model_id != model_id:
                 raise ValueError("geometry prior model_id changed within a single scene job")
-
-            requested_scene_normalization = prediction.metadata.get(
-                _SCENE_NORMALIZE_METADATA_KEY,
-                False,
-            )
-            if not isinstance(requested_scene_normalization, bool):
-                raise TypeError(
-                    f"geometry prior metadata {_SCENE_NORMALIZE_METADATA_KEY!r} must be boolean"
-                )
-            if scene_normalization_required is None:
-                scene_normalization_required = requested_scene_normalization
-            elif requested_scene_normalization != scene_normalization_required:
+            if _bool_metadata(prediction, _SCENE_NORMALIZE_METADATA_KEY) != (
+                scene_normalization_required
+            ):
                 raise ValueError("geometry prior scene-normalization contract changed within a job")
+            if _bool_metadata(prediction, _SCENE_SCAFFOLD_METADATA_KEY) != scaffold_requested:
+                raise ValueError("geometry prior scaffold contract changed within a job")
 
             relative_tile = prediction.relative_height.astype(np.float32, copy=False)
-            if harmonize_overlaps:
-                existing, overlap_mask = height_acc.current_region(
-                    tile.y,
-                    tile.x,
-                    tile.height,
-                    tile.width,
+            if use_scaffold:
+                assert scaffold is not None and residual_acc is not None
+                scaffold_tile = scaffold[
+                    tile.y : tile.y + tile.height,
+                    tile.x : tile.x + tile.width,
+                ]
+                alignment_sigma = max(
+                    8.0,
+                    min(tile.height, tile.width) * _ALIGNMENT_SIGMA_FRACTION,
                 )
-                relative_tile, changed = _harmonize_tile(
-                    relative_tile,
-                    existing,
-                    overlap_mask,
-                    min_overlap_pixels=min_harmonization_pixels,
+                residual_sigma = max(
+                    16.0,
+                    min(tile.height, tile.width) * _RESIDUAL_SIGMA_FRACTION,
                 )
-                harmonized_tiles += int(changed)
-            height_acc.add(relative_tile, tile.y, tile.x)
+                if harmonize_overlaps:
+                    aligned_tile, changed = align_tile_to_scaffold(
+                        relative_tile,
+                        scaffold_tile,
+                        lowpass_sigma_px=alignment_sigma,
+                        min_pixels=min_harmonization_pixels,
+                    )
+                    harmonized_tiles += int(changed)
+                else:
+                    aligned_tile = relative_tile
+                residual = high_frequency_residual(
+                    aligned_tile,
+                    scaffold_tile,
+                    sigma_px=residual_sigma,
+                )
+                residual_acc.add(residual, tile.y, tile.x)
+            else:
+                assert height_acc is not None
+                if harmonize_overlaps:
+                    existing, overlap_mask = height_acc.current_region(
+                        tile.y,
+                        tile.x,
+                        tile.height,
+                        tile.width,
+                    )
+                    relative_tile, changed = _harmonize_tile(
+                        relative_tile,
+                        existing,
+                        overlap_mask,
+                        min_overlap_pixels=min_harmonization_pixels,
+                    )
+                    harmonized_tiles += int(changed)
+                height_acc.add(relative_tile, tile.y, tile.x)
 
             if prediction.confidence is not None:
                 if prediction.confidence.shape != prediction.relative_height.shape:
@@ -254,14 +384,21 @@ def infer_geometry_scene(
                     confidence_acc = WeightedTileAccumulator(src.height, src.width)
                 confidence_acc.add(prediction.confidence, tile.y, tile.x)
 
-    relative_height = height_acc.finalize()
+    if use_scaffold:
+        assert scaffold is not None and residual_acc is not None
+        residual_field = residual_acc.finalize(nodata=0.0)
+        relative_height = (scaffold + residual_field).astype(np.float32)
+    else:
+        assert height_acc is not None
+        relative_height = height_acc.finalize()
+
     if scene_normalization_required:
         relative_height = normalize_relative_height_scene(relative_height)
 
     return GeometrySceneOutput(
         relative_height=relative_height,
         confidence=confidence_acc.finalize() if confidence_acc is not None else None,
-        model_id=model_id or "unknown",
+        model_id=model_id,
         normalization=stats,
         tile_count=len(tiles),
         harmonized_tiles=harmonized_tiles,
