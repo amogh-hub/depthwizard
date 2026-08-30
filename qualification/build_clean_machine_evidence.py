@@ -3,7 +3,7 @@
 
 This helper is designed to run on the clean Mac itself. It does not require a source checkout.
 It computes a deterministic SHA-256 tree identity for the installed `.app` bundle and emits PASS
-only when every frozen clean-machine observation is explicitly true.
+only when every corrected-release clean-machine observation is explicitly true.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-FROZEN_HEAD = "339bdf485149f552db846543b9e09377b567c19c"
+QUALIFIED_HEAD = "2ec539aea010b974a2781b240fe76c67a99d06a8"
 REQUIRED_TRUE = (
     "packaged_app_launch",
     "no_user_visible_terminal",
@@ -72,9 +72,9 @@ def main() -> int:
     observation_path = args.observation.resolve(strict=True)
     payload = _load(observation_path)
     declared_head = payload.get("source_build_git_head")
-    if declared_head != FROZEN_HEAD:
+    if declared_head != QUALIFIED_HEAD:
         raise SystemExit(
-            f"observation must identify frozen source build {FROZEN_HEAD}; got {declared_head!r}"
+            f"observation must identify corrected source build {QUALIFIED_HEAD}; got {declared_head!r}"
         )
     evidence = payload.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(
@@ -96,7 +96,7 @@ def main() -> int:
     report: dict[str, Any] = {
         "schema_version": 1,
         "status": "PASS_CLEAN_MACHINE_STANDALONE",
-        "git_head": FROZEN_HEAD,
+        "git_head": QUALIFIED_HEAD,
         "application_path": str(application),
         "application_sha256": app_sha,
         "application_sha256_semantics": "deterministic installed .app bundle tree SHA-256",
