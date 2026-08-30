@@ -61,10 +61,11 @@ def test_da3_adapter_defers_normalization_until_scene_assembly(
     output = prior.infer(np.zeros((2, 2, 3), dtype=np.float32))
 
     # The old defect normalized every inference tile independently to approximately [0, 1].
-    # Production must now preserve the raw affine ordering until the full scene is assembled.
+    # Production must preserve raw affine ordering until the full scene is assembled.
     assert np.allclose(output.relative_height, -depth)
     assert float(np.ptp(output.relative_height)) == pytest.approx(30.0)
     assert output.metadata["scene_normalize_relative_height"] is True
+    assert output.metadata["scene_global_scaffold"] is True
     assert output.metadata["output_semantics"] == "affine_relative_surface_height_evidence"
 
 
