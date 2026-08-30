@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "status": "PENDING_SUSTAINED_3D_PERFORMANCE",
-  "git_head": "339bdf485149f552db846543b9e09377b567c19c",
+  "git_head": "2ec539aea010b974a2781b240fe76c67a99d06a8",
   "duration_seconds": 0.0,
   "sample_count": 0,
   "mean_fps": 0.0,
