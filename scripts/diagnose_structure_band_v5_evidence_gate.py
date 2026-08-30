@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from depthwizard.evaluation.holdout import sparse_anchor_holdout_benchmark
+from depthwizard.calibration.robust import robust_affine_calibration
+from depthwizard.evaluation.holdout import (
+    select_sparse_anchor_mask,
+    sparse_anchor_holdout_benchmark,
+)
 from depthwizard.evaluation.metrics import compute_elevation_metrics
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
 from depthwizard.height_model.structure_band import project_structure_correction_numpy
@@ -30,9 +34,21 @@ OUT_PATH = (
     / "artifacts"
     / "training"
     / "ortholoc-structure-band-v5"
-    / "structure_band_v5_evidence_gate_diagnostic.json"
+    / "structure_band_v5_evidence_gate_cv_diagnostic.json"
 )
-ANCHOR_RMSE_TOLERANCE_M = 1e-9
+CV_FOLDS = 4
+CV_TOLERANCE_M = 1e-9
+MIN_ABS_FIT_CORRELATION = 0.05
+
+
+def _correlation(x: np.ndarray, y: np.ndarray) -> float:
+    xv = np.asarray(x, dtype=np.float64).reshape(-1)
+    yv = np.asarray(y, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(xv) & np.isfinite(yv)
+    xv, yv = xv[valid], yv[valid]
+    if xv.size < 2 or float(np.std(xv)) <= 1e-12 or float(np.std(yv)) <= 1e-12:
+        return float("nan")
+    return float(np.corrcoef(xv, yv)[0, 1])
 
 
 def _load_checkpoint(device: torch.device) -> DepthWizardHeightModel:
@@ -56,6 +72,88 @@ def _load_checkpoint(device: torch.device) -> DepthWizardHeightModel:
     return model
 
 
+def _anchor_crossvalidated_rmse(
+    relative: np.ndarray,
+    reference: np.ndarray,
+    anchor_mask: np.ndarray,
+    *,
+    seed: int,
+) -> tuple[float | None, str | None, list[dict[str, object]]]:
+    """Estimate calibration generalization using only the declared sparse anchors.
+
+    The official sparse-anchor locations are split into deterministic folds. Each fold is predicted
+    by a calibration fitted only on the other anchors. No held-out benchmark/evaluation pixel is
+    used for the gate decision.
+    """
+    rel = np.asarray(relative, dtype=np.float64)
+    ref = np.asarray(reference, dtype=np.float64)
+    anchors = np.flatnonzero(np.asarray(anchor_mask, dtype=bool))
+    if anchors.size < CV_FOLDS * 4:
+        return None, "insufficient sparse anchors for calibration cross-validation", []
+
+    rng = np.random.default_rng(seed)
+    shuffled = anchors.copy()
+    rng.shuffle(shuffled)
+    folds = [fold for fold in np.array_split(shuffled, CV_FOLDS) if fold.size]
+
+    squared_error_sum = 0.0
+    checked = 0
+    fold_reports: list[dict[str, object]] = []
+    for fold_index, check_indices in enumerate(folds):
+        fit_indices = np.concatenate(
+            [fold for index, fold in enumerate(folds) if index != fold_index]
+        )
+        fit_rel = rel.reshape(-1)[fit_indices]
+        fit_ref = ref.reshape(-1)[fit_indices]
+        check_rel = rel.reshape(-1)[check_indices]
+        check_ref = ref.reshape(-1)[check_indices]
+
+        correlation = _correlation(fit_rel, fit_ref)
+        if not np.isfinite(correlation):
+            return None, f"fold {fold_index}: calibration orientation is indeterminate", fold_reports
+        if abs(correlation) < MIN_ABS_FIT_CORRELATION:
+            return (
+                None,
+                f"fold {fold_index}: calibration evidence is too weakly correlated "
+                f"(|r|={abs(correlation):.3f})",
+                fold_reports,
+            )
+
+        orientation_flipped = correlation < 0.0
+        fit_oriented = -fit_rel if orientation_flipped else fit_rel
+        check_oriented = -check_rel if orientation_flipped else check_rel
+        try:
+            calibration = robust_affine_calibration(
+                fit_oriented,
+                fit_ref,
+                require_positive_scale=True,
+            )
+        except ValueError as exc:
+            return None, f"fold {fold_index}: {exc}", fold_reports
+
+        prediction = calibration.scale * check_oriented + calibration.offset
+        residual = prediction - check_ref
+        fold_rmse = float(np.sqrt(np.mean(residual**2)))
+        squared_error_sum += float(np.sum(residual**2))
+        checked += int(check_indices.size)
+        fold_reports.append(
+            {
+                "fold": fold_index,
+                "fit_anchors": int(fit_indices.size),
+                "check_anchors": int(check_indices.size),
+                "fit_correlation": float(correlation),
+                "orientation_flipped": orientation_flipped,
+                "scale": float(calibration.scale),
+                "fit_anchor_rmse_m": float(calibration.rmse_anchor),
+                "check_anchor_rmse_m": fold_rmse,
+            }
+        )
+
+    if checked == 0:
+        return None, "calibration cross-validation checked no anchors", fold_reports
+    return float(np.sqrt(squared_error_sum / checked)), None, fold_reports
+
+
 def _evaluate_scene(
     model: DepthWizardHeightModel,
     scene: legacy.SceneData,
@@ -74,6 +172,24 @@ def _evaluate_scene(
     refined_valid = candidate_valid & np.isfinite(safe_correction)
     refined[refined_valid] = scene.geometry[refined_valid] + safe_correction[refined_valid]
     evaluation_valid = scene.supervision_valid & refined_valid & np.isfinite(refined)
+
+    anchor_mask = select_sparse_anchor_mask(
+        evaluation_valid,
+        anchor_count=legacy.ANCHOR_COUNT,
+        seed=legacy.SEED,
+    )
+    base_cv_rmse, base_cv_rejection, base_cv_folds = _anchor_crossvalidated_rmse(
+        scene.geometry,
+        scene.reference_m,
+        anchor_mask,
+        seed=legacy.SEED + 101,
+    )
+    refined_cv_rmse, refined_cv_rejection, refined_cv_folds = _anchor_crossvalidated_rmse(
+        refined,
+        scene.reference_m,
+        anchor_mask,
+        seed=legacy.SEED + 101,
+    )
 
     baseline = sparse_anchor_holdout_benchmark(
         scene.geometry,
@@ -106,13 +222,10 @@ def _evaluate_scene(
             valid_mask=common,
         )
         decision = "FALLBACK_BASE_GEOMETRY"
-        reason = f"refined calibration rejected: {refined_rejection}"
+        reason = f"refined full-anchor calibration rejected: {refined_rejection}"
         chosen_prediction = baseline.prediction
         chosen_metrics = baseline_metrics
         refined_metrics = None
-        refined_anchor_rmse = None
-        refined_scale = None
-        refined_orientation_flipped = None
     else:
         common = baseline.evaluation_mask & refined_result.evaluation_mask
         baseline_metrics = compute_elevation_metrics(
@@ -125,19 +238,29 @@ def _evaluate_scene(
             scene.reference_m,
             valid_mask=common,
         )
-        refined_anchor_rmse = float(refined_result.calibration.rmse_anchor)
-        refined_scale = float(refined_result.calibration.scale)
-        refined_orientation_flipped = bool(refined_result.orientation_flipped)
-        if refined_anchor_rmse <= baseline.calibration.rmse_anchor + ANCHOR_RMSE_TOLERANCE_M:
+        if base_cv_rmse is None:
+            decision = "FALLBACK_BASE_GEOMETRY"
+            reason = f"base calibration cross-validation unavailable: {base_cv_rejection}"
+            chosen_prediction = baseline.prediction
+            chosen_metrics = baseline_metrics
+        elif refined_cv_rmse is None:
+            decision = "FALLBACK_BASE_GEOMETRY"
+            reason = f"refined calibration cross-validation rejected: {refined_cv_rejection}"
+            chosen_prediction = baseline.prediction
+            chosen_metrics = baseline_metrics
+        elif refined_cv_rmse <= base_cv_rmse + CV_TOLERANCE_M:
             decision = "ACCEPT_STRUCTURE_REFINEMENT"
-            reason = "refined sparse-anchor calibration residual is non-worse than base geometry"
+            reason = (
+                "refined calibration evidence generalizes non-worse across held-out anchor folds: "
+                f"{refined_cv_rmse:.6f} m <= {base_cv_rmse:.6f} m"
+            )
             chosen_prediction = refined_result.prediction
             chosen_metrics = refined_metrics
         else:
             decision = "FALLBACK_BASE_GEOMETRY"
             reason = (
-                "refined sparse-anchor calibration residual worsened: "
-                f"{refined_anchor_rmse:.6f} m > {baseline.calibration.rmse_anchor:.6f} m"
+                "refined calibration evidence generalizes worse across held-out anchor folds: "
+                f"{refined_cv_rmse:.6f} m > {base_cv_rmse:.6f} m"
             )
             chosen_prediction = baseline.prediction
             chosen_metrics = baseline_metrics
@@ -147,14 +270,27 @@ def _evaluate_scene(
         "location_id": scene.location_id,
         "gsd_m": scene.gsd_m,
         "gate_uses_heldout_evaluation_pixels": False,
+        "gate_uses_only_declared_sparse_calibration_anchors": True,
         "decision": decision,
         "decision_reason": reason,
-        "base_anchor_rmse_m": float(baseline.calibration.rmse_anchor),
+        "base_cv_anchor_rmse_m": base_cv_rmse,
+        "base_cv_rejection": base_cv_rejection,
+        "base_cv_folds": base_cv_folds,
+        "refined_cv_anchor_rmse_m": refined_cv_rmse,
+        "refined_cv_rejection": refined_cv_rejection,
+        "refined_cv_folds": refined_cv_folds,
+        "base_full_anchor_rmse_m": float(baseline.calibration.rmse_anchor),
         "base_scale": float(baseline.calibration.scale),
         "base_orientation_flipped": bool(baseline.orientation_flipped),
-        "refined_anchor_rmse_m": refined_anchor_rmse,
-        "refined_scale": refined_scale,
-        "refined_orientation_flipped": refined_orientation_flipped,
+        "refined_full_anchor_rmse_m": (
+            float(refined_result.calibration.rmse_anchor) if refined_result is not None else None
+        ),
+        "refined_scale": (
+            float(refined_result.calibration.scale) if refined_result is not None else None
+        ),
+        "refined_orientation_flipped": (
+            bool(refined_result.orientation_flipped) if refined_result is not None else None
+        ),
         "refined_calibration_rejection": refined_rejection,
         "heldout_pixels": int(common.sum()),
         "base_heldout": baseline_metrics.model_dump(),
@@ -202,8 +338,8 @@ def _evaluate_split(
             f"gated {report['gated_heldout']['rmse_m']:.3f} m | delta {delta:+.3f} m"
         )
         print(
-            f"  anchor RMSE base={report['base_anchor_rmse_m']:.6f} m | "
-            f"refined={report['refined_anchor_rmse_m']} | {report['decision_reason']}"
+            f"  CV anchor RMSE base={report['base_cv_anchor_rmse_m']} | "
+            f"refined={report['refined_cv_anchor_rmse_m']} | {report['decision_reason']}"
         )
 
     base_metrics = compute_elevation_metrics(
@@ -258,12 +394,13 @@ def main() -> None:
     del prior
 
     print(
-        "Evidence gate: structure refinement is accepted only when sparse calibration remains "
-        "physically valid and its anchor RMSE is non-worse than the unchanged base geometry."
+        "Cross-validated evidence gate: the 64 declared sparse calibration anchors are split into "
+        f"{CV_FOLDS} deterministic folds. Each fold is predicted by a calibration fitted only on "
+        "the other anchors."
     )
     print(
-        "Gate selection uses calibration anchors only; held-out evaluation pixels are never used "
-        "to accept or reject the learned correction."
+        "Gate selection uses calibration evidence only; held-out benchmark pixels are never used "
+        "to accept or reject the learned structure correction."
     )
 
     validation = _evaluate_split("validation", model, validation_scenes, device)
@@ -275,15 +412,21 @@ def main() -> None:
     )
 
     payload = {
-        "status": "PASS_V5_EVIDENCE_GATE_DIAGNOSTIC" if diagnostic_pass else "REJECT_V5_EVIDENCE_GATE_DIAGNOSTIC",
+        "status": (
+            "PASS_V5_CROSS_VALIDATED_EVIDENCE_GATE_DIAGNOSTIC"
+            if diagnostic_pass
+            else "REJECT_V5_CROSS_VALIDATED_EVIDENCE_GATE_DIAGNOSTIC"
+        ),
         "research_only": True,
         "checkpoint": str(CHECKPOINT_PATH.resolve()),
         "checkpoint_sha256": EXPECTED_CHECKPOINT_SHA256,
         "policy": {
-            "refined_must_calibrate": True,
-            "refined_anchor_rmse_must_be_non_worse_than_base": True,
-            "anchor_rmse_tolerance_m": ANCHOR_RMSE_TOLERANCE_M,
+            "cv_folds": CV_FOLDS,
+            "refined_full_anchor_calibration_must_be_valid": True,
+            "refined_cv_anchor_rmse_must_be_non_worse_than_base": True,
+            "cv_rmse_tolerance_m": CV_TOLERANCE_M,
             "heldout_pixels_used_for_gate_decision": False,
+            "only_declared_sparse_calibration_anchors_used_for_gate": True,
         },
         "validation": validation,
         "development": development,
@@ -291,7 +434,7 @@ def main() -> None:
         "blind_potsdam_4_12_6_12_touched": False,
     }
     OUT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"\nEvidence-gate diagnostic: {payload['status']}")
+    print(f"\nCross-validated evidence-gate diagnostic: {payload['status']}")
     print(f"Report: {OUT_PATH}")
 
 
