@@ -6,7 +6,7 @@ CSV columns:
 
 Accepted camera_position values include at least: aerial, low
 Accepted rendering_mode values include at least: texture, analytical_overlay
-The script emits PASS only when the frozen checker thresholds are truly met.
+The script emits PASS only when the corrected-release checker thresholds are truly met.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-FROZEN_HEAD = "339bdf485149f552db846543b9e09377b567c19c"
+QUALIFIED_HEAD = "2ec539aea010b974a2781b240fe76c67a99d06a8"
 
 
 def _git_head(repo: Path) -> str:
@@ -47,8 +47,8 @@ def main() -> int:
     args = build_parser().parse_args()
     repo = args.repo.resolve(strict=True)
     head = _git_head(repo)
-    if head != FROZEN_HEAD:
-        raise SystemExit(f"wrong git head: expected {FROZEN_HEAD}, got {head}")
+    if head != QUALIFIED_HEAD:
+        raise SystemExit(f"wrong git head: expected {QUALIFIED_HEAD}, got {head}")
     path = args.samples.resolve(strict=True)
     samples: list[dict[str, object]] = []
     with path.open(newline="", encoding="utf-8") as stream:
@@ -106,7 +106,7 @@ def main() -> int:
     report = {
         "schema_version": 1,
         "status": "PASS_SUSTAINED_3D_PERFORMANCE",
-        "git_head": FROZEN_HEAD,
+        "git_head": QUALIFIED_HEAD,
         "finale_hardware": args.hardware,
         "duration_seconds": duration,
         "sample_count": len(samples),
