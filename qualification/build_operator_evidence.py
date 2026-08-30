@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Convert a real operator-observation checklist into authoritative PASS JSON.
 
-This script does not infer success from feature presence. Every frozen workstation check must be
-explicitly marked `observed: true` and carry at least one evidence reference.
+This script does not infer success from feature presence. Every corrected-release workstation check
+must be explicitly marked `observed: true` and carry at least one evidence reference.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-FROZEN_HEAD = "339bdf485149f552db846543b9e09377b567c19c"
+QUALIFIED_HEAD = "2ec539aea010b974a2781b240fe76c67a99d06a8"
 REQUIRED_CHECKS = (
     "geo_tiff_metric_dsm",
     "nongeo_png_rdsm",
@@ -83,8 +83,8 @@ def main() -> int:
     args = build_parser().parse_args()
     repo = args.repo.resolve(strict=True)
     head = _git_head(repo)
-    if head != FROZEN_HEAD:
-        raise SystemExit(f"wrong git head: expected {FROZEN_HEAD}, got {head}")
+    if head != QUALIFIED_HEAD:
+        raise SystemExit(f"wrong git head: expected {QUALIFIED_HEAD}, got {head}")
     observation_path = args.observation.resolve(strict=True)
     payload = _load(observation_path)
     hardware = payload.get("finale_hardware")
@@ -122,7 +122,7 @@ def main() -> int:
     report = {
         "schema_version": 1,
         "status": "PASS_SIH26175_OPERATOR_ACCEPTANCE",
-        "git_head": FROZEN_HEAD,
+        "git_head": QUALIFIED_HEAD,
         "finale_hardware": hardware.strip(),
         "session_evidence": payload.get("session_evidence", []),
         "checks": output_checks,
