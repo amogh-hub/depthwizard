@@ -188,6 +188,7 @@ class DA3MonocularPrior(GeometryPrior):
                 "device": device,
                 "output_semantics": "affine_relative_surface_height_evidence",
                 "scene_normalize_relative_height": True,
+                "dual_lattice_mosaic": True,
                 "confidence_semantics": "model_native_not_probability_calibrated",
                 "license": "Apache-2.0",
             },
