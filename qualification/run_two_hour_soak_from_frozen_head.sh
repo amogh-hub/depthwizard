@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_HEAD="339bdf485149f552db846543b9e09377b567c19c"
+EXPECTED_HEAD="2ec539aea010b974a2781b240fe76c67a99d06a8"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 HEAD="$(git rev-parse HEAD)"
-echo "DepthWizard frozen-head soak"
+echo "DepthWizard corrected-release soak"
 echo "HEAD=$HEAD"
 
 if [[ "$HEAD" != "$EXPECTED_HEAD" ]]; then
-  echo "ERROR: checkout is not the qualified production SHA." >&2
+  echo "ERROR: checkout is not the qualified corrected source SHA." >&2
   echo "Expected: $EXPECTED_HEAD" >&2
   exit 2
 fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
-  echo "ERROR: worktree is not clean. Evidence must be generated from a clean frozen checkout." >&2
+  echo "ERROR: worktree is not clean. Evidence must be generated from a clean corrected checkout." >&2
   git status --short >&2
   exit 3
 fi
@@ -64,7 +64,7 @@ print(json.dumps({
     'request_cycle_seconds': r.get('request_cycle_seconds'),
 }, indent=2, sort_keys=True))
 assert r.get('status') == 'PASS_TWO_HOUR_PACKAGED_SOAK'
-assert r.get('git_head') == '339bdf485149f552db846543b9e09377b567c19c'
+assert r.get('git_head') == '2ec539aea010b974a2781b240fe76c67a99d06a8'
 assert float(r.get('monitored_seconds', 0)) >= 7200.0
 PY
 
