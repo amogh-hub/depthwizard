@@ -79,7 +79,9 @@ def main() -> None:
     Image.fromarray(visual_u8, mode="L").save(OUT_DIR / "relative_height_vis.png")
 
     evidence_values = evidence[finite]
-    report = {
+    evidence_minimum = float(np.min(evidence_values))
+    evidence_maximum = float(np.max(evidence_values))
+    report: dict[str, object] = {
         "status": "PASS",
         "model_id": output.model_id,
         "model_source": MODEL_SOURCE,
@@ -88,8 +90,8 @@ def main() -> None:
         "input_shape": list(rgb.shape),
         "output_shape": list(evidence.shape),
         "finite_fraction": float(np.mean(finite)),
-        "affine_height_evidence_min": float(np.min(evidence_values)),
-        "affine_height_evidence_max": float(np.max(evidence_values)),
+        "affine_height_evidence_min": evidence_minimum,
+        "affine_height_evidence_max": evidence_maximum,
         "relative_height_min": minimum,
         "relative_height_max": maximum,
         "scene_normalization_required": True,
@@ -100,12 +102,12 @@ def main() -> None:
 
     print("DepthWizard DA3 smoke inference: PASS")
     print("Model:", output.model_id)
-    print("Device:", report["device"])
+    print("Device:", output.metadata.get("device", "unknown"))
     print("Input:", source)
     print("Output shape:", tuple(evidence.shape))
     print(
         "Affine height evidence range:",
-        f"{report['affine_height_evidence_min']:.6f} .. {report['affine_height_evidence_max']:.6f}",
+        f"{evidence_minimum:.6f} .. {evidence_maximum:.6f}",
     )
     print(f"Scene-global relative-height range: {minimum:.6f} .. {maximum:.6f}")
     print(f"Wall time: {elapsed:.2f} s")
