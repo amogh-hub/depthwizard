@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import shutil
+import subprocess
 from pathlib import Path
 
 from depthwizard.contracts import ProjectRunStatus
@@ -31,6 +32,16 @@ def _label_sha(label: str) -> str:
     return hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
+def _git_head(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare frozen Potsdam 2_14 operator project")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
@@ -45,6 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     repo = args.repo.resolve(strict=True)
+    head = _git_head(repo)
+    if head != QUALIFIED_HEAD:
+        raise SystemExit(f"wrong git head: expected {QUALIFIED_HEAD}, got {head}")
+    if subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip():
+        raise SystemExit("worktree is not clean; operator project staging requires the clean final corrective checkout")
+
     source = repo / "data/external/isprs-potsdam/2_Ortho_RGB/top_potsdam_2_14_RGB.tif"
     prediction = repo / "workspace/final-science-data/predictions/potsdam-2-14-urban-test/metric-dsm.tif"
     calibration_dem = repo / "workspace/final-science-data/predictions/potsdam-2-14-urban-test/calibration/copernicus-glo30-mosaic.tif"
@@ -154,10 +177,10 @@ def main() -> int:
     )
     manifest.mark_status(ProjectRunStatus.COMPLETE)
 
-    # Re-load to force the normal immutable-artifact integrity checks before handing to the UI.
     ProjectManifest.load(project_dir)
 
     print("PASS_OPERATOR_URBAN_PROJECT_STAGED")
+    print(f"git_head={head}")
     print(f"project_dir={project_dir}")
     print(f"source={source}")
     print(f"prediction_sha256={prediction_sha}")
