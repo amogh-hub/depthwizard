@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_HEAD="339bdf485149f552db846543b9e09377b567c19c"
+EXPECTED_HEAD="2ec539aea010b974a2781b240fe76c67a99d06a8"
 
 if [[ $# -ne 3 ]]; then
   cat >&2 <<'EOF'
@@ -25,7 +25,7 @@ cd "$ROOT"
 
 HEAD="$(git rev-parse HEAD)"
 if [[ "$HEAD" != "$EXPECTED_HEAD" ]]; then
-  echo "ERROR: checkout is not the qualified production SHA." >&2
+  echo "ERROR: checkout is not the qualified corrected source SHA." >&2
   echo "Expected: $EXPECTED_HEAD" >&2
   echo "Actual:   $HEAD" >&2
   exit 2
@@ -48,7 +48,7 @@ done
 import json
 import sys
 from pathlib import Path
-expected = '339bdf485149f552db846543b9e09377b567c19c'
+expected = '2ec539aea010b974a2781b240fe76c67a99d06a8'
 expected_status = {
     'operator': 'PASS_SIH26175_OPERATOR_ACCEPTANCE',
     'performance': 'PASS_SUSTAINED_3D_PERFORMANCE',
