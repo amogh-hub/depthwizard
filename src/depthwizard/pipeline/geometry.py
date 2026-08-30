@@ -132,7 +132,7 @@ def _harmonize_tile(
     additive shift. A full affine scale correction is accepted only when the overlap contains real
     variation, the two predictions are positively correlated, the scale is bounded, and the affine
     fit materially improves median overlap error over offset-only alignment. This prevents a weak or
-    nearly flat overlap from rescaling an entire tile and imprinting the inference grid.
+    nearly flat overlap from rescaling an entire 1024-pixel tile and imprinting the inference grid.
     """
     mask = overlap_mask & np.isfinite(tile_height) & np.isfinite(existing)
     if int(mask.sum()) < min_overlap_pixels:
@@ -216,7 +216,7 @@ def _overview_shape(height: int, width: int, max_edge: int) -> tuple[int, int]:
     if max_edge <= 0:
         raise ValueError("max_edge must be positive")
     scale = min(1.0, max_edge / max(height, width))
-    return max(2, int(round(height * scale))), max(2, int(round(width * scale)))
+    return max(2, round(height * scale)), max(2, round(width * scale))
 
 
 def _infer_global_scaffold(
