@@ -139,6 +139,21 @@ def _read_scalar(path: Path, *, layer: PreviewLayer, max_side: int) -> np.ndarra
     return _scalar_rgb(values, layer=layer, valid=valid)
 
 
+def _relative_hillshade_contrast(intensity: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Stretch relative-only illumination for readable display without changing terrain semantics."""
+    usable = valid & np.isfinite(intensity)
+    finite = np.asarray(intensity[usable], dtype=np.float64)
+    if finite.size < 4:
+        return intensity.astype(np.float32)
+    low, high = np.percentile(finite, [2.0, 98.0])
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low + 1e-8:
+        return intensity.astype(np.float32)
+    normalized = np.clip((intensity - low) / (high - low), 0.0, 1.0)
+    # Keep a small white/black margin so clipped percentile tails remain visually distinguishable.
+    stretched = 0.08 + 0.88 * normalized
+    return stretched.astype(np.float32)
+
+
 def _hillshade_rgb(path: Path, *, max_side: int, relative_surface: bool = False) -> np.ndarray:
     values, valid = _read_scalar_values(path, max_side=max_side)
     if values.shape[0] < 2 or values.shape[1] < 2:
@@ -166,6 +181,11 @@ def _hillshade_rgb(path: Path, *, max_side: int, relative_surface: bool = False)
         + np.cos(altitude) * np.sin(slope) * np.cos(azimuth - aspect)
     )
     intensity = np.clip(0.5 + 0.5 * shaded, 0.0, 1.0).astype(np.float32)
+    if relative_surface:
+        # Relative display scaling makes gradients meaningful but the conventional illumination
+        # equation still clusters ordinary terrain near ~0.85 white. Robust display-only stretching
+        # restores readable shadow/highlight separation without altering metric DSM hillshade.
+        intensity = _relative_hillshade_contrast(intensity, valid)
     rgb = np.stack((intensity, intensity, intensity), axis=-1)
     rgb[~valid] = np.array([0.94, 0.94, 0.94], dtype=np.float32)
     return np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
