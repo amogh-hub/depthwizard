@@ -36,6 +36,7 @@ if __name__ == "__main__":
         "scripts/train_ortholoc_multiscene_v2.py",
         "scripts/train_ortholoc_multiscene_v3.py",
         "scripts/train_ortholoc_multiscene_v4.py",
+        "scripts/train_ortholoc_structure_band_v5.py",
         "scripts/evaluate_ortholoc_adaptive_refinement.py",
         "scripts/evaluate_ortholoc_frozen_holdout.py",
         "scripts/evaluate_ortholoc_frozen_location_v2.py",
