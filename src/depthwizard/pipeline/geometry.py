@@ -40,11 +40,16 @@ def normalize_relative_height_scene(
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
 ) -> np.ndarray:
-    """Apply one robust relative-height convention to an assembled scene.
+    """Apply one robust affine relative-height convention to an assembled scene.
 
     Scene-global normalization is deliberately performed *after* tile harmonization. This preserves
     inter-tile low-frequency evidence during mosaicking and prevents locally flat tiles from being
     stretched to the same apparent relief as genuinely high-relief tiles.
+
+    P01 and P99 define the affine origin and scale, but values are intentionally **not clipped** to
+    that interval. Genuine high/low scene extrema must survive for structural-height analysis and
+    downstream metric calibration; clipping would silently flatten the very objects DepthWizard is
+    intended to reconstruct.
     """
     if not (0.0 <= low_percentile < high_percentile <= 100.0):
         raise ValueError("percentiles must satisfy 0 <= low < high <= 100")
@@ -63,8 +68,7 @@ def normalize_relative_height_scene(
         out[valid] = 0.0
         return out
 
-    clipped = np.clip(field[valid], lo, hi)
-    out[valid] = ((clipped - lo) / span).astype(np.float32)
+    out[valid] = ((field[valid] - lo) / span).astype(np.float32)
     return out
 
 
