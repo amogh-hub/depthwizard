@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from depthwizard.geometry_prior.da3 import DA3MonocularPrior
+from depthwizard.pipeline.geometry import normalize_relative_height_scene
 
 ROOT = Path(__file__).resolve().parents[1]
 DA3_DIR = ROOT / ".vendor" / "depth-anything-3"
@@ -42,36 +43,42 @@ def main() -> None:
     output = prior.infer(rgb)
     elapsed = time.perf_counter() - started
 
-    relative = np.asarray(output.relative_height, dtype=np.float32)
-    finite = np.isfinite(relative)
+    evidence = np.asarray(output.relative_height, dtype=np.float32)
+    finite = np.isfinite(evidence)
     if not np.any(finite):
-        raise SystemExit("DA3 smoke test failed: no finite relative-height values were produced")
-    if relative.shape != rgb.shape[:2]:
+        raise SystemExit("DA3 smoke test failed: no finite affine height evidence was produced")
+    if evidence.shape != rgb.shape[:2]:
         raise SystemExit(
-            f"DA3 smoke test failed: output shape {relative.shape} does not match input {rgb.shape[:2]}"
+            f"DA3 smoke test failed: output shape {evidence.shape} does not match input {rgb.shape[:2]}"
         )
+    if output.metadata.get("scene_normalize_relative_height") is not True:
+        raise SystemExit(
+            "DA3 smoke test failed: production adapter did not request scene-global normalization"
+        )
+    if output.metadata.get("output_semantics") != "affine_relative_surface_height_evidence":
+        raise SystemExit("DA3 smoke test failed: unexpected affine-evidence semantics")
 
-    finite_values = relative[finite]
-    minimum = float(np.min(finite_values))
-    maximum = float(np.max(finite_values))
+    relative = normalize_relative_height_scene(evidence)
+    relative_finite = relative[np.isfinite(relative)]
+    minimum = float(np.min(relative_finite))
+    maximum = float(np.max(relative_finite))
     if minimum < -1e-5 or maximum > 1.00001:
         raise SystemExit(
-            f"DA3 smoke test failed: relative-height range [{minimum}, {maximum}] is outside [0, 1]"
+            "DA3 smoke test failed: scene-global relative-height normalization is outside [0, 1]"
         )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    np.save(OUT_DIR / "affine_height_evidence.npy", evidence)
     np.save(OUT_DIR / "relative_height.npy", relative)
 
     if output.confidence is not None:
         np.save(OUT_DIR / "confidence.npy", np.asarray(output.confidence, dtype=np.float32))
 
-    lo, hi = np.nanpercentile(relative, [1.0, 99.0])
-    scale = max(float(hi - lo), 1e-6)
-    visual = np.clip((relative - lo) / scale, 0.0, 1.0)
-    visual_u8 = np.nan_to_num(visual, nan=0.0)
-    visual_u8 = (visual_u8 * 255.0).astype(np.uint8)
+    visual_u8 = np.nan_to_num(relative, nan=0.0)
+    visual_u8 = (np.clip(visual_u8, 0.0, 1.0) * 255.0).astype(np.uint8)
     Image.fromarray(visual_u8, mode="L").save(OUT_DIR / "relative_height_vis.png")
 
+    evidence_values = evidence[finite]
     report = {
         "status": "PASS",
         "model_id": output.model_id,
@@ -79,10 +86,13 @@ def main() -> None:
         "device": output.metadata.get("device", "unknown"),
         "source_image": str(source.relative_to(ROOT)),
         "input_shape": list(rgb.shape),
-        "output_shape": list(relative.shape),
+        "output_shape": list(evidence.shape),
         "finite_fraction": float(np.mean(finite)),
+        "affine_height_evidence_min": float(np.min(evidence_values)),
+        "affine_height_evidence_max": float(np.max(evidence_values)),
         "relative_height_min": minimum,
         "relative_height_max": maximum,
+        "scene_normalization_required": True,
         "confidence_present": output.confidence is not None,
         "wall_time_seconds": elapsed,
     }
@@ -92,8 +102,12 @@ def main() -> None:
     print("Model:", output.model_id)
     print("Device:", report["device"])
     print("Input:", source)
-    print("Output shape:", tuple(relative.shape))
-    print(f"Relative-height range: {minimum:.6f} .. {maximum:.6f}")
+    print("Output shape:", tuple(evidence.shape))
+    print(
+        "Affine height evidence range:",
+        f"{report['affine_height_evidence_min']:.6f} .. {report['affine_height_evidence_max']:.6f}",
+    )
+    print(f"Scene-global relative-height range: {minimum:.6f} .. {maximum:.6f}")
     print(f"Wall time: {elapsed:.2f} s")
     print("Artifacts:", OUT_DIR)
 
