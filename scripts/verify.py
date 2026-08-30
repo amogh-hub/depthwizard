@@ -63,6 +63,7 @@ if __name__ == "__main__":
         "scripts/check_sih26175_completion.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
+        "scripts/smoke_da3.py",
         "scripts/smoke_height_model.py",
     )
     print("Python verification passed: tests, lint, and static typing are green.")
