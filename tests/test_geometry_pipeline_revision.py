@@ -1,6 +1,6 @@
 import pytest
 
-import depthwizard.pipeline.policy as policy
+from depthwizard.pipeline import policy
 from depthwizard.provenance.manifest import canonical_json_hash
 
 
