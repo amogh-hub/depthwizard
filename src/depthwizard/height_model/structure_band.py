@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -15,19 +15,22 @@ from depthwizard.height_model.model import HeightModelOutput
 class StructureBandConfig:
     """Physical-scale contract for structure-only height refinement.
 
-    ``outer_scale_m`` is the characteristic diameter of the broadest correction that the learned
-    refiner is allowed to contribute. The corresponding Gaussian sigma is ``outer_scale_m / 2``.
-    Subtracting that low-pass field from a candidate correction prevents the learned model from
-    changing broad terrain/calibration while retaining roof, tree and local object relief.
+    ``target_outer_scale_m`` defines the broadest structure scale used as a supervised residual
+    target. ``safety_outer_scale_m`` is intentionally larger: after patch predictions are mosaicked,
+    a final full-scene high-pass at this scale removes any remaining broad terrain drift without
+    repeatedly suppressing the 2--8 m object-scale signal learned by the model.
     """
 
-    outer_scale_m: float = 8.0
+    target_outer_scale_m: float = 8.0
+    safety_outer_scale_m: float = 16.0
     structure_threshold_m: float = 1.0
     max_structure_weight: float = 5.0
 
     def __post_init__(self) -> None:
-        if self.outer_scale_m <= 0:
-            raise ValueError("outer_scale_m must be positive")
+        if self.target_outer_scale_m <= 0:
+            raise ValueError("target_outer_scale_m must be positive")
+        if self.safety_outer_scale_m <= self.target_outer_scale_m:
+            raise ValueError("safety_outer_scale_m must exceed target_outer_scale_m")
         if self.structure_threshold_m <= 0:
             raise ValueError("structure_threshold_m must be positive")
         if self.max_structure_weight < 1.0:
@@ -136,7 +139,7 @@ def physical_highpass_torch(
     *,
     characteristic_scale_m: float,
 ) -> torch.Tensor:
-    """Return only local structure-scale content while removing broad terrain drift."""
+    """Return local physical-scale content while removing broader terrain drift."""
     return values - physical_gaussian_blur_torch(
         values,
         gsd_m,
@@ -151,7 +154,7 @@ def physical_highpass_numpy(
     gsd_m: float,
     characteristic_scale_m: float,
 ) -> np.ndarray:
-    """NaN-safe full-scene high-pass for scoring and final post-mosaic enforcement."""
+    """NaN-safe full-scene physical high-pass for scoring and safety projection."""
     data = np.asarray(values, dtype=np.float64)
     valid = np.asarray(valid_mask, dtype=bool) & np.isfinite(data)
     if data.ndim != 2 or valid.shape != data.shape:
@@ -172,6 +175,23 @@ def physical_highpass_numpy(
     return result
 
 
+def project_structure_correction_numpy(
+    correction: np.ndarray,
+    valid_mask: np.ndarray,
+    *,
+    gsd_m: float,
+    config: StructureBandConfig | None = None,
+) -> np.ndarray:
+    """Hard full-scene safety projection applied after learned patch corrections are mosaicked."""
+    cfg = config or StructureBandConfig()
+    return physical_highpass_numpy(
+        correction,
+        valid_mask,
+        gsd_m=gsd_m,
+        characteristic_scale_m=cfg.safety_outer_scale_m,
+    )
+
+
 def structure_activity_score(
     target_correction_m: np.ndarray,
     valid_mask: np.ndarray,
@@ -185,7 +205,7 @@ def structure_activity_score(
         target_correction_m,
         valid_mask,
         gsd_m=gsd_m,
-        characteristic_scale_m=cfg.outer_scale_m,
+        characteristic_scale_m=cfg.target_outer_scale_m,
     )
     selected = np.abs(highpass[np.isfinite(highpass)])
     if selected.size == 0:
@@ -244,12 +264,12 @@ def compute_structure_band_loss(
     config: StructureBandConfig | None = None,
     weights: StructureBandLossWeights | None = None,
 ) -> StructureBandLossResult:
-    """Train local object relief while explicitly forbidding broad terrain correction.
+    """Train object-scale residuals while strongly discouraging broad terrain correction.
 
-    The target is the high-frequency part of the scene-canonicalized reference-minus-DA3 residual.
-    The predicted correction is subjected to the same physical high-pass before supervision. Broad
-    predicted correction is separately penalized, so a model cannot improve the loss by changing
-    the DEM-scale terrain surface or global calibration offset.
+    The supervised target is the 2--8 m high-frequency part of the scene-canonicalized
+    reference-minus-DA3 residual. The network correction itself is trained directly against that
+    band-limited target. A separate low-pass penalty makes broad correction expensive. Production
+    inference adds a second, broader 16 m full-scene safety projection after patch mosaicking.
     """
     cfg = config or StructureBandConfig()
     loss_weights = weights or StructureBandLossWeights()
@@ -282,21 +302,20 @@ def compute_structure_band_loss(
     target_highpass = physical_highpass_torch(
         target_correction,
         gsd,
-        characteristic_scale_m=cfg.outer_scale_m,
+        characteristic_scale_m=cfg.target_outer_scale_m,
     )
-    predicted_highpass = physical_highpass_torch(
+    predicted_lowpass = physical_gaussian_blur_torch(
         predicted_correction,
         gsd,
-        characteristic_scale_m=cfg.outer_scale_m,
+        characteristic_scale_m=cfg.target_outer_scale_m,
     )
-    predicted_lowpass = predicted_correction - predicted_highpass
 
     target_highpass_m = target_highpass * scale_map
-    predicted_highpass_m = predicted_highpass * scale_map
+    predicted_correction_m = predicted_correction * scale_map
     predicted_lowpass_m = predicted_lowpass * scale_map
 
     normalized_target = target_highpass_m / error_scale
-    normalized_prediction = predicted_highpass_m / error_scale
+    normalized_prediction = predicted_correction_m / error_scale
     activity = torch.clamp(
         torch.abs(target_highpass_m) / cfg.structure_threshold_m,
         min=0.0,
@@ -335,15 +354,15 @@ def compute_structure_band_loss(
     quiet = valid & (torch.abs(target_highpass_m) < cfg.structure_threshold_m)
     quiet_region_budget = _masked_weighted_mean(
         F.smooth_l1_loss(
-            predicted_highpass_m / error_scale,
-            torch.zeros_like(predicted_highpass_m),
+            predicted_correction_m / error_scale,
+            torch.zeros_like(predicted_correction_m),
             reduction="none",
             beta=0.25,
         ),
         quiet,
     )
     prior_error_m = (geometry_prior - target_prior) * scale_map
-    refined_error_m = prior_error_m + predicted_highpass_m
+    refined_error_m = prior_error_m + predicted_correction_m
     quiet_region_non_degradation = _masked_weighted_mean(
         F.relu(torch.abs(refined_error_m) - torch.abs(prior_error_m)) / error_scale,
         quiet,
