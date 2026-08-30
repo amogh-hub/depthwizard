@@ -27,15 +27,21 @@ def resize_field_to_shape(values: np.ndarray, shape: tuple[int, int]) -> np.ndar
     fill = float(np.median(field[valid]))
     filled = np.where(valid, field, fill).astype(np.float32, copy=False)
     factors = (target_height / field.shape[0], target_width / field.shape[1])
-    resized = zoom(filled, factors, order=1, mode="nearest", prefilter=False)
-    valid_resized = zoom(valid.astype(np.float32), factors, order=0, mode="nearest", prefilter=False)
+    resized = np.asarray(
+        zoom(filled, factors, order=1, mode="nearest", prefilter=False),
+        dtype=np.float32,
+    )
+    valid_resized = np.asarray(
+        zoom(valid.astype(np.float32), factors, order=0, mode="nearest", prefilter=False),
+        dtype=np.float32,
+    )
 
     # scipy.ndimage.zoom normally lands exactly on the requested shape for these factors. Keep a
     # deterministic crop/pad fallback so a future SciPy rounding change cannot alter contracts.
     out = np.full(shape, fill, dtype=np.float32)
     h = min(target_height, resized.shape[0])
     w = min(target_width, resized.shape[1])
-    out[:h, :w] = resized[:h, :w].astype(np.float32, copy=False)
+    out[:h, :w] = resized[:h, :w]
     valid_out = np.zeros(shape, dtype=bool)
     vh = min(target_height, valid_resized.shape[0])
     vw = min(target_width, valid_resized.shape[1])
