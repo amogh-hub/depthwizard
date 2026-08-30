@@ -5,6 +5,7 @@ import hashlib
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT))
@@ -13,6 +14,8 @@ sys.path.insert(0, str(CODE_ROOT / "src"))
 import numpy as np
 import rasterio
 import torch
+from affine import Affine
+from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import reproject
 
@@ -83,7 +86,7 @@ def _load_v6_model(repo: Path, device: torch.device) -> DepthWizardHeightModel:
 def _read_native_base_contract(
     base_dsm_path: Path,
     source_rgb_path: Path,
-) -> tuple[np.ndarray, np.ndarray, object, object, tuple[int, int]]:
+) -> tuple[np.ndarray, np.ndarray, Affine, CRS, tuple[int, int]]:
     with rasterio.open(source_rgb_path) as rgb_src, rasterio.open(base_dsm_path) as dsm_src:
         if rgb_src.width != dsm_src.width or rgb_src.height != dsm_src.height:
             raise RuntimeError(
@@ -92,21 +95,24 @@ def _read_native_base_contract(
             )
         if rgb_src.crs != dsm_src.crs:
             raise RuntimeError(f"source/DSM CRS mismatch: rgb={rgb_src.crs}, dsm={dsm_src.crs}")
+        if rgb_src.crs is None or dsm_src.crs is None:
+            raise RuntimeError("native Potsdam source/DSM must have CRS")
         if not rgb_src.transform.almost_equals(dsm_src.transform):
             raise RuntimeError("source RGB and native V2 DSM transforms differ")
         data = dsm_src.read(1, masked=True)
         values = np.asarray(data.filled(np.nan), dtype=np.float32)
-        valid = np.asarray(~data.mask, dtype=bool) & np.isfinite(values)
+        mask = np.ma.getmaskarray(data)
+        valid = ~mask & np.isfinite(values)
         return values, valid, dsm_src.transform, dsm_src.crs, (dsm_src.height, dsm_src.width)
 
 
 def _lift_correction_to_native(
     correction_metric_025m: np.ndarray,
     correction_valid_025m: np.ndarray,
-    benchmark_transform: object,
+    benchmark_transform: Affine,
     native_shape: tuple[int, int],
-    native_transform: object,
-    native_crs: object,
+    native_transform: Affine,
+    native_crs: CRS,
 ) -> tuple[np.ndarray, np.ndarray]:
     native_correction = np.zeros(native_shape, dtype=np.float32)
     native_valid = np.zeros(native_shape, dtype=np.uint8)
@@ -139,8 +145,8 @@ def _lift_correction_to_native(
 def _write_metric_dsm(
     path: Path,
     values: np.ndarray,
-    transform: object,
-    crs: object,
+    transform: Affine,
+    crs: CRS,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
@@ -187,11 +193,7 @@ def main() -> int:
     model = _load_v6_model(repo, device)
     tile = v6.resolve_potsdam_tile_paths(dataset_root, "2_14")
 
-    rdsm_path = v6._find_tif_by_sha(
-        exposed_v2_root,
-        EXPECTED_V2_RDSM_SHA256,
-        "V2 rDSM",
-    )
+    rdsm_path = v6._find_tif_by_sha(exposed_v2_root, EXPECTED_V2_RDSM_SHA256, "V2 rDSM")
     base_dsm_path = v6._find_tif_by_sha(
         exposed_v2_root,
         EXPECTED_V2_DSM_SHA256,
@@ -303,7 +305,9 @@ def main() -> int:
             "v6_checkpoint_sha256": EXPECTED_V6_CHECKPOINT_SHA256,
             "v6_best_epoch": EXPECTED_V6_BEST_EPOCH,
             "exposed_development_only": True,
-            "v6_correction_native_grid_policy": "bilinear lift from frozen 0.25m V6 correction onto native aligned V2 DSM",
+            "v6_correction_native_grid_policy": (
+                "bilinear lift from frozen 0.25m V6 correction onto native aligned V2 DSM"
+            ),
             "blind_tiles_touched": False,
         }
     )
