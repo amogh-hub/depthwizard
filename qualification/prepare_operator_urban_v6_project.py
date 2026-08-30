@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import shutil
+import sys
 from pathlib import Path
+
+CODE_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(CODE_ROOT))
+sys.path.insert(0, str(CODE_ROOT / "src"))
 
 import numpy as np
 import rasterio
@@ -16,20 +22,32 @@ from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
 from scripts import train_urban_structure_v6 as v6
 
-ROOT = Path(__file__).resolve().parents[1]
 QUALIFIED_V6_SOURCE_SHA = "f1c2d5aac075430033b75502e5ef566c4ca1e8c9"
 EXPECTED_V6_CHECKPOINT_SHA256 = "b0d2fbfc8929d05403d54ed500a239179577bb461679fa74f3c9d291e3641bb0"
 EXPECTED_V6_BEST_EPOCH = 8
 EXPECTED_CALIBRATION_DEM_SHA256 = "96e3c9de4049cff5d60f5e927c6d574f8cafcfde6164fa427a3ceab9fb11126d"
-OUTPUT_PROJECT = ROOT / "workspace" / "operator-urban-potsdam-2-14-v6"
+EXPECTED_V2_RDSM_SHA256 = "620b0430d0b22c7854733cc61bddd319f4769d9d273f87d29baa7a396764a35e"
+EXPECTED_V2_DSM_SHA256 = "8bae324c5c6732d92dacd4af0bb321849a85eece0792f80526f369356ef59fe7"
 
 
 def _label_sha(label: str) -> str:
     return hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
-def _load_v6_model(device: torch.device) -> DepthWizardHeightModel:
-    checkpoint_path = ROOT / "artifacts" / "training" / "urban-structure-v6" / "height_model_urban_structure_v6.pt"
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Stage exposed Potsdam 2_14 V6 operator project")
+    parser.add_argument("--repo", type=Path, required=True)
+    return parser
+
+
+def _load_v6_model(repo: Path, device: torch.device) -> DepthWizardHeightModel:
+    checkpoint_path = (
+        repo
+        / "artifacts"
+        / "training"
+        / "urban-structure-v6"
+        / "height_model_urban_structure_v6.pt"
+    )
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"missing V6 checkpoint: {checkpoint_path}")
     actual = sha256_file(checkpoint_path)
@@ -45,7 +63,8 @@ def _load_v6_model(device: torch.device) -> DepthWizardHeightModel:
         raise TypeError("V6 checkpoint payload is not a dictionary")
     if checkpoint.get("best_epoch") != EXPECTED_V6_BEST_EPOCH:
         raise RuntimeError(
-            f"unexpected V6 best epoch: expected {EXPECTED_V6_BEST_EPOCH}, got {checkpoint.get('best_epoch')}"
+            f"unexpected V6 best epoch: expected {EXPECTED_V6_BEST_EPOCH}, "
+            f"got {checkpoint.get('best_epoch')}"
         )
     config_payload = checkpoint.get("config")
     state_dict = checkpoint.get("state_dict")
@@ -87,27 +106,36 @@ def _write_metric_dsm(path: Path, values: np.ndarray, transform: object) -> None
 
 
 def main() -> int:
+    args = _build_parser().parse_args()
+    repo = args.repo.expanduser().resolve(strict=True)
+
     if set(v6.BLIND_TILE_IDS) != {"4_12", "6_12"}:
         raise RuntimeError("V6 blind-tile contract changed")
     if v6.URBAN_DEVELOPMENT_TILE_ID != "2_14":
         raise RuntimeError("V6 exposed development tile changed")
 
+    dataset_root = repo / "data" / "external" / "isprs-potsdam"
+    exposed_v2_root = (
+        repo / "workspace" / "urban-mosaic-corrective" / "5e87670-potsdam-2_14"
+    )
+    output_project = repo / "workspace" / "operator-urban-potsdam-2-14-v6"
+
     device = v6._resolve_device()
-    model = _load_v6_model(device)
-    tile = v6.resolve_potsdam_tile_paths(v6.DATASET_ROOT, "2_14")
+    model = _load_v6_model(repo, device)
+    tile = v6.resolve_potsdam_tile_paths(dataset_root, "2_14")
 
     rdsm_path = v6._find_tif_by_sha(
-        v6.EXPOSED_V2_ROOT,
-        v6.EXPECTED_V2_RDSM_SHA256,
+        exposed_v2_root,
+        EXPECTED_V2_RDSM_SHA256,
         "V2 rDSM",
     )
     base_dsm_path = v6._find_tif_by_sha(
-        v6.EXPOSED_V2_ROOT,
-        v6.EXPECTED_V2_DSM_SHA256,
+        exposed_v2_root,
+        EXPECTED_V2_DSM_SHA256,
         "V2 metric DSM",
     )
     calibration_dem = (
-        ROOT
+        repo
         / "workspace"
         / "final-science-data"
         / "predictions"
@@ -116,11 +144,14 @@ def main() -> int:
         / "copernicus-glo30-mosaic.tif"
     )
     if not calibration_dem.is_file():
-        raise FileNotFoundError(f"missing historical Copernicus calibration evidence: {calibration_dem}")
+        raise FileNotFoundError(
+            f"missing historical Copernicus calibration evidence: {calibration_dem}"
+        )
     calibration_sha = sha256_file(calibration_dem)
     if calibration_sha != EXPECTED_CALIBRATION_DEM_SHA256:
         raise RuntimeError(
-            f"calibration DEM SHA mismatch: expected {EXPECTED_CALIBRATION_DEM_SHA256}, got {calibration_sha}"
+            f"calibration DEM SHA mismatch: expected {EXPECTED_CALIBRATION_DEM_SHA256}, "
+            f"got {calibration_sha}"
         )
 
     height, width, transform = v6._target_grid(tile.rgb)
@@ -161,20 +192,18 @@ def main() -> int:
     correction = refined_relative - rdsm
     refined_dsm = np.full_like(base_dsm, np.nan, dtype=np.float32)
     valid = refined_valid & dsm_valid & np.isfinite(correction) & np.isfinite(base_dsm)
-    refined_dsm[valid] = (
-        base_dsm[valid] + correction[valid] * np.float32(metric_scale)
-    )
+    refined_dsm[valid] = base_dsm[valid] + correction[valid] * np.float32(metric_scale)
 
-    if OUTPUT_PROJECT.exists():
-        shutil.rmtree(OUTPUT_PROJECT)
-    products = OUTPUT_PROJECT / "products"
+    if output_project.exists():
+        shutil.rmtree(output_project)
+    products = output_project / "products"
     products.mkdir(parents=True)
     dsm_path = products / "dsm.tif"
     _write_metric_dsm(dsm_path, refined_dsm, transform)
 
     source_sha = sha256_file(tile.rgb)
     prediction_sha = sha256_file(dsm_path)
-    manifest = ProjectManifest.create_or_load(OUTPUT_PROJECT, tile.rgb)
+    manifest = ProjectManifest.create_or_load(output_project, tile.rgb)
     manifest.set_identity(
         source_sha256=source_sha,
         input_kind="georeferenced",
@@ -245,11 +274,11 @@ def main() -> int:
         },
     )
     manifest.mark_status(ProjectRunStatus.COMPLETE)
-    ProjectManifest.load(OUTPUT_PROJECT)
+    ProjectManifest.load(output_project)
 
     correction_m = np.abs(correction[valid] * np.float32(metric_scale))
     print("PASS_OPERATOR_URBAN_V6_PROJECT_STAGED")
-    print(f"project_dir={OUTPUT_PROJECT}")
+    print(f"project_dir={output_project}")
     print(f"source={tile.rgb}")
     print(f"v6_checkpoint_sha256={EXPECTED_V6_CHECKPOINT_SHA256}")
     print(f"v6_best_epoch={EXPECTED_V6_BEST_EPOCH}")
