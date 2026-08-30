@@ -90,7 +90,7 @@ index d038a8b..0000000 100644
      eligible = bool(
          natural["non_degrading"]
          and refined_rmse < base_rmse - 1e-3
-@@ -1027,6 +1037,19 @@ def _evaluate_exposed_2_14(
+@@ -1027,6 +1037,10 @@ def _evaluate_exposed_2_14(
          gsd_m=POTSDAM_BENCHMARK_GSD_M,
          scale_m=8.0,
      )
@@ -98,16 +98,10 @@ index d038a8b..0000000 100644
 +    s4_base_r = structure4.get("base_pearson_r")
 +    s8_refined_r = structure8.get("refined_pearson_r")
 +    s8_base_r = structure8.get("base_pearson_r")
-+    structure_correlations_valid = bool(
-+        isinstance(s4_refined_r, (int, float))
-+        and isinstance(s4_base_r, (int, float))
-+        and isinstance(s8_refined_r, (int, float))
-+        and isinstance(s8_base_r, (int, float))
-+    )
      pass_transfer = bool(
          refined_metrics.rmse_m < base_metrics.rmse_m
          and refined_metrics.mae_m <= base_metrics.mae_m
-@@ -1035,16 +1058,15 @@ def _evaluate_exposed_2_14(
+@@ -1035,16 +1049,18 @@ def _evaluate_exposed_2_14(
          and base_metrics.pearson_r is not None
          and refined_metrics.pearson_r >= base_metrics.pearson_r
          and refined_slope.rmse_degrees <= base_slope.rmse_degrees
@@ -123,13 +117,16 @@ index d038a8b..0000000 100644
 +        < _required_number(structure4, "base_rmse_m")
 +        and _required_number(structure8, "refined_rmse_m")
 +        < _required_number(structure8, "base_rmse_m")
-+        and structure_correlations_valid
++        and isinstance(s4_refined_r, (int, float))
++        and isinstance(s4_base_r, (int, float))
 +        and float(s4_refined_r) >= float(s4_base_r)
++        and isinstance(s8_refined_r, (int, float))
++        and isinstance(s8_base_r, (int, float))
 +        and float(s8_refined_r) >= float(s8_base_r)
      )
      return {
          "base": base_metrics.model_dump(),
-@@ -1325,24 +1347,32 @@ def main() -> None:
+@@ -1325,24 +1341,32 @@ def main() -> None:
          f"{'YES' if final_natural_validation['non_degrading'] else 'NO'}"
      )
      if exposed_2_14 is not None:
