@@ -1,5 +1,4 @@
 diff --git a/scripts/train_urban_structure_v6.py b/scripts/train_urban_structure_v6.py
-index d038a8b..0000000 100644
 --- a/scripts/train_urban_structure_v6.py
 +++ b/scripts/train_urban_structure_v6.py
 @@ -3,9 +3,11 @@ from __future__ import annotations
