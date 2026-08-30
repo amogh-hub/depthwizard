@@ -13,10 +13,13 @@ sys.path.insert(0, str(CODE_ROOT / "src"))
 import numpy as np
 import rasterio
 import torch
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 
-from depthwizard.contracts import ProjectRunStatus
+from depthwizard.contracts import ProjectMeshBuildRequest, ProjectRunStatus
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
 from depthwizard.height_model.training import fit_rgb_ranges, normalize_rgb, patch_windows
+from depthwizard.mesh.project_mesh import build_project_mesh
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
@@ -77,7 +80,68 @@ def _load_v6_model(repo: Path, device: torch.device) -> DepthWizardHeightModel:
     return model
 
 
-def _write_metric_dsm(path: Path, values: np.ndarray, transform: object) -> None:
+def _read_native_base_contract(
+    base_dsm_path: Path,
+    source_rgb_path: Path,
+) -> tuple[np.ndarray, np.ndarray, object, object, tuple[int, int]]:
+    with rasterio.open(source_rgb_path) as rgb_src, rasterio.open(base_dsm_path) as dsm_src:
+        if rgb_src.width != dsm_src.width or rgb_src.height != dsm_src.height:
+            raise RuntimeError(
+                "native V2 metric DSM is not on the source RGB grid: "
+                f"rgb={rgb_src.width}x{rgb_src.height}, dsm={dsm_src.width}x{dsm_src.height}"
+            )
+        if rgb_src.crs != dsm_src.crs:
+            raise RuntimeError(f"source/DSM CRS mismatch: rgb={rgb_src.crs}, dsm={dsm_src.crs}")
+        if not rgb_src.transform.almost_equals(dsm_src.transform):
+            raise RuntimeError("source RGB and native V2 DSM transforms differ")
+        data = dsm_src.read(1, masked=True)
+        values = np.asarray(data.filled(np.nan), dtype=np.float32)
+        valid = np.asarray(~data.mask, dtype=bool) & np.isfinite(values)
+        return values, valid, dsm_src.transform, dsm_src.crs, (dsm_src.height, dsm_src.width)
+
+
+def _lift_correction_to_native(
+    correction_metric_025m: np.ndarray,
+    correction_valid_025m: np.ndarray,
+    benchmark_transform: object,
+    native_shape: tuple[int, int],
+    native_transform: object,
+    native_crs: object,
+) -> tuple[np.ndarray, np.ndarray]:
+    native_correction = np.zeros(native_shape, dtype=np.float32)
+    native_valid = np.zeros(native_shape, dtype=np.uint8)
+    source = np.where(correction_valid_025m, correction_metric_025m, 0.0).astype(np.float32)
+    reproject(
+        source=source,
+        destination=native_correction,
+        src_transform=benchmark_transform,
+        src_crs=v6.POTSDAM_CRS,
+        dst_transform=native_transform,
+        dst_crs=native_crs,
+        src_nodata=None,
+        dst_nodata=0.0,
+        resampling=Resampling.bilinear,
+    )
+    reproject(
+        source=correction_valid_025m.astype(np.uint8),
+        destination=native_valid,
+        src_transform=benchmark_transform,
+        src_crs=v6.POTSDAM_CRS,
+        dst_transform=native_transform,
+        dst_crs=native_crs,
+        src_nodata=0,
+        dst_nodata=0,
+        resampling=Resampling.nearest,
+    )
+    return native_correction, native_valid > 0
+
+
+def _write_metric_dsm(
+    path: Path,
+    values: np.ndarray,
+    transform: object,
+    crs: object,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
         path,
@@ -87,14 +151,14 @@ def _write_metric_dsm(path: Path, values: np.ndarray, transform: object) -> None
         width=values.shape[1],
         count=1,
         dtype="float32",
-        crs=v6.POTSDAM_CRS,
+        crs=crs,
         transform=transform,
         nodata=np.nan,
         compress="deflate",
         predictor=3,
     ) as dst:
         dst.write(values.astype(np.float32), 1)
-        dst.set_band_description(1, "DepthWizard V6 exposed-development metric DSM")
+        dst.set_band_description(1, "DepthWizard V6 exposed-development native-grid metric DSM")
         dst.update_tags(
             DEPTHWIZARD_PRODUCT="METRIC_DSM_M",
             MODEL="V6_URBAN_STRUCTURE",
@@ -102,6 +166,7 @@ def _write_metric_dsm(path: Path, values: np.ndarray, transform: object) -> None
             CHECKPOINT_SHA256=EXPECTED_V6_CHECKPOINT_SHA256,
             POTSDAM_TILE="2_14",
             DEVELOPMENT_ONLY="true",
+            V6_CORRECTION_GRID="0.25m_benchmark_lifted_to_native_rgb_grid",
         )
 
 
@@ -115,9 +180,7 @@ def main() -> int:
         raise RuntimeError("V6 exposed development tile changed")
 
     dataset_root = repo / "data" / "external" / "isprs-potsdam"
-    exposed_v2_root = (
-        repo / "workspace" / "urban-mosaic-corrective" / "5e87670-potsdam-2_14"
-    )
+    exposed_v2_root = repo / "workspace" / "urban-mosaic-corrective" / "5e87670-potsdam-2_14"
     output_project = repo / "workspace" / "operator-urban-potsdam-2-14-v6"
 
     device = v6._resolve_device()
@@ -144,20 +207,17 @@ def main() -> int:
         / "copernicus-glo30-mosaic.tif"
     )
     if not calibration_dem.is_file():
-        raise FileNotFoundError(
-            f"missing historical Copernicus calibration evidence: {calibration_dem}"
-        )
+        raise FileNotFoundError(f"missing historical Copernicus calibration evidence: {calibration_dem}")
     calibration_sha = sha256_file(calibration_dem)
     if calibration_sha != EXPECTED_CALIBRATION_DEM_SHA256:
         raise RuntimeError(
-            f"calibration DEM SHA mismatch: expected {EXPECTED_CALIBRATION_DEM_SHA256}, "
-            f"got {calibration_sha}"
+            f"calibration DEM SHA mismatch: expected {EXPECTED_CALIBRATION_DEM_SHA256}, got {calibration_sha}"
         )
 
-    height, width, transform = v6._target_grid(tile.rgb)
+    height, width, benchmark_transform = v6._target_grid(tile.rgb)
     rgb_raw, rgb_valid = v6._read_rgb_025m(tile.rgb, height, width)
     rdsm, rdsm_valid = v6._read_float_025m(rdsm_path, height, width)
-    base_dsm, dsm_valid = v6._read_float_025m(base_dsm_path, height, width)
+    base_dsm_025m, dsm_valid_025m = v6._read_float_025m(base_dsm_path, height, width)
     input_valid = rgb_valid & rdsm_valid & np.isfinite(rdsm)
     ranges = fit_rgb_ranges(rgb_raw, input_valid)
     rgb = normalize_rgb(rgb_raw, ranges)
@@ -186,20 +246,42 @@ def main() -> int:
     refined_relative, refined_valid = v6._predict_scene(model, scene, device)
     metric_scale, _metric_offset, affine_rmse = v6._sample_scale_fit(
         rdsm,
-        base_dsm,
-        input_valid & dsm_valid,
+        base_dsm_025m,
+        input_valid & dsm_valid_025m,
     )
-    correction = refined_relative - rdsm
-    refined_dsm = np.full_like(base_dsm, np.nan, dtype=np.float32)
-    valid = refined_valid & dsm_valid & np.isfinite(correction) & np.isfinite(base_dsm)
-    refined_dsm[valid] = base_dsm[valid] + correction[valid] * np.float32(metric_scale)
+    correction_relative = refined_relative - rdsm
+    correction_valid_025m = refined_valid & input_valid & np.isfinite(correction_relative)
+    correction_metric_025m = correction_relative * np.float32(metric_scale)
+
+    base_native, base_native_valid, native_transform, native_crs, native_shape = _read_native_base_contract(
+        base_dsm_path,
+        tile.rgb,
+    )
+    native_correction, native_correction_valid = _lift_correction_to_native(
+        correction_metric_025m,
+        correction_valid_025m,
+        benchmark_transform,
+        native_shape,
+        native_transform,
+        native_crs,
+    )
+    refined_native = base_native.copy()
+    apply_native = base_native_valid & native_correction_valid & np.isfinite(native_correction)
+    refined_native[apply_native] = base_native[apply_native] + native_correction[apply_native]
+    refined_native[~base_native_valid] = np.nan
 
     if output_project.exists():
         shutil.rmtree(output_project)
     products = output_project / "products"
     products.mkdir(parents=True)
     dsm_path = products / "dsm.tif"
-    _write_metric_dsm(dsm_path, refined_dsm, transform)
+    _write_metric_dsm(dsm_path, refined_native, native_transform, native_crs)
+
+    with rasterio.open(tile.rgb) as source_src, rasterio.open(dsm_path) as staged_src:
+        if source_src.width != staged_src.width or source_src.height != staged_src.height:
+            raise RuntimeError("staged native DSM does not match source RGB dimensions")
+        if source_src.crs != staged_src.crs or not source_src.transform.almost_equals(staged_src.transform):
+            raise RuntimeError("staged native DSM does not exactly match source RGB geospatial grid")
 
     source_sha = sha256_file(tile.rgb)
     prediction_sha = sha256_file(dsm_path)
@@ -208,10 +290,10 @@ def main() -> int:
         source_sha256=source_sha,
         input_kind="georeferenced",
         geometry_config_sha256=_label_sha(
-            f"operator-stage:{QUALIFIED_V6_SOURCE_SHA}:V6:potsdam-2-14:geometry"
+            f"operator-stage:{QUALIFIED_V6_SOURCE_SHA}:V6:potsdam-2-14:native-grid-geometry"
         ),
         run_config_sha256=_label_sha(
-            f"operator-stage:{QUALIFIED_V6_SOURCE_SHA}:V6:potsdam-2-14:metric"
+            f"operator-stage:{QUALIFIED_V6_SOURCE_SHA}:V6:potsdam-2-14:native-grid-metric"
         ),
     )
     manifest.set_estimator(
@@ -221,13 +303,14 @@ def main() -> int:
             "v6_checkpoint_sha256": EXPECTED_V6_CHECKPOINT_SHA256,
             "v6_best_epoch": EXPECTED_V6_BEST_EPOCH,
             "exposed_development_only": True,
+            "v6_correction_native_grid_policy": "bilinear lift from frozen 0.25m V6 correction onto native aligned V2 DSM",
             "blind_tiles_touched": False,
         }
     )
     manifest.register_artifact(
         "dsm",
         dsm_path,
-        semantics="metric_dsm_v2_broad_terrain_plus_v6_structure_correction",
+        semantics="native_metric_dsm_v2_plus_v6_0p25m_structure_correction_lift",
         units="m",
         sha256=prediction_sha,
     )
@@ -243,6 +326,8 @@ def main() -> int:
             "model_id": "DA3MONO-LARGE + URBAN-STRUCTURE-V6",
             "v6_checkpoint_sha256": EXPECTED_V6_CHECKPOINT_SHA256,
             "v6_best_epoch": EXPECTED_V6_BEST_EPOCH,
+            "native_grid_shape": list(native_shape),
+            "benchmark_grid_shape": [height, width],
         },
     )
     manifest.record_stage(
@@ -253,6 +338,8 @@ def main() -> int:
             "method": "inherited_frozen_v2_metric_affine_plus_v6_local_structure_correction",
             "recovered_v2_metric_scale_m_per_relative_unit": metric_scale,
             "v2_affine_reconstruction_rmse_m": affine_rmse,
+            "v6_correction_grid_m": v6.POTSDAM_BENCHMARK_GSD_M,
+            "native_operator_grid_exactly_matches_source_rgb": True,
             "evidence": {
                 "dem": {
                     "path": str(calibration_dem),
@@ -262,6 +349,15 @@ def main() -> int:
             },
         },
     )
+    manifest.mark_status(ProjectRunStatus.COMPLETE)
+
+    mesh_report = build_project_mesh(ProjectMeshBuildRequest(project_dir=output_project))
+    manifest = ProjectManifest.load(output_project)
+    if "mesh_manifest" not in manifest.artifacts:
+        raise RuntimeError("prebuilt terrain mesh was not registered in project manifest")
+    if mesh_report.raster_height != native_shape[0] or mesh_report.raster_width != native_shape[1]:
+        raise RuntimeError("terrain mesh report is not based on the native staged DSM grid")
+
     manifest.record_stage(
         ProcessingStage.COMPLETE,
         status="completed",
@@ -271,21 +367,31 @@ def main() -> int:
             "reference_path_for_manual_ui_selection": str(tile.reference_dsm),
             "reserved_blind_tiles": list(v6.BLIND_TILE_IDS),
             "blind_tiles_touched": False,
+            "native_grid_operator_dsm": True,
+            "terrain_mesh_prebuilt": True,
+            "mesh_manifest": str(mesh_report.mesh_manifest_path),
         },
     )
     manifest.mark_status(ProjectRunStatus.COMPLETE)
     ProjectManifest.load(output_project)
 
-    correction_m = np.abs(correction[valid] * np.float32(metric_scale))
-    print("PASS_OPERATOR_URBAN_V6_PROJECT_STAGED")
+    correction_abs = np.abs(correction_metric_025m[correction_valid_025m])
+    native_abs = np.abs(native_correction[apply_native])
+    print("PASS_OPERATOR_URBAN_V6_NATIVE_PROJECT_STAGED")
     print(f"project_dir={output_project}")
     print(f"source={tile.rgb}")
+    print(f"native_grid_shape={native_shape[1]}x{native_shape[0]}")
+    print(f"benchmark_grid_shape={width}x{height}")
     print(f"v6_checkpoint_sha256={EXPECTED_V6_CHECKPOINT_SHA256}")
     print(f"v6_best_epoch={EXPECTED_V6_BEST_EPOCH}")
     print(f"prediction_sha256={prediction_sha}")
     print(f"metric_scale_m_per_relative_unit={metric_scale:.9f}")
-    print(f"correction_mean_abs_m={float(np.mean(correction_m)):.6f}")
-    print(f"correction_p95_abs_m={float(np.percentile(correction_m, 95)):.6f}")
+    print(f"benchmark_correction_mean_abs_m={float(np.mean(correction_abs)):.6f}")
+    print(f"benchmark_correction_p95_abs_m={float(np.percentile(correction_abs, 95)):.6f}")
+    print(f"native_correction_mean_abs_m={float(np.mean(native_abs)):.6f}")
+    print(f"native_correction_p95_abs_m={float(np.percentile(native_abs, 95)):.6f}")
+    print(f"mesh_manifest={mesh_report.mesh_manifest_path}")
+    print(f"mesh_lod_count={len(mesh_report.lods)}")
     print(f"reference_for_manual_validation={tile.reference_dsm}")
     print("reference_consumed_by_staging_helper=false")
     print("blind_tiles_4_12_6_12_touched=false")
