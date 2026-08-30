@@ -82,7 +82,7 @@ def _gaussian_kernel_1d(
 ) -> torch.Tensor:
     if not math.isfinite(sigma_px) or sigma_px <= 0:
         raise ValueError("sigma_px must be finite and positive")
-    radius = min(max(1, int(math.ceil(3.0 * sigma_px))), max_radius)
+    radius = min(max(1, math.ceil(3.0 * sigma_px)), max_radius)
     coordinates = torch.arange(-radius, radius + 1, dtype=dtype, device=device)
     kernel = torch.exp(-0.5 * (coordinates / sigma_px).square())
     return kernel / kernel.sum().clamp_min(torch.finfo(dtype).eps)
