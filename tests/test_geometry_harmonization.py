@@ -85,8 +85,9 @@ def test_scene_global_normalization_runs_after_harmonization(tmp_path: Path) -> 
     )
 
     finite = result.relative_height[np.isfinite(result.relative_height)]
-    assert float(np.min(finite)) == pytest.approx(0.0, abs=1e-6)
-    assert float(np.max(finite)) == pytest.approx(1.0, abs=1e-6)
+    p01, p99 = np.percentile(finite, [1.0, 99.0])
+    assert float(p01) == pytest.approx(0.0, abs=1e-5)
+    assert float(p99) == pytest.approx(1.0, abs=1e-5)
     seam_jump = np.abs(np.diff(result.relative_height, axis=1))
     assert np.percentile(seam_jump, 99) < 0.05
 
@@ -106,6 +107,21 @@ def test_scene_normalization_does_not_invent_relief_in_flat_regions() -> None:
     low_span = float(np.ptp(normalized[:32]))
     high_span = float(np.ptp(normalized[32:]))
     assert low_span < high_span * 0.02
+
+
+def test_scene_normalization_preserves_extrema_beyond_robust_percentiles() -> None:
+    ordinary = np.linspace(10.0, 20.0, 10_000, dtype=np.float32).reshape(100, 100)
+    ordinary[0, 0] = -100.0
+    ordinary[-1, -1] = 200.0
+
+    normalized = normalize_relative_height_scene(ordinary)
+    finite = normalized[np.isfinite(normalized)]
+    p01, p99 = np.percentile(finite, [1.0, 99.0])
+
+    assert float(p01) == pytest.approx(0.0, abs=1e-5)
+    assert float(p99) == pytest.approx(1.0, abs=1e-5)
+    assert float(np.min(finite)) < 0.0
+    assert float(np.max(finite)) > 1.0
 
 
 def test_low_information_overlap_cannot_rescale_an_entire_tile() -> None:
