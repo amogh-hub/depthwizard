@@ -19,17 +19,39 @@ DA3_CHECKPOINT_SHA256 = "7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba8
 DA3_UPSTREAM_SOURCE_COMMIT = "3d835ec1a5802d64a8b8b15f817a1ab54809bfe4"
 
 
+def depth_to_affine_height_evidence(depth: np.ndarray) -> np.ndarray:
+    """Invert camera depth without applying tile-local normalization.
+
+    The tiled production pipeline must preserve the model's affine evidence until neighboring
+    predictions have been harmonized. Percentile-normalizing each inference tile independently
+    destroys inter-tile low-frequency information and can imprint the tile grid into the final
+    surface. ``-depth`` keeps the required height ordering (nearer surface = higher evidence) while
+    leaving scale/offset available to the overlap harmonizer and later scene-global normalization.
+    """
+    d = np.asarray(depth, dtype=np.float32)
+    valid = np.isfinite(d)
+    if not np.any(valid):
+        raise ValueError("DA3 returned no finite depth values")
+    evidence = -d
+    evidence = evidence.astype(np.float32, copy=False)
+    evidence[~valid] = np.nan
+    return evidence
+
+
 def depth_to_relative_height(
     depth: np.ndarray,
     *,
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
 ) -> np.ndarray:
-    """Convert camera depth into a stable dimensionless relative-height convention.
+    """Convert a complete depth field into a stable dimensionless relative-height convention.
 
-    In nadir/near-nadir optical imagery, smaller camera depth corresponds to a higher surface.
-    The returned field is monotonic with height and deliberately has no metric units.
+    This helper is appropriate when ``depth`` represents one complete scene. The tiled production
+    adapter deliberately does *not* call it per tile; production first assembles affine-preserving
+    evidence and performs one scene-global normalization downstream.
     """
+    if not (0.0 <= low_percentile < high_percentile <= 100.0):
+        raise ValueError("percentiles must satisfy 0 <= low < high <= 100")
     d = np.asarray(depth, dtype=np.float32)
     valid = np.isfinite(d)
     if not np.any(valid):
@@ -149,7 +171,7 @@ class DA3MonocularPrior(GeometryPrior):
                     align_corners=False,
                 )[0, 0].cpu().numpy().astype(np.float32)
 
-        relative_height = depth_to_relative_height(depth)
+        relative_height = depth_to_affine_height_evidence(depth)
         return GeometryPriorOutput(
             relative_height=relative_height,
             confidence=confidence,
@@ -164,7 +186,8 @@ class DA3MonocularPrior(GeometryPrior):
                 ),
                 "upstream_source_commit": DA3_UPSTREAM_SOURCE_COMMIT,
                 "device": device,
-                "output_semantics": "dimensionless_relative_surface_height",
+                "output_semantics": "affine_relative_surface_height_evidence",
+                "scene_normalize_relative_height": True,
                 "confidence_semantics": "model_native_not_probability_calibrated",
                 "license": "Apache-2.0",
             },
