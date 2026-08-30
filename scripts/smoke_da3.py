@@ -55,6 +55,10 @@ def main() -> None:
         raise SystemExit(
             "DA3 smoke test failed: production adapter did not request scene-global normalization"
         )
+    if output.metadata.get("dual_lattice_mosaic") is not True:
+        raise SystemExit(
+            "DA3 smoke test failed: production adapter did not request dual-lattice scene assembly"
+        )
     if output.metadata.get("output_semantics") != "affine_relative_surface_height_evidence":
         raise SystemExit("DA3 smoke test failed: unexpected affine-evidence semantics")
 
@@ -78,8 +82,6 @@ def main() -> None:
     if output.confidence is not None:
         np.save(OUT_DIR / "confidence.npy", np.asarray(output.confidence, dtype=np.float32))
 
-    # Visualization remains robustly clipped for display only; the persisted scientific relative
-    # field above deliberately retains values below P01 and above P99.
     visual_u8 = np.nan_to_num(relative, nan=0.0)
     visual_u8 = (np.clip(visual_u8, 0.0, 1.0) * 255.0).astype(np.uint8)
     Image.fromarray(visual_u8, mode="L").save(OUT_DIR / "relative_height_vis.png")
@@ -103,6 +105,7 @@ def main() -> None:
         "relative_height_p01": p01_value,
         "relative_height_p99": p99_value,
         "scene_normalization_required": True,
+        "dual_lattice_mosaic_required": True,
         "scene_extrema_clipped": False,
         "confidence_present": output.confidence is not None,
         "wall_time_seconds": elapsed,
