@@ -54,7 +54,7 @@ class ScaffoldBiasPrior(GeometryPrior):
         self.shapes: list[tuple[int, int]] = []
 
     def infer(self, rgb_normalized: np.ndarray) -> GeometryPriorOutput:
-        shape = rgb_normalized.shape[:2]
+        shape = (int(rgb_normalized.shape[0]), int(rgb_normalized.shape[1]))
         self.shapes.append(shape)
         base = rgb_normalized[..., 0].astype(np.float32)
         if shape != self.full_shape:
