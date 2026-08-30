@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 import rasterio
 import torch
+from affine import Affine
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from rasterio.warp import reproject
@@ -210,7 +212,7 @@ def _ensure_native_v2_geometry(
     return output
 
 
-def _target_grid(rgb_path: Path) -> tuple[int, int, object]:
+def _target_grid(rgb_path: Path) -> tuple[int, int, Affine]:
     with rasterio.open(rgb_path) as src:
         width = round(src.width * POTSDAM_NATIVE_GSD_M / POTSDAM_BENCHMARK_GSD_M)
         height = round(src.height * POTSDAM_NATIVE_GSD_M / POTSDAM_BENCHMARK_GSD_M)
@@ -255,7 +257,7 @@ def _read_potsdam_reference_025m(
     reference_path: Path,
     height: int,
     width: int,
-    transform: object,
+    transform: Affine,
 ) -> tuple[np.ndarray, np.ndarray]:
     inspect_potsdam_reference_contract(
         rgb_path,
@@ -799,6 +801,21 @@ def _metric(report: dict[str, object], section: str, field: str) -> float:
     return float(value)
 
 
+
+def _required_number(mapping: Mapping[str, object], key: str) -> float:
+    value = mapping.get(key)
+    if not isinstance(value, (int, float)):
+        raise TypeError(f"metric {key} is not numeric")
+    return float(value)
+
+
+def _required_mapping(mapping: Mapping[str, object], key: str) -> dict[str, object]:
+    value = mapping.get(key)
+    if not isinstance(value, dict):
+        raise TypeError(f"report section {key} is missing or invalid")
+    return value
+
+
 def _natural_validation_summary(reports: list[dict[str, object]]) -> dict[str, object]:
     base_sq = 0.0
     refined_sq = 0.0
@@ -837,33 +854,38 @@ def _urban_epoch_eligible(
         return False, float("-inf")
     base_rmse = _metric(urban, "base", "rmse_m")
     refined_rmse = _metric(urban, "refined", "rmse_m")
-    structure4 = urban.get("structure_4m")
-    structure8 = urban.get("structure_8m")
-    base_slope = urban.get("base_slope")
-    refined_slope = urban.get("refined_slope")
-    if not all(
-        isinstance(value, dict)
-        for value in (structure4, structure8, base_slope, refined_slope)
-    ):
-        raise TypeError("urban validation report is incomplete")
-    s4_base = float(structure4["base_rmse_m"])
-    s4_refined = float(structure4["refined_rmse_m"])
-    s8_base = float(structure8["base_rmse_m"])
-    s8_refined = float(structure8["refined_rmse_m"])
-    s4_base_r = structure4["base_pearson_r"]
-    s4_refined_r = structure4["refined_pearson_r"]
-    s8_base_r = structure8["base_pearson_r"]
-    s8_refined_r = structure8["refined_pearson_r"]
-    if not all(
-        isinstance(value, (int, float))
-        for value in (s4_base_r, s4_refined_r, s8_base_r, s8_refined_r)
-    ):
+    structure4 = _required_mapping(urban, "structure_4m")
+    structure8 = _required_mapping(urban, "structure_8m")
+    base_slope = _required_mapping(urban, "base_slope")
+    refined_slope = _required_mapping(urban, "refined_slope")
+
+    s4_base = _required_number(structure4, "base_rmse_m")
+    s4_refined = _required_number(structure4, "refined_rmse_m")
+    s8_base = _required_number(structure8, "base_rmse_m")
+    s8_refined = _required_number(structure8, "refined_rmse_m")
+
+    s4_base_r = structure4.get("base_pearson_r")
+    s4_refined_r = structure4.get("refined_pearson_r")
+    s8_base_r = structure8.get("base_pearson_r")
+    s8_refined_r = structure8.get("refined_pearson_r")
+    if not isinstance(s4_base_r, (int, float)):
         return False, float("-inf")
-    slope_ok = float(refined_slope["rmse_degrees"]) <= float(
-        base_slope["rmse_degrees"]
-    ) + 1e-9
+    if not isinstance(s4_refined_r, (int, float)):
+        return False, float("-inf")
+    if not isinstance(s8_base_r, (int, float)):
+        return False, float("-inf")
+    if not isinstance(s8_refined_r, (int, float)):
+        return False, float("-inf")
+
+    natural_non_degrading = natural.get("non_degrading")
+    if not isinstance(natural_non_degrading, bool):
+        raise TypeError("natural validation non_degrading flag is not boolean")
+
+    slope_ok = _required_number(refined_slope, "rmse_degrees") <= (
+        _required_number(base_slope, "rmse_degrees") + 1e-9
+    )
     eligible = bool(
-        natural["non_degrading"]
+        natural_non_degrading
         and refined_rmse < base_rmse - 1e-3
         and s4_refined < s4_base - 1e-3
         and s8_refined < s8_base - 1e-3
@@ -1030,6 +1052,21 @@ def _evaluate_exposed_2_14(
         gsd_m=POTSDAM_BENCHMARK_GSD_M,
         scale_m=8.0,
     )
+    s4_refined_r = structure4.get("refined_pearson_r")
+    s4_base_r = structure4.get("base_pearson_r")
+    s8_refined_r = structure8.get("refined_pearson_r")
+    s8_base_r = structure8.get("base_pearson_r")
+    structure_correlation_ok = False
+    if (
+        isinstance(s4_refined_r, (int, float))
+        and isinstance(s4_base_r, (int, float))
+        and isinstance(s8_refined_r, (int, float))
+        and isinstance(s8_base_r, (int, float))
+    ):
+        structure_correlation_ok = (
+            float(s4_refined_r) >= float(s4_base_r)
+            and float(s8_refined_r) >= float(s8_base_r)
+        )
     pass_transfer = bool(
         refined_metrics.rmse_m < base_metrics.rmse_m
         and refined_metrics.mae_m <= base_metrics.mae_m
@@ -1037,14 +1074,11 @@ def _evaluate_exposed_2_14(
         and base_metrics.pearson_r is not None
         and refined_metrics.pearson_r >= base_metrics.pearson_r
         and refined_slope.rmse_degrees <= base_slope.rmse_degrees
-        and float(structure4["refined_rmse_m"]) < float(structure4["base_rmse_m"])
-        and float(structure8["refined_rmse_m"]) < float(structure8["base_rmse_m"])
-        and isinstance(structure4["refined_pearson_r"], (int, float))
-        and isinstance(structure4["base_pearson_r"], (int, float))
-        and float(structure4["refined_pearson_r"]) >= float(structure4["base_pearson_r"])
-        and isinstance(structure8["refined_pearson_r"], (int, float))
-        and isinstance(structure8["base_pearson_r"], (int, float))
-        and float(structure8["refined_pearson_r"]) >= float(structure8["base_pearson_r"])
+        and _required_number(structure4, "refined_rmse_m")
+        < _required_number(structure4, "base_rmse_m")
+        and _required_number(structure8, "refined_rmse_m")
+        < _required_number(structure8, "base_rmse_m")
+        and structure_correlation_ok
     )
     return {
         "base": base_metrics.model_dump(),
@@ -1325,25 +1359,28 @@ def main() -> None:
         f"{'YES' if final_natural_validation['non_degrading'] else 'NO'}"
     )
     if exposed_2_14 is not None:
-        base = exposed_2_14["base"]
-        refined = exposed_2_14["refined"]
-        s4 = exposed_2_14["structure_4m"]
-        s8 = exposed_2_14["structure_8m"]
+        base = _required_mapping(exposed_2_14, "base")
+        refined = _required_mapping(exposed_2_14, "refined")
+        s4 = _required_mapping(exposed_2_14, "structure_4m")
+        s8 = _required_mapping(exposed_2_14, "structure_8m")
+        transfer_pass = exposed_2_14.get("pass")
+        if not isinstance(transfer_pass, bool):
+            raise TypeError("Potsdam 2_14 transfer gate is not boolean")
         print(
-            f"Potsdam 2_14 RMSE: {base['rmse_m']:.4f} -> "
-            f"{refined['rmse_m']:.4f} m"
+            f"Potsdam 2_14 RMSE: {_required_number(base, 'rmse_m'):.4f} -> "
+            f"{_required_number(refined, 'rmse_m'):.4f} m"
         )
         print(
-            f"Potsdam 2_14 structure 4m: {s4['base_rmse_m']:.4f} -> "
-            f"{s4['refined_rmse_m']:.4f} m"
+            f"Potsdam 2_14 structure 4m: {_required_number(s4, 'base_rmse_m'):.4f} -> "
+            f"{_required_number(s4, 'refined_rmse_m'):.4f} m"
         )
         print(
-            f"Potsdam 2_14 structure 8m: {s8['base_rmse_m']:.4f} -> "
-            f"{s8['refined_rmse_m']:.4f} m"
+            f"Potsdam 2_14 structure 8m: {_required_number(s8, 'base_rmse_m'):.4f} -> "
+            f"{_required_number(s8, 'refined_rmse_m'):.4f} m"
         )
         print(
             "Potsdam 2_14 production-transfer gate: "
-            f"{'PASS' if exposed_2_14['pass'] else 'REJECT'}"
+            f"{'PASS' if transfer_pass else 'REJECT'}"
         )
     else:
         print("Potsdam 2_14 was not opened because no validation-eligible learned epoch existed.")
