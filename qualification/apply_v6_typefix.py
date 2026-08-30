@@ -41,8 +41,8 @@ def main() -> None:
     )
     text = replace_once(
         text,
-        "from pathlib import Path\n\nimport numpy as np\n",
-        "from pathlib import Path\n\nfrom affine import Affine\nimport numpy as np\n",
+        "from pathlib import Path\n\nimport numpy as np\nimport rasterio\nimport torch\n",
+        "from pathlib import Path\n\nimport numpy as np\nimport rasterio\nimport torch\nfrom affine import Affine\n",
         "Affine import",
     )
     text = replace_once(
