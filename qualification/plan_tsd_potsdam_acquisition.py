@@ -57,7 +57,7 @@ def _expected_filename(tile_id: str, component: str) -> str:
 def _load_inventory(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("TSD inventory must be a JSON object")
+        raise TypeError("TSD inventory must be a JSON object")
     if payload.get("protocol_version") != TSD_SPLIT_PROTOCOL_VERSION:
         raise ValueError(
             "inventory protocol mismatch: "
@@ -74,11 +74,11 @@ def _load_inventory(path: Path) -> dict[str, Any]:
 def _tile_records(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     raw_tiles = payload.get("tiles")
     if not isinstance(raw_tiles, list):
-        raise ValueError("inventory is missing tile records")
+        raise TypeError("inventory tile records must be a JSON array")
     records: dict[str, dict[str, Any]] = {}
     for raw in raw_tiles:
         if not isinstance(raw, dict) or not isinstance(raw.get("tile_id"), str):
-            raise ValueError("inventory contains malformed tile record")
+            raise TypeError("inventory contains malformed tile record")
         tile_id = raw["tile_id"]
         if tile_id in records:
             raise ValueError(f"inventory contains duplicate tile record: {tile_id}")
