@@ -40,7 +40,10 @@ requirements:
       - remote-sensing refinement research lane with evidence-gated promotion policy
       - sensor/GSD-aware dataset registry and cross-sensor holdout policy
       - geodetic evidence calibration that preserves fine monocular structure
-    verification: "same-input baseline comparison + cross-sensor/terrain generalization benchmark + negative-result record"
+      - research-only depthwizard.height_model.terrain_structure terrain/above-ground decomposition
+      - auditable depthwizard.height_model.terrain_structure_targets supervision preparation
+      - fail-closed depthwizard.height_model.terrain_structure_split training/development boundary
+    verification: "same-input baseline comparison + cross-sensor/terrain generalization benchmark + compensation/compression regression tests + negative-result record; TSD remains non-production until frozen promotion gates pass"
     evidence: "domain_generalization_report.json"
 
   - id: PS-CAL-DEM-001
@@ -103,10 +106,13 @@ requirements:
     implementation:
       - depthwizard.analysis.structures.estimate_structure_height
       - depthwizard.analysis.project_structure.estimate_project_structure_height
-      - robust surrounding-ground plane estimation beneath explicit analyst footprints
+      - physical-GSD roof inset plus metre-defined 1.5-8.0 m surrounding-ground support
+      - robust local-ground plane fitting with inlier fraction, sector coverage and dispersion diagnostics
+      - depthwizard.evaluation.building_height reference-selected per-building benchmark and material promotion gate
+      - research-only terrain/AGL decomposition with independent roof, ground, AGL, signed-bias and height-stratified supervision
       - depthwizard.service project structure-height endpoint
       - desktop Structures workflow in registered 2D and evidence-native 3D
-    verification: "sloping-ground structural-height tests + explicit-footprint integration + reference-height task benchmark"
+    verification: "5 cm edge-contamination and physical-scale invariance regressions + explicit-footprint integration + reference-selected per-building height/top/ground benchmark + compensation-resistant promotion tests + human-visible exposed operator gate"
     evidence: "structural_height_validation.json"
 
   - id: PS-SLOPE-001
@@ -132,7 +138,9 @@ requirements:
     clause: "Demonstrate performance stability across urban, sparse, hilly and forested landscapes"
     implementation:
       - depthwizard.data.registry terrain labels and geographic split controls
-    verification: "geographically disjoint four-terrain benchmark"
+      - depthwizard.evaluation.topography reference-defined slope-stratified terrain metrics
+      - research-only terrain expert supervision in depthwizard.height_model.terrain_structure_loss
+    verification: "geographically disjoint four-terrain benchmark + reference slope strata <15, 15-30, 30-45 and >=45 degrees + >=30-degree steep-terrain elevation/slope promotion gate with per-stratum non-regression"
     evidence: "terrain_breakdown.csv"
 
   - id: PS-VIS-001
