@@ -5,6 +5,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any, cast
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
@@ -16,22 +17,38 @@ from depthwizard.evaluation.building_height import (
 )
 
 
-def _load(path: Path) -> dict[str, object]:
+def _load(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != 1:
+    if not isinstance(payload, dict):
+        raise ValueError(f"building-height report must contain a JSON object: {path}")
+    typed = cast(dict[str, Any], payload)
+    if typed.get("schema_version") != 1:
         raise ValueError(f"unsupported building-height report schema: {path}")
-    return payload
+    return typed
 
 
-def _shared_contract(baseline: dict[str, object], candidate: dict[str, object]) -> None:
-    baseline_inputs = dict(baseline["inputs"])
-    candidate_inputs = dict(candidate["inputs"])
-    for key in ("reference_sha256", "building_mask_sha256", "ground_mask_sha256", "gsd_x_m", "gsd_y_m"):
+def _mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"building-height report field {key!r} must be a JSON object")
+    return cast(dict[str, Any], value)
+
+
+def _shared_contract(baseline: dict[str, Any], candidate: dict[str, Any]) -> None:
+    baseline_inputs = _mapping(baseline, "inputs")
+    candidate_inputs = _mapping(candidate, "inputs")
+    for key in (
+        "reference_sha256",
+        "building_mask_sha256",
+        "ground_mask_sha256",
+        "gsd_x_m",
+        "gsd_y_m",
+    ):
         if baseline_inputs.get(key) != candidate_inputs.get(key):
             raise ValueError(f"baseline/candidate benchmark contract differs at {key}")
-    if baseline.get("config") != candidate.get("config"):
+    if _mapping(baseline, "config") != _mapping(candidate, "config"):
         raise ValueError("baseline/candidate benchmark configuration differs")
 
 
@@ -58,8 +75,8 @@ def main() -> int:
     candidate_payload = _load(args.candidate)
     _shared_contract(baseline_payload, candidate_payload)
 
-    baseline = building_height_report_from_dict(dict(baseline_payload["report"]))
-    candidate = building_height_report_from_dict(dict(candidate_payload["report"]))
+    baseline = building_height_report_from_dict(_mapping(baseline_payload, "report"))
+    candidate = building_height_report_from_dict(_mapping(candidate_payload, "report"))
     thresholds = BuildingHeightPromotionThresholds(
         min_instances=args.min_instances,
         min_mae_reduction_fraction=args.min_mae_reduction,
