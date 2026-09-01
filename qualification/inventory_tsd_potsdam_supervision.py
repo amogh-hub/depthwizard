@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -10,11 +9,12 @@ from pathlib import Path
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
 
-from depthwizard.height_model.terrain_structure_split import RESERVED_TILE_IDS
-
-_RGB_PATTERN = re.compile(r"^top_potsdam_(\d+)_(\d+)_rgb\.tiff?$", re.IGNORECASE)
-_DSM_PATTERN = re.compile(r"^dsm_potsdam_(\d+)_(\d+)\.tiff?$", re.IGNORECASE)
-_LABEL_PATTERN = re.compile(r"^top_potsdam_(\d+)_(\d+)_label\.tiff?$", re.IGNORECASE)
+from depthwizard.height_model.terrain_structure_split import (
+    HISTORICAL_CHALLENGE_TEST_TILE_IDS,
+    RESERVED_TILE_IDS,
+    SUPERVISION_ELIGIBLE_TILE_IDS,
+    TSD_SPLIT_PROTOCOL_VERSION,
+)
 
 
 @dataclass(frozen=True)
@@ -29,12 +29,17 @@ class TileInventory:
     def complete(self) -> bool:
         return self.status == "COMPLETE"
 
+    @property
+    def locally_present(self) -> bool:
+        return self.rgb_count > 0 or self.dsm_count > 0 or self.label_count > 0
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Inventory filename metadata for non-reserved Potsdam TSD supervision candidates. "
-            "The command never opens raster content and discards reserved tile ids before reporting."
+            "Inventory filename metadata for the legal Potsdam TSD supervision population. The "
+            "command never opens raster content, never enumerates challenge-test scenes as candidates, "
+            "and keeps DepthWizard's exposed/evaluation/blind tiles outside supervision."
         )
     )
     parser.add_argument("--dataset-root", type=Path, required=True)
@@ -48,14 +53,6 @@ def _filename_index(root: Path) -> dict[str, list[Path]]:
         if path.is_file():
             index.setdefault(path.name.casefold(), []).append(path)
     return index
-
-
-def _tile_id_from_name(name: str) -> str | None:
-    for pattern in (_RGB_PATTERN, _DSM_PATTERN, _LABEL_PATTERN):
-        match = pattern.fullmatch(name)
-        if match is not None:
-            return f"{int(match.group(1))}_{int(match.group(2))}"
-    return None
 
 
 def _match_count(index: dict[str, list[Path]], names: tuple[str, ...]) -> int:
@@ -104,21 +101,18 @@ def _status(rgb_count: int, dsm_count: int, label_count: int) -> str:
     return "COMPLETE"
 
 
-def _safe_tile_ids(index: dict[str, list[Path]]) -> tuple[str, ...]:
-    discovered: set[str] = set()
-    for paths in index.values():
-        for path in paths:
-            tile_id = _tile_id_from_name(path.name)
-            if tile_id is not None and tile_id not in RESERVED_TILE_IDS:
-                discovered.add(tile_id)
+def _ordered_eligible_tile_ids() -> tuple[str, ...]:
     return tuple(
-        sorted(discovered, key=lambda value: tuple(int(part) for part in value.split("_")))
+        sorted(
+            SUPERVISION_ELIGIBLE_TILE_IDS,
+            key=lambda value: tuple(int(part) for part in value.split("_")),
+        )
     )
 
 
 def _inventory(index: dict[str, list[Path]]) -> tuple[TileInventory, ...]:
     records: list[TileInventory] = []
-    for tile_id in _safe_tile_ids(index):
+    for tile_id in _ordered_eligible_tile_ids():
         rgb_count, dsm_count, label_count = _component_counts(index, tile_id)
         records.append(
             TileInventory(
@@ -140,22 +134,31 @@ def main() -> int:
     index = _filename_index(args.dataset_root)
     records = _inventory(index)
     candidates = tuple(record.tile_id for record in records if record.complete)
-    incomplete = tuple(record.tile_id for record in records if not record.complete)
+    partial = tuple(record.tile_id for record in records if record.locally_present and not record.complete)
+    absent = tuple(record.tile_id for record in records if not record.locally_present)
+    locally_present = tuple(record for record in records if record.locally_present)
 
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "mode": "filename_metadata_only",
+        "protocol_version": TSD_SPLIT_PROTOCOL_VERSION,
         "dataset_root": str(args.dataset_root.resolve()),
-        "safe_discovered_tile_count": len(records),
+        "supervision_eligible_tile_ids": list(_ordered_eligible_tile_ids()),
+        "supervision_eligible_tile_count": len(records),
+        "locally_present_eligible_tile_count": len(locally_present),
         "candidate_supervision_tile_ids": list(candidates),
         "candidate_count": len(candidates),
-        "incomplete_safe_tile_ids": list(incomplete),
+        "partial_eligible_tile_ids": list(partial),
+        "absent_eligible_tile_ids": list(absent),
         "tiles": [asdict(record) for record in records],
         "reserved_tile_ids_omitted": sorted(RESERVED_TILE_IDS),
+        "historical_challenge_test_tile_ids_prohibited": sorted(HISTORICAL_CHALLENGE_TEST_TILE_IDS),
         "claim_boundary": (
             "Inventory is based on filenames only. Raster pixels were not opened, decoded, hashed, "
-            "or used for model selection. Reserved exposed/evaluation/blind ids are discarded before "
-            "tile diagnostics are constructed. Counts greater than one fail as ambiguous rather than "
+            "or used for model selection. Candidate construction is restricted a priori to the "
+            "historical participant ground-truth population minus DepthWizard reserved tiles. "
+            "Historical challenge-test scenes are never candidate supervision, even if later label "
+            "packages are present locally. Counts greater than one fail as ambiguous rather than "
             "silently selecting a file."
         ),
     }
@@ -167,16 +170,23 @@ def main() -> int:
         temporary.replace(args.output)
         print(f"inventory={args.output}")
 
-    print(f"safe_discovered_tile_count={len(records)}")
+    print(f"protocol_version={TSD_SPLIT_PROTOCOL_VERSION}")
+    print(f"supervision_eligible_tile_count={len(records)}")
+    print(f"locally_present_eligible_tile_count={len(locally_present)}")
     print(f"candidate_count={len(candidates)}")
     print("candidate_supervision_tile_ids=" + ",".join(candidates))
-    print("incomplete_safe_tile_ids=" + ",".join(incomplete))
-    for record in records:
+    print("partial_eligible_tile_ids=" + ",".join(partial))
+    print("absent_eligible_tile_ids=" + ",".join(absent))
+    for record in locally_present:
         print(
             f"tile={record.tile_id} rgb={record.rgb_count} dsm={record.dsm_count} "
             f"label={record.label_count} status={record.status}"
         )
     print("reserved_tile_ids_omitted=" + ",".join(sorted(RESERVED_TILE_IDS)))
+    print(
+        "historical_challenge_test_tile_ids_prohibited="
+        + ",".join(sorted(HISTORICAL_CHALLENGE_TEST_TILE_IDS))
+    )
     print("raster_content_opened=false")
     return 0
 
