@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from scipy.ndimage import find_objects, generate_binary_structure, label
@@ -79,11 +79,15 @@ def _validate_inputs(
     pred = np.asarray(prediction, dtype=np.float64)
     ref = np.asarray(reference, dtype=np.float64)
     buildings = np.asarray(building_mask, dtype=bool)
+    if pred.ndim != 2 or ref.ndim != 2 or buildings.ndim != 2:
+        raise ValueError("prediction, reference, and building_mask must be 2D rasters")
     if pred.shape != ref.shape or pred.shape != buildings.shape:
         raise ValueError("prediction, reference, and building_mask must have identical shape")
     candidates: np.ndarray | None = None
     if ground_candidate_mask is not None:
         candidates = np.asarray(ground_candidate_mask, dtype=bool)
+        if candidates.ndim != 2:
+            raise ValueError("ground_candidate_mask must be a 2D raster")
         if candidates.shape != pred.shape:
             raise ValueError("ground_candidate_mask must match prediction shape")
     return pred, ref, buildings, candidates
@@ -175,7 +179,10 @@ def evaluate_building_height_instances(
     if ground_inner_buffer_m < 0.0 or ground_outer_buffer_m <= ground_inner_buffer_m:
         raise ValueError("ground buffers must satisfy 0 <= inner < outer")
 
-    connected, count = label(buildings, structure=generate_binary_structure(2, 1))
+    connected, count = cast(
+        tuple[np.ndarray, int],
+        label(buildings, structure=generate_binary_structure(2, 1)),
+    )
     slices = find_objects(connected)
     pixel_area_m2 = float(gsd_x_m * gsd_y_m)
 
@@ -198,7 +205,7 @@ def evaluate_building_height_instances(
 
         crop = _crop_for_instance(
             object_slice,
-            shape=pred.shape,
+            shape=(int(pred.shape[0]), int(pred.shape[1])),
             gsd_x_m=gsd_x_m,
             gsd_y_m=gsd_y_m,
             outer_buffer_m=ground_outer_buffer_m,
