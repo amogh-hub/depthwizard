@@ -139,7 +139,15 @@ class NormalizedPoint(BaseModel):
 class ProjectStructureHeightRequest(BaseModel):
     project_dir: Path
     polygon: list[NormalizedPoint] = Field(min_length=3, max_length=64)
-    ring_pixels: int = Field(default=8, ge=1, le=128)
+    ring_pixels: int = Field(
+        default=8,
+        ge=1,
+        le=128,
+        description=(
+            "Deprecated compatibility field. Project-level metric measurement derives physical "
+            "ground support from trustworthy GSD rather than this pixel count."
+        ),
+    )
     min_structure_pixels: int = Field(default=4, ge=1)
     min_ground_pixels: int = Field(default=8, ge=1)
 
@@ -154,12 +162,25 @@ class ProjectStructureHeightRequest(BaseModel):
 class ProjectStructureHeightResult(BaseModel):
     project_id: str
     polygon: list[NormalizedPoint]
-    ring_pixels: int = Field(ge=1)
+    ring_pixels: int = Field(
+        ge=1,
+        description="Compatibility display of the effective outer support radius in raster pixels.",
+    )
     top_elevation_m: float
     ground_elevation_m: float
     structure_height_m: float
     structure_pixels: int = Field(ge=1)
     ground_pixels: int = Field(ge=1)
+    ground_candidate_pixels: int = Field(ge=1)
+    roof_inset_m: float = Field(ge=0.0)
+    ground_inner_buffer_m: float = Field(ge=0.0)
+    ground_outer_buffer_m: float = Field(gt=0.0)
+    ground_inlier_fraction: float = Field(ge=0.0, le=1.0)
+    ground_sector_coverage: float = Field(ge=0.0, le=1.0)
+    roof_dispersion_m: float = Field(ge=0.0)
+    ground_residual_sigma_m: float = Field(ge=0.0)
+    local_height_dispersion_m: float = Field(ge=0.0)
+    measurement_quality: Literal["high", "moderate", "low"]
     warnings: list[str] = Field(default_factory=list)
     semantics: str
 
