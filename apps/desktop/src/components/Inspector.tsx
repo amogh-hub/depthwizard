@@ -62,6 +62,12 @@ function byteLabel(bytes: number): string {
   return `${bytes} B`;
 }
 
+function qualityLabel(quality: ProjectStructureHeightResult["measurement_quality"]): string {
+  if (quality === "high") return "High";
+  if (quality === "moderate") return "Moderate";
+  return "Low";
+}
+
 export function Inspector({
   metadata,
   geometryReady,
@@ -183,15 +189,21 @@ export function Inspector({
             <>
               <dl className="dw-property-list">
                 <div className="dw-property"><dt>Structure height</dt><dd>{structureHeight.structure_height_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Measurement quality</dt><dd>{qualityLabel(structureHeight.measurement_quality)}</dd></div>
                 <div className="dw-property"><dt>Robust top</dt><dd>{structureHeight.top_elevation_m.toFixed(3)} m</dd></div>
                 <div className="dw-property"><dt>Local ground</dt><dd>{structureHeight.ground_elevation_m.toFixed(3)} m</dd></div>
-                <div className="dw-property"><dt>Footprint pixels</dt><dd>{structureHeight.structure_pixels.toLocaleString()}</dd></div>
-                <div className="dw-property"><dt>Ground-ring pixels</dt><dd>{structureHeight.ground_pixels.toLocaleString()}</dd></div>
-                <div className="dw-property"><dt>Ring radius</dt><dd>{structureHeight.ring_pixels} px</dd></div>
+                <div className="dw-property"><dt>Roof inset</dt><dd>{structureHeight.roof_inset_m.toFixed(2)} m</dd></div>
+                <div className="dw-property"><dt>Ground support</dt><dd>{structureHeight.ground_inner_buffer_m.toFixed(2)}–{structureHeight.ground_outer_buffer_m.toFixed(2)} m</dd></div>
+                <div className="dw-property"><dt>Ground inliers</dt><dd>{structureHeight.ground_pixels.toLocaleString()} / {structureHeight.ground_candidate_pixels.toLocaleString()} · {(100 * structureHeight.ground_inlier_fraction).toFixed(1)}%</dd></div>
+                <div className="dw-property"><dt>Ground coverage</dt><dd>{Math.round(4 * structureHeight.ground_sector_coverage)}/4 sectors</dd></div>
+                <div className="dw-property"><dt>Roof dispersion</dt><dd>{structureHeight.roof_dispersion_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Ground fit σ</dt><dd>{structureHeight.ground_residual_sigma_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Height dispersion</dt><dd>{structureHeight.local_height_dispersion_m.toFixed(3)} m</dd></div>
+                <div className="dw-property"><dt>Roof-core pixels</dt><dd>{structureHeight.structure_pixels.toLocaleString()}</dd></div>
               </dl>
               <div className="dw-validation-empty">
-                <strong>Analyst-selected footprint</strong>
-                <p>DepthWizard robustly fits the surrounding ground ring as a local terrain plane, extrapolates that ground beneath the explicit footprint, and reports the median roof-above-local-ground height. It does not claim automatic building classification.</p>
+                <strong>Physical local-ground evidence</strong>
+                <p>DepthWizard excludes the roof edge, samples surrounding terrain in metres using trusted GSD, robustly rejects high-object contamination, fits a local ground plane, and evaluates the roof above that fitted terrain. The legacy pixel-ring field is compatibility-only and does not define scientific support.</p>
               </div>
               {structureHeight.warnings.map((warning) => (
                 <div className="dw-validation-empty dw-warning-note" key={warning}><strong>Selection warning</strong><p>{warning}</p></div>
