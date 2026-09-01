@@ -401,7 +401,6 @@ def prepare_metric_terrain_structure_targets(
             )
             continue
 
-        local_agl = np.maximum(raw_agl, 0.0)
         local_valid = local_structure & np.isfinite(local_reference) & np.isfinite(ground_fit.surface)
         global_valid_view = valid[crop]
         global_terrain_view = terrain[crop]
