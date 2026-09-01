@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 import torch
@@ -34,12 +35,17 @@ def test_terrain_structure_model_starts_from_exact_geometry_identity() -> None:
 
     assert output.relative_height.shape == (2, 1, 32, 40)
     assert output.terrain_relative.shape == output.relative_height.shape
+    assert output.above_ground_amplitude_relative.shape == output.relative_height.shape
     assert output.above_ground_relative.shape == output.relative_height.shape
     assert output.structure_logits.shape == output.relative_height.shape
     assert output.semantic_logits.shape == (2, 3, 32, 40)
-    assert output.height_bin_logits.shape == (2, 4, 32, 40)
+    assert output.height_ordinal_logits.shape == (2, 3, 32, 40)
     assert output.normals.shape == (2, 3, 32, 40)
     assert torch.equal(output.terrain_residual, torch.zeros_like(output.terrain_residual))
+    assert torch.equal(
+        output.above_ground_amplitude_relative,
+        torch.zeros_like(output.above_ground_amplitude_relative),
+    )
     assert torch.equal(
         output.above_ground_relative,
         torch.zeros_like(output.above_ground_relative),
@@ -83,34 +89,61 @@ def test_configuration_rejects_invalid_height_bins() -> None:
 
 def _synthetic_output(
     terrain_relative: torch.Tensor,
-    above_ground_relative: torch.Tensor,
+    above_ground_amplitude_relative: torch.Tensor,
     *,
-    bins: int,
+    ordinal_channels: int,
+    gated_above_ground_relative: torch.Tensor | None = None,
 ) -> TerrainStructureOutput:
     batch, _, height, width = terrain_relative.shape
-    relative_height = terrain_relative + above_ground_relative
-    structure_logits = torch.zeros_like(terrain_relative)
-    structure_probability = torch.sigmoid(structure_logits)
+    if gated_above_ground_relative is None:
+        gated_above_ground_relative = above_ground_amplitude_relative
+    relative_height = terrain_relative + gated_above_ground_relative
+    structure_logits = torch.full_like(terrain_relative, 20.0)
+    structure_probability = torch.ones_like(terrain_relative)
     semantic_logits = torch.zeros((batch, 3, height, width), dtype=terrain_relative.dtype)
-    height_bin_logits = torch.zeros((batch, bins, height, width), dtype=terrain_relative.dtype)
+    height_ordinal_logits = torch.zeros(
+        (batch, ordinal_channels, height, width),
+        dtype=terrain_relative.dtype,
+    )
     boundary_probability = torch.full_like(terrain_relative, 0.5)
     normals = torch.zeros((batch, 3, height, width), dtype=terrain_relative.dtype)
     log_variance = torch.zeros_like(terrain_relative)
     return TerrainStructureOutput(
         terrain_relative=terrain_relative,
         terrain_residual=torch.zeros_like(terrain_relative),
-        above_ground_relative=above_ground_relative,
+        above_ground_amplitude_relative=above_ground_amplitude_relative,
+        above_ground_relative=gated_above_ground_relative,
         relative_height=relative_height,
         structure_logits=structure_logits,
         structure_probability=structure_probability,
         semantic_logits=semantic_logits,
-        height_bin_logits=height_bin_logits,
+        height_ordinal_logits=height_ordinal_logits,
         boundary_probability=boundary_probability,
         normals=normals,
         terrain_log_variance=log_variance,
         structure_log_variance=log_variance,
         terrain_uncertainty=torch.ones_like(terrain_relative),
         structure_uncertainty=torch.ones_like(terrain_relative),
+    )
+
+
+def _targets(
+    terrain: torch.Tensor,
+    agl: torch.Tensor,
+    building: torch.Tensor,
+    ground: torch.Tensor,
+    boundary: torch.Tensor | None = None,
+) -> TerrainStructureTargets:
+    if boundary is None:
+        boundary = torch.zeros_like(building)
+    return TerrainStructureTargets(
+        relative_dsm=terrain + agl,
+        terrain_relative=terrain,
+        above_ground_relative=agl,
+        valid_mask=building | ground,
+        building_mask=building,
+        ground_mask=ground,
+        boundary_mask=boundary,
     )
 
 
@@ -124,7 +157,6 @@ def test_equal_roof_and_ground_shift_cannot_hide_behind_correct_agl() -> None:
     building = torch.zeros(shape, dtype=torch.bool)
     building[..., 4:12, 4:12] = True
     ground = ~building
-    valid = torch.ones(shape, dtype=torch.bool)
     boundary = torch.zeros(shape, dtype=torch.bool)
     boundary[..., 4, 4:12] = True
     boundary[..., 11, 4:12] = True
@@ -133,21 +165,20 @@ def test_equal_roof_and_ground_shift_cannot_hide_behind_correct_agl() -> None:
 
     agl_target = torch.zeros(shape)
     agl_target[building] = 5.0
-    dsm_target = terrain_target + agl_target
-    targets = TerrainStructureTargets(
-        relative_dsm=dsm_target,
-        terrain_relative=terrain_target,
-        above_ground_relative=agl_target,
-        valid_mask=valid,
-        building_mask=building,
-        ground_mask=ground,
-        boundary_mask=boundary,
-    )
+    targets = _targets(terrain_target, agl_target, building, ground, boundary)
 
-    perfect = _synthetic_output(terrain_target, agl_target, bins=config.height_bins)
+    perfect = _synthetic_output(
+        terrain_target,
+        agl_target,
+        ordinal_channels=config.height_ordinal_channels,
+    )
     # Shift terrain, roof and ground together by +2 relative units while leaving AGL exactly right.
     # This reproduces the compensation failure that a height-only objective can miss.
-    shifted = _synthetic_output(terrain_target + 2.0, agl_target, bins=config.height_bins)
+    shifted = _synthetic_output(
+        terrain_target + 2.0,
+        agl_target,
+        ordinal_channels=config.height_ordinal_channels,
+    )
 
     scale = torch.tensor([1.0])
     gsd = torch.tensor([0.5])
@@ -172,9 +203,121 @@ def test_equal_roof_and_ground_shift_cannot_hide_behind_correct_agl() -> None:
     assert perfect_loss.ground_surface.item() == pytest.approx(0.0, abs=1e-8)
     assert shifted_loss.roof_surface.item() > 1.0
     assert shifted_loss.ground_surface.item() > 1.0
+    assert shifted_loss.roof_bias.item() > 1.0
+    assert shifted_loss.ground_bias.item() > 1.0
     assert shifted_loss.terrain_surface.item() > 1.0
-    assert shifted_loss.total.item() > perfect_loss.total.item() + 3.0
+    assert shifted_loss.total.item() > perfect_loss.total.item() + 4.0
     assert math.isfinite(shifted_loss.total.item())
+
+
+def test_agl_magnitude_supervision_is_not_attenuated_by_support_probability() -> None:
+    config = TerrainStructureConfig(semantic_classes=3, height_bin_edges_m=(2.0, 5.0, 10.0))
+    shape = (1, 1, 12, 12)
+    terrain = torch.zeros(shape)
+    building = torch.zeros(shape, dtype=torch.bool)
+    building[..., 3:9, 3:9] = True
+    ground = ~building
+    target_agl = torch.zeros(shape)
+    target_agl[building] = 10.0
+    targets = _targets(terrain, target_agl, building, ground)
+
+    # Conditional AGL amplitude is exactly right, but the support-gated scientific field is only 10%
+    # of the correct height. Continuous magnitude supervision must remain zero while recomposition
+    # catches the support failure separately.
+    gated = target_agl * 0.10
+    output = _synthetic_output(
+        terrain,
+        target_agl,
+        ordinal_channels=config.height_ordinal_channels,
+        gated_above_ground_relative=gated,
+    )
+    output = replace(
+        output,
+        structure_probability=torch.full_like(terrain, 0.10),
+        structure_logits=torch.full_like(terrain, math.log(0.10 / 0.90)),
+    )
+
+    result = compute_terrain_structure_loss(
+        output,
+        targets,
+        torch.tensor([1.0]),
+        torch.tensor([0.5]),
+        config=config,
+    )
+
+    assert result.structure_agl.item() == pytest.approx(0.0, abs=1e-8)
+    assert result.height_stratified_agl.item() == pytest.approx(0.0, abs=1e-8)
+    assert result.recomposition.item() > 1.0
+    assert result.roof_surface.item() > 1.0
+
+
+def test_height_stratified_agl_prevents_tall_tail_from_being_drowned() -> None:
+    config = TerrainStructureConfig(
+        semantic_classes=3,
+        height_bin_edges_m=(4.0, 8.0, 16.0),
+    )
+    shape = (1, 1, 20, 20)
+    terrain = torch.zeros(shape)
+    building = torch.ones(shape, dtype=torch.bool)
+    ground = torch.zeros(shape, dtype=torch.bool)
+    target_agl = torch.full(shape, 2.0)
+    target_agl[..., 0:2, 0:2] = 20.0
+    prediction_agl = target_agl.clone()
+    prediction_agl[..., 0:2, 0:2] = 0.0
+    targets = _targets(terrain, target_agl, building, ground)
+    output = _synthetic_output(
+        terrain,
+        prediction_agl,
+        ordinal_channels=config.height_ordinal_channels,
+    )
+
+    result = compute_terrain_structure_loss(
+        output,
+        targets,
+        torch.tensor([1.0]),
+        torch.tensor([0.5]),
+        config=config,
+    )
+
+    # Only 1% of building pixels are catastrophic tall-structure misses. Global per-pixel AGL loss is
+    # therefore small, but equal authority across occupied metric height strata keeps the tall tail loud.
+    assert result.structure_agl.item() < 0.25
+    assert result.height_stratified_agl.item() > 4.0
+    assert result.height_stratified_agl.item() > result.structure_agl.item() * 20.0
+
+
+def test_cumulative_ordinal_height_loss_rewards_ordered_thresholds() -> None:
+    config = TerrainStructureConfig(
+        semantic_classes=3,
+        height_bin_edges_m=(2.0, 5.0, 10.0),
+    )
+    shape = (1, 1, 8, 8)
+    terrain = torch.zeros(shape)
+    building = torch.ones(shape, dtype=torch.bool)
+    ground = torch.zeros(shape, dtype=torch.bool)
+    target_agl = torch.full(shape, 7.0)
+    targets = _targets(terrain, target_agl, building, ground)
+    base = _synthetic_output(
+        terrain,
+        target_agl,
+        ordinal_channels=config.height_ordinal_channels,
+    )
+
+    good_logits = torch.empty((1, 3, 8, 8))
+    good_logits[:, 0] = 8.0
+    good_logits[:, 1] = 8.0
+    good_logits[:, 2] = -8.0
+    bad_logits = -good_logits
+
+    good = replace(base, height_ordinal_logits=good_logits)
+    bad = replace(base, height_ordinal_logits=bad_logits)
+    scale = torch.tensor([1.0])
+    gsd = torch.tensor([0.5])
+    good_loss = compute_terrain_structure_loss(good, targets, scale, gsd, config=config)
+    bad_loss = compute_terrain_structure_loss(bad, targets, scale, gsd, config=config)
+
+    assert good_loss.height_ordinal.item() < 0.001
+    assert bad_loss.height_ordinal.item() > 5.0
 
 
 def test_loss_rejects_inconsistent_decomposition_targets() -> None:
@@ -186,7 +329,11 @@ def test_loss_rejects_inconsistent_decomposition_targets() -> None:
     building = torch.zeros(shape, dtype=torch.bool)
     ground = torch.ones(shape, dtype=torch.bool)
     boundary = torch.zeros(shape, dtype=torch.bool)
-    output = _synthetic_output(terrain, agl, bins=config.height_bins)
+    output = _synthetic_output(
+        terrain,
+        agl,
+        ordinal_channels=config.height_ordinal_channels,
+    )
     targets = TerrainStructureTargets(
         relative_dsm=torch.ones(shape),
         terrain_relative=terrain,
