@@ -183,6 +183,16 @@ export type ProjectStructureHeightResult = {
   structure_height_m: number;
   structure_pixels: number;
   ground_pixels: number;
+  ground_candidate_pixels: number;
+  roof_inset_m: number;
+  ground_inner_buffer_m: number;
+  ground_outer_buffer_m: number;
+  ground_inlier_fraction: number;
+  ground_sector_coverage: number;
+  roof_dispersion_m: number;
+  ground_residual_sigma_m: number;
+  local_height_dispersion_m: number;
+  measurement_quality: "high" | "moderate" | "low";
   warnings: string[];
   semantics: string;
 };
