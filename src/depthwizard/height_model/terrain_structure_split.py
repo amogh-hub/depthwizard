@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Final
 
 TSD_SPLIT_PROTOCOL_VERSION: Final = "terrain-structure-training-split-v2"
+INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION: Final = "potsdam-tsd-urban-spatial-v1"
 
 # Conservative reconstruction of the historical Potsdam 2D semantic-labeling participant split.
 # ISPRS states that only the ground-truth portion is participant supervision and that the remaining
@@ -68,6 +69,47 @@ RESERVED_TILE_IDS: Final[frozenset[str]] = frozenset(
 SUPERVISION_ELIGIBLE_TILE_IDS: Final[frozenset[str]] = frozenset(
     PARTICIPANT_GROUND_TRUTH_TILE_IDS - RESERVED_TILE_IDS
 )
+
+# Predeclared first urban TSD campaign. This partition is chosen from tile coordinates only, before
+# new supervision is acquired or raster content is inspected. The southern-west block is training;
+# the northern block is development. Every otherwise-eligible tile touching either sealed blind in
+# an 8-neighbour sense is withheld as a blind spatial buffer. Tile 5_10 is additionally withheld so
+# train and development are not immediate north/south neighbours. Together train, dev, and buffers
+# exactly partition the 22 legal supervision tiles.
+INITIAL_TSD_CAMPAIGN_TRAIN_TILE_IDS: Final[tuple[str, ...]] = (
+    "6_7",
+    "6_8",
+    "6_9",
+    "6_10",
+    "7_7",
+    "7_8",
+    "7_9",
+    "7_10",
+)
+INITIAL_TSD_CAMPAIGN_DEV_TILE_IDS: Final[tuple[str, ...]] = (
+    "2_10",
+    "2_11",
+    "2_12",
+    "3_10",
+    "4_10",
+)
+BLIND_SPATIAL_BUFFER_TILE_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "3_11",
+        "3_12",
+        "4_11",
+        "5_11",
+        "5_12",
+        "6_11",
+        "7_11",
+        "7_12",
+    }
+)
+TRAIN_DEV_SPATIAL_BUFFER_TILE_IDS: Final[frozenset[str]] = frozenset({"5_10"})
+INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS: Final[frozenset[str]] = frozenset(
+    BLIND_SPATIAL_BUFFER_TILE_IDS | TRAIN_DEV_SPATIAL_BUFFER_TILE_IDS
+)
+
 _TILE_PATTERN = re.compile(r"^[1-9][0-9]*_[1-9][0-9]*$")
 
 
@@ -167,3 +209,23 @@ def freeze_tsd_data_split(
 
     train, dev = _validate_partition(train_tile_ids, dev_tile_ids)
     return TerrainStructureDataSplit(train_tile_ids=train, dev_tile_ids=dev)
+
+
+def initial_tsd_campaign_split() -> TerrainStructureDataSplit:
+    """Return the predeclared first urban TSD campaign split without consulting raster content."""
+
+    split = freeze_tsd_data_split(
+        INITIAL_TSD_CAMPAIGN_TRAIN_TILE_IDS,
+        INITIAL_TSD_CAMPAIGN_DEV_TILE_IDS,
+    )
+    partition = set(split.supervised_tile_ids) | set(INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS)
+    if partition != set(SUPERVISION_ELIGIBLE_TILE_IDS):
+        missing = sorted(set(SUPERVISION_ELIGIBLE_TILE_IDS) - partition)
+        extra = sorted(partition - set(SUPERVISION_ELIGIBLE_TILE_IDS))
+        raise RuntimeError(
+            "initial TSD campaign partition no longer covers the legal supervision pool exactly; "
+            f"missing={missing}, extra={extra}"
+        )
+    if set(split.supervised_tile_ids) & set(INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS):
+        raise RuntimeError("initial TSD campaign supervision overlaps a spatial buffer")
+    return split
