@@ -115,6 +115,13 @@ def test_structure_height_uses_explicit_footprint_and_local_ground(tmp_path: Pat
     assert abs(result.structure_height_m - 12.0) < 1e-6
     assert result.structure_pixels >= 200
     assert result.ground_pixels >= 8
+    assert result.ground_candidate_pixels >= result.ground_pixels
+    assert result.roof_inset_m == pytest.approx(0.5)
+    assert result.ground_inner_buffer_m == pytest.approx(1.5)
+    assert result.ground_outer_buffer_m == pytest.approx(8.0)
+    assert result.ground_inlier_fraction >= 0.99
+    assert result.ground_sector_coverage == 1.0
+    assert result.measurement_quality == "high"
     assert result.warnings == []
     assert "not an automatic building classification" in result.semantics
     assert "ground plane" in result.semantics
@@ -136,6 +143,7 @@ def test_structure_height_uses_local_ground_plane_on_hillside(tmp_path: Path) ->
     assert result.structure_height_m == pytest.approx(12.0, abs=0.15)
     assert result.structure_pixels > 400
     assert result.ground_pixels > 100
+    assert result.measurement_quality == "high"
     assert result.warnings == []
 
 
@@ -158,6 +166,10 @@ def test_project_structure_height_uses_metric_support_at_five_centimetres(
     assert result.ring_pixels >= 150
     assert result.structure_pixels > 10_000
     assert result.ground_pixels > 10_000
+    assert result.ground_candidate_pixels > result.ground_pixels
+    assert result.ground_inlier_fraction > 0.90
+    assert result.ground_sector_coverage == 1.0
+    assert result.measurement_quality == "high"
     assert result.warnings == []
     assert "1.50-8.00 m annulus" in result.semantics
     assert "ring_pixels field does not control" in result.semantics
