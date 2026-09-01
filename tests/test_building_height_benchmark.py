@@ -113,3 +113,23 @@ def test_prediction_failure_on_reference_eligible_building_fails_closed() -> Non
     assert candidate.prediction_failure_ids
     assert not decision.passed
     assert any("prediction failures" in reason for reason in decision.reasons)
+
+
+def test_compensating_roof_ground_shift_cannot_pass_urban_promotion() -> None:
+    baseline = _evaluate(_prediction_with_height_errors([-3.0, -3.0, -3.0, -3.0]))
+    candidate_prediction = _prediction_with_height_errors([-0.5, -0.5, -0.5, -0.5]) + 5.0
+    candidate = _evaluate(candidate_prediction)
+
+    decision = building_height_promotion_gate(
+        baseline,
+        candidate,
+        thresholds=BuildingHeightPromotionThresholds(min_instances=4),
+    )
+
+    assert candidate.height_mae_m < baseline.height_mae_m
+    assert candidate.height_rmse_m < baseline.height_rmse_m
+    assert candidate.top_mae_m > baseline.top_mae_m
+    assert candidate.ground_mae_m > baseline.ground_mae_m
+    assert not decision.passed
+    assert any("roof-top MAE regressed" in reason for reason in decision.reasons)
+    assert any("local-ground MAE regressed" in reason for reason in decision.reasons)
