@@ -42,8 +42,10 @@ requirements:
       - geodetic evidence calibration that preserves fine monocular structure
       - research-only depthwizard.height_model.terrain_structure terrain/above-ground decomposition
       - auditable depthwizard.height_model.terrain_structure_targets supervision preparation
-      - fail-closed depthwizard.height_model.terrain_structure_split training/development boundary
-    verification: "same-input baseline comparison + cross-sensor/terrain generalization benchmark + compensation/compression regression tests + negative-result record; TSD remains non-production until frozen promotion gates pass"
+      - fail-closed depthwizard.height_model.terrain_structure_split historical participant-supervision boundary
+      - predeclared potsdam-tsd-urban-spatial-v1 train/dev split with blind-neighbour and train/dev buffer tiles withheld before raster-content inspection
+      - qualification.plan_tsd_potsdam_acquisition metadata-only active-component acquisition planning
+    verification: "same-input baseline comparison + cross-sensor/terrain generalization benchmark + compensation/compression regression tests + split/buffer partition tests + negative-result record; TSD remains non-production until frozen promotion gates pass"
     evidence: "domain_generalization_report.json"
 
   - id: PS-CAL-DEM-001
