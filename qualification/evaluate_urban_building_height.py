@@ -18,6 +18,8 @@ from depthwizard.evaluation.building_height import evaluate_building_height_inst
 from depthwizard.io.raster import ground_sample_distance_m  # noqa: E402
 from depthwizard.provenance.manifest import sha256_file  # noqa: E402
 
+EXPOSED_POTSDAM_TILE_ID = "2_14"
+
 
 def _read_float_surface(path: Path) -> tuple[np.ndarray, np.ndarray]:
     with rasterio.open(path) as src:
@@ -72,8 +74,9 @@ def _write_csv(path: Path, instances: list[dict[str, object]]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate a candidate metric DSM on explicit building instances. This is an exposed "
-            "development diagnostic and must not be used to consume sealed blind tiles."
+            "Evaluate a candidate metric DSM on explicit building instances. This executable is "
+            "hard-locked to the already-exposed Potsdam 2_14 development scene and refuses sealed "
+            "blind tile identifiers."
         )
     )
     parser.add_argument("--prediction", type=Path, required=True)
@@ -82,6 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ground-mask", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--label", default="exposed-urban-building-height")
+    parser.add_argument("--tile-id", default=EXPOSED_POTSDAM_TILE_ID)
     parser.add_argument("--min-building-area-m2", type=float, default=20.0)
     parser.add_argument("--min-reference-height-m", type=float, default=2.0)
     parser.add_argument("--roof-inset-m", type=float, default=0.50)
@@ -94,6 +98,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.tile_id != EXPOSED_POTSDAM_TILE_ID:
+        raise ValueError(
+            f"urban development qualification is hard-locked to exposed Potsdam tile "
+            f"{EXPOSED_POTSDAM_TILE_ID}; refusing tile {args.tile_id!r}"
+        )
+
     inputs = [args.prediction, args.reference, args.building_mask]
     if args.ground_mask is not None:
         inputs.append(args.ground_mask)
@@ -139,11 +149,12 @@ def main() -> int:
     instances_path = args.output_dir / "building-height-instances.csv"
     payload = {
         "schema_version": 1,
+        "tile_id": EXPOSED_POTSDAM_TILE_ID,
         "label": args.label,
         "claim_boundary": (
-            "Exposed development diagnostic only. Reference values are used solely downstream for "
-            "evaluation and must never enter inference, calibration, model selection on sealed blind "
-            "tiles, or production reconstruction."
+            "Exposed Potsdam 2_14 development diagnostic only. Reference values are used solely "
+            "downstream for evaluation and must never enter inference, calibration, model selection "
+            "on sealed blind tiles, or production reconstruction."
         ),
         "inputs": {
             "prediction": str(args.prediction.resolve()),
