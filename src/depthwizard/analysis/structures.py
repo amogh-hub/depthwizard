@@ -174,12 +174,15 @@ def estimate_structure_height(
     roof_inset_m: float = 0.0,
     ground_inner_buffer_m: float = 0.0,
     ground_outer_buffer_m: float | None = None,
+    ground_candidate_mask: np.ndarray | None = None,
 ) -> StructureHeightEstimate:
     """Estimate structure height above a robust local ground surface.
 
     Metric mode is selected when physical pixel sizes and ``ground_outer_buffer_m`` are supplied.
     It uses Euclidean distance in metres, an inner ground-exclusion buffer, and roof-edge inset.
-    Legacy pixel mode is retained only for low-level compatibility and synthetic tests.
+    ``ground_candidate_mask`` is optional explicit semantic evidence; when supplied, only those
+    pixels may support the local terrain plane. Legacy pixel mode is retained for low-level
+    compatibility and synthetic tests.
     """
     elevation = np.asarray(dsm, dtype=np.float64)
     mask = np.asarray(structure_mask, dtype=bool)
@@ -189,6 +192,12 @@ def estimate_structure_height(
         raise ValueError("minimum support counts must be positive")
 
     valid = np.isfinite(elevation)
+    candidate_mask: np.ndarray | None = None
+    if ground_candidate_mask is not None:
+        candidate_mask = np.asarray(ground_candidate_mask, dtype=bool)
+        if candidate_mask.shape != elevation.shape:
+            raise ValueError("ground_candidate_mask must match dsm shape")
+
     valid_structure = mask & valid
     if int(np.count_nonzero(valid_structure)) < min_structure_pixels:
         raise ValueError("not enough valid structure pixels")
@@ -247,6 +256,9 @@ def estimate_structure_height(
         effective_outer_m = float(ring_pixels)
         sector_pixel_x = 1.0
         sector_pixel_y = 1.0
+
+    if candidate_mask is not None:
+        ring &= candidate_mask
 
     ground_pixels = int(np.count_nonzero(ring))
     if ground_pixels < min_ground_pixels:
