@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 from scipy.ndimage import binary_dilation, distance_transform_edt
@@ -128,9 +129,12 @@ def _metric_roof_core(
     if requested_inset_m <= 0.0:
         return mask.copy(), 0.0
 
-    distance_inside_m = distance_transform_edt(
-        mask,
-        sampling=(pixel_size_y_m, pixel_size_x_m),
+    distance_inside_m = cast(
+        np.ndarray,
+        distance_transform_edt(
+            mask,
+            sampling=(pixel_size_y_m, pixel_size_x_m),
+        ),
     )
     for factor in (1.0, 0.75, 0.5, 0.25):
         inset = requested_inset_m * factor
@@ -231,9 +235,12 @@ def estimate_structure_height(
             requested_inset_m=roof_inset_m,
             min_pixels=min_structure_pixels,
         )
-        distance_from_structure_m = distance_transform_edt(
-            ~mask,
-            sampling=(pixel_size_y_m, pixel_size_x_m),
+        distance_from_structure_m = cast(
+            np.ndarray,
+            distance_transform_edt(
+                ~mask,
+                sampling=(pixel_size_y_m, pixel_size_x_m),
+            ),
         )
         ring = (
             ~mask
