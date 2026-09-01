@@ -19,7 +19,10 @@ from depthwizard.evaluation.potsdam import (
 from depthwizard.height_model.terrain_structure_split import (
     EXPOSED_CORRECTIVE_TILE_IDS,
     EXTERNAL_EVALUATION_TILE_IDS,
+    HISTORICAL_CHALLENGE_TEST_TILE_IDS,
+    PARTICIPANT_GROUND_TRUTH_TILE_IDS,
     SEALED_BLIND_TILE_IDS,
+    SUPERVISION_ELIGIBLE_TILE_IDS,
     TSD_SPLIT_PROTOCOL_VERSION,
     TerrainStructureDataSplit,
     freeze_tsd_data_split,
@@ -31,7 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Freeze an auditable Potsdam supervision split for Terrain-Structure Decomposition. "
-            "Reserved exposed/evaluation/blind tile ids are rejected before any dataset traversal."
+            "Only historical participant ground-truth tiles are legal, with DepthWizard reserved "
+            "tiles removed before any dataset traversal."
         )
     )
     parser.add_argument("--dataset-root", type=Path, required=True)
@@ -146,17 +150,24 @@ def _write_manifest(
     records: list[dict[str, object]],
 ) -> None:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "protocol_version": TSD_SPLIT_PROTOCOL_VERSION,
         "status": "FROZEN_TSD_SUPERVISION_SPLIT",
         "qualification_git_sha": source_sha,
         "qualification_git_branch": source_branch,
         "dataset_root": str(dataset_root.resolve()),
         "claim_boundary": (
-            "Only the listed training/development tiles may contribute reference DSM or semantic "
-            "supervision to this TSD research campaign. Exposed 2_14, external evaluation 3_14, and "
-            "sealed blind 4_12/6_12 are prohibited from training, development loss, early stopping, "
-            "hyperparameter selection, or target generation."
+            "Only listed training/development tiles may contribute reference DSM or semantic "
+            "supervision. The legal population is the historical Potsdam participant ground-truth "
+            "set minus DepthWizard reserved evidence. Historical challenge-test tiles remain "
+            "prohibited even if later label packages are locally available. Exposed 2_14, external "
+            "evaluation 3_14, and sealed blind 4_12/6_12 are prohibited from training, development "
+            "loss, early stopping, hyperparameter selection, or target generation."
+        ),
+        "participant_ground_truth_tile_ids": sorted(PARTICIPANT_GROUND_TRUTH_TILE_IDS),
+        "supervision_eligible_tile_ids": sorted(SUPERVISION_ELIGIBLE_TILE_IDS),
+        "historical_challenge_test_tile_ids_prohibited": sorted(
+            HISTORICAL_CHALLENGE_TEST_TILE_IDS
         ),
         "train_tile_ids": list(split.train_tile_ids),
         "dev_tile_ids": list(split.dev_tile_ids),
@@ -176,8 +187,9 @@ def _write_manifest(
 def main() -> int:
     args = parse_args()
 
-    # Deliberately validate the requested ids before checking dataset-root existence or traversing it.
-    # A blind/reserved id therefore fails without touching that tile's filesystem entries.
+    # Validate every requested id before checking dataset-root existence or traversing it. Reserved,
+    # historical challenge-test, or arbitrary nonparticipant ids therefore fail without resolving
+    # any of their filesystem entries.
     split = freeze_tsd_data_split(args.train_tiles, args.dev_tiles)
     if not args.dataset_root.is_dir():
         raise FileNotFoundError(args.dataset_root)
@@ -200,9 +212,11 @@ def main() -> int:
     print(f"split_manifest={args.output}")
     print(f"split_manifest_sha256={sha256_file(args.output)}")
     print(f"qualification_git_sha={source_sha}")
+    print(f"protocol_version={TSD_SPLIT_PROTOCOL_VERSION}")
     print(f"train_tiles={','.join(split.train_tile_ids)}")
     print(f"dev_tiles={','.join(split.dev_tile_ids)}")
     print("reserved_tiles_not_consumed=2_14,3_14,4_12,6_12")
+    print("historical_challenge_test_tiles_not_consumed=true")
     return 0
 
 
