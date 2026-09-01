@@ -50,11 +50,11 @@ def test_metric_structure_support_is_physical_scale_invariant() -> None:
     results: list[float] = []
     for gsd_m in (1.0, 0.10):
         side_m = 30.0
-        size = int(round(side_m / gsd_m))
+        size = round(side_m / gsd_m)
         dsm = np.full((size, size), 250.0, dtype=np.float32)
         mask = np.zeros_like(dsm, dtype=bool)
-        start = int(round(11.0 / gsd_m))
-        stop = int(round(19.0 / gsd_m))
+        start = round(11.0 / gsd_m)
+        stop = round(19.0 / gsd_m)
         mask[start:stop, start:stop] = True
         dsm[mask] = 262.0
         estimate = estimate_structure_height(
