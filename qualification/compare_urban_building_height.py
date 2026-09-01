@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
 
 from depthwizard.evaluation.building_height import (
+    BuildingHeightBenchmarkReport,
     BuildingHeightPromotionThresholds,
     building_height_promotion_gate,
     building_height_report_from_dict,
@@ -52,6 +54,86 @@ def _shared_contract(baseline: dict[str, Any], candidate: dict[str, Any]) -> Non
         raise ValueError("baseline/candidate benchmark configuration differs")
 
 
+def _validate_report_integrity(report: BuildingHeightBenchmarkReport, *, role: str) -> None:
+    """Fail closed on corrupted, non-finite, or internally inconsistent persisted evidence."""
+    finite_fields = (
+        "height_mae_m",
+        "height_rmse_m",
+        "height_bias_m",
+        "height_median_abs_error_m",
+        "height_p90_abs_error_m",
+        "height_p95_abs_error_m",
+        "top_mae_m",
+        "ground_mae_m",
+        "within_1m_fraction",
+        "within_2m_fraction",
+        "catastrophic_over_3m_fraction",
+        "mean_reference_height_m",
+        "mean_predicted_height_m",
+    )
+    for field in finite_fields:
+        value = float(getattr(report, field))
+        if not isfinite(value):
+            raise ValueError(f"{role} report contains non-finite {field}: {value!r}")
+
+    nonnegative_fields = (
+        "height_mae_m",
+        "height_rmse_m",
+        "height_median_abs_error_m",
+        "height_p90_abs_error_m",
+        "height_p95_abs_error_m",
+        "top_mae_m",
+        "ground_mae_m",
+    )
+    for field in nonnegative_fields:
+        if float(getattr(report, field)) < 0.0:
+            raise ValueError(f"{role} report contains negative error metric {field}")
+
+    for field in ("within_1m_fraction", "within_2m_fraction", "catastrophic_over_3m_fraction"):
+        value = float(getattr(report, field))
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{role} report fraction {field} must lie in [0, 1]")
+
+    eligible = report.eligible_instance_ids
+    evaluated = report.evaluated_instance_ids
+    failures = report.prediction_failure_ids
+    if len(set(eligible)) != len(eligible):
+        raise ValueError(f"{role} report contains duplicate eligible instance ids")
+    if len(set(evaluated)) != len(evaluated):
+        raise ValueError(f"{role} report contains duplicate evaluated instance ids")
+    if len(set(failures)) != len(failures):
+        raise ValueError(f"{role} report contains duplicate prediction-failure instance ids")
+    evaluated_set = set(evaluated)
+    failure_set = set(failures)
+    if evaluated_set & failure_set:
+        raise ValueError(f"{role} report marks an instance as both evaluated and failed")
+    if evaluated_set | failure_set != set(eligible):
+        raise ValueError(
+            f"{role} report eligibility is inconsistent with evaluated/failure instance support"
+        )
+    instance_ids = tuple(item.instance_id for item in report.instances)
+    if instance_ids != evaluated:
+        raise ValueError(f"{role} report instance rows do not match evaluated instance ids")
+    if report.skipped_reference_instances < 0:
+        raise ValueError(f"{role} report contains a negative skipped-reference count")
+
+    for instance in report.instances:
+        for field, value in asdict(instance).items():
+            if isinstance(value, float) and not isfinite(value):
+                raise ValueError(
+                    f"{role} report instance {instance.instance_id} contains non-finite {field}"
+                )
+
+
+def _validate_threshold_args(args: argparse.Namespace) -> None:
+    for name in ("min_mae_reduction", "min_rmse_reduction", "min_p90_reduction"):
+        value = float(getattr(args, name))
+        if not isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"--{name.replace('_', '-')} must be a finite fraction in [0, 1]")
+    if args.min_instances < 1:
+        raise ValueError("--min-instances must be positive")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -71,12 +153,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    _validate_threshold_args(args)
     baseline_payload = _load(args.baseline)
     candidate_payload = _load(args.candidate)
     _shared_contract(baseline_payload, candidate_payload)
 
     baseline = building_height_report_from_dict(_mapping(baseline_payload, "report"))
     candidate = building_height_report_from_dict(_mapping(candidate_payload, "report"))
+    _validate_report_integrity(baseline, role="baseline")
+    _validate_report_integrity(candidate, role="candidate")
     thresholds = BuildingHeightPromotionThresholds(
         min_instances=args.min_instances,
         min_mae_reduction_fraction=args.min_mae_reduction,
