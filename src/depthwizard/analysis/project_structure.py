@@ -125,38 +125,47 @@ def estimate_project_structure_height(
     )
 
     warnings: list[str] = []
+    low_quality = False
+    moderate_quality = False
     if estimate.structure_height_m <= 0.0:
+        low_quality = True
         warnings.append(
             "Selected footprint does not rise above the robust local-ground estimate; "
             "verify the structure selection and DSM fidelity."
         )
     if estimate.structure_pixels < 9:
+        moderate_quality = True
         warnings.append(
             "Selected roof core has fewer than nine valid DSM pixels; structural height has "
             "limited independent spatial support."
         )
     if estimate.roof_inset_m < DEFAULT_ROOF_INSET_M - 1e-9:
+        moderate_quality = True
         warnings.append(
             "Roof-edge exclusion was reduced because the selected footprint was too small for the "
             "default 0.50 m inset."
         )
     if estimate.ground_inlier_fraction < 0.60:
+        low_quality = True
         warnings.append(
             "Fewer than 60% of surrounding ground candidates survived robust plane fitting; "
             "nearby objects or DSM artefacts may contaminate local-ground evidence."
         )
     if estimate.ground_sector_coverage < 0.75:
+        low_quality = True
         warnings.append(
             "Robust ground support does not surround the structure on at least three of four sides; "
             "the fitted local terrain plane has limited spatial support."
         )
     dispersion_limit = max(1.0, 0.25 * abs(estimate.structure_height_m))
     if estimate.local_height_dispersion_m > dispersion_limit:
+        moderate_quality = True
         warnings.append(
             "Roof-to-ground height varies strongly inside the selected footprint; inspect the DSM "
             "for mixed roof levels, vegetation, or local reconstruction error."
         )
 
+    measurement_quality = "low" if low_quality else "moderate" if moderate_quality else "high"
     return ProjectStructureHeightResult(
         project_id=manifest.project_id,
         polygon=request.polygon,
@@ -166,6 +175,16 @@ def estimate_project_structure_height(
         structure_height_m=estimate.structure_height_m,
         structure_pixels=estimate.structure_pixels,
         ground_pixels=estimate.ground_inlier_pixels,
+        ground_candidate_pixels=estimate.ground_pixels,
+        roof_inset_m=estimate.roof_inset_m,
+        ground_inner_buffer_m=estimate.ground_inner_buffer_m,
+        ground_outer_buffer_m=estimate.ground_outer_buffer_m,
+        ground_inlier_fraction=estimate.ground_inlier_fraction,
+        ground_sector_coverage=estimate.ground_sector_coverage,
+        roof_dispersion_m=estimate.roof_dispersion_m,
+        ground_residual_sigma_m=estimate.ground_residual_sigma_m,
+        local_height_dispersion_m=estimate.local_height_dispersion_m,
+        measurement_quality=measurement_quality,
         warnings=warnings,
         semantics=(
             "Analyst-selected structural height = robust median DSM roof elevation from a "
