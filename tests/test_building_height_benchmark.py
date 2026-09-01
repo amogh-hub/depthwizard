@@ -26,7 +26,7 @@ def _urban_scene() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[tuple[slice
 
 
 def _prediction_with_height_errors(errors_m: list[float]) -> np.ndarray:
-    ground, reference, _, footprints, heights = _urban_scene()
+    ground, _, _, footprints, heights = _urban_scene()
     prediction = ground.copy()
     for footprint, height, error in zip(footprints, heights, errors_m, strict=True):
         prediction[footprint] += height + error
