@@ -337,7 +337,7 @@ def building_height_promotion_gate(
     baseline: BuildingHeightBenchmarkReport,
     candidate: BuildingHeightBenchmarkReport,
     *,
-    thresholds: BuildingHeightPromotionThresholds = BuildingHeightPromotionThresholds(),
+    thresholds: BuildingHeightPromotionThresholds | None = None,
 ) -> BuildingHeightPromotionDecision:
     """Require material per-building improvement before an urban model may be promoted.
 
@@ -345,6 +345,8 @@ def building_height_promotion_gate(
     natural-terrain non-degradation, human-visible operator validation, and reserved blind evidence
     remain separate mandatory gates.
     """
+    if thresholds is None:
+        thresholds = BuildingHeightPromotionThresholds()
     if thresholds.min_instances < 1:
         raise ValueError("min_instances must be positive")
     reasons: list[str] = []
