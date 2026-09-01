@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from qualification.inventory_tsd_potsdam_supervision import _inventory
 from depthwizard.height_model.terrain_structure_split import RESERVED_TILE_IDS
+from qualification.inventory_tsd_potsdam_supervision import _inventory
 
 
 def _index(*names: str) -> dict[str, list[Path]]:
