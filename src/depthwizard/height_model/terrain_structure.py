@@ -233,9 +233,11 @@ class TerrainStructureModel(nn.Module):
             raise ValueError("rgb and geometry_prior must share batch and spatial dimensions")
         if not torch.all(torch.isfinite(geometry_prior)):
             raise ValueError("geometry_prior must be finite")
-        if coarse_terrain_prior is not None:
-            if coarse_terrain_prior.shape != geometry_prior.shape:
-                raise ValueError("coarse_terrain_prior must match geometry_prior")
+        if (
+            coarse_terrain_prior is not None
+            and coarse_terrain_prior.shape != geometry_prior.shape
+        ):
+            raise ValueError("coarse_terrain_prior must match geometry_prior")
 
     @staticmethod
     def _terrain_evidence(
