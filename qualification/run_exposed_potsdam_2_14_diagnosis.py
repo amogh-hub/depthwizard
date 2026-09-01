@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -10,10 +9,10 @@ from pathlib import Path
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
 
-from depthwizard.contracts import ReferenceValidationRequest  # noqa: E402
-from depthwizard.evaluation.project_validation import validate_project_reference  # noqa: E402
-from depthwizard.pipeline.project import ProjectManifest  # noqa: E402
-from depthwizard.provenance.manifest import sha256_file  # noqa: E402
+from depthwizard.contracts import ReferenceValidationRequest
+from depthwizard.evaluation.project_validation import validate_project_reference
+from depthwizard.pipeline.project import ProjectManifest
+from depthwizard.provenance.manifest import sha256_file
 
 EXPOSED_TILE_ID = "2_14"
 
