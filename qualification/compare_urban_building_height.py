@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -10,7 +9,7 @@ from pathlib import Path
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
 
-from depthwizard.evaluation.building_height import (  # noqa: E402
+from depthwizard.evaluation.building_height import (
     BuildingHeightPromotionThresholds,
     building_height_promotion_gate,
     building_height_report_from_dict,
