@@ -9,7 +9,10 @@ from rasterio.transform import from_origin
 from depthwizard.evaluation.building_height import evaluate_building_height_instances
 from qualification.compare_urban_building_height import _validate_report_integrity
 from qualification.evaluate_urban_building_height import _prepare_evaluation_inputs
-from qualification.run_exposed_potsdam_2_14_diagnosis import _resolve_semantic_label
+from qualification.run_exposed_potsdam_2_14_diagnosis import (
+    _require_expected_v6_prediction,
+    _resolve_semantic_label,
+)
 
 
 def _two_building_scene() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -162,3 +165,11 @@ def test_exposed_semantic_label_auto_resolution_fails_closed_on_ambiguity(tmp_pa
             dataset_root=tmp_path,
             reference=reference,
         )
+
+
+def test_canonical_exposed_diagnosis_rejects_wrong_prediction_hash(tmp_path: Path) -> None:
+    prediction = tmp_path / "wrong-v6-prediction.tif"
+    prediction.write_bytes(b"definitely-not-the-frozen-v6-dsm")
+
+    with pytest.raises(ValueError, match="prediction hash mismatch"):
+        _require_expected_v6_prediction(prediction)
