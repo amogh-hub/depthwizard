@@ -46,8 +46,8 @@ def test_metric_structure_support_rejects_high_resolution_edge_contamination() -
     )
 
     assert legacy.structure_height_m < 3.0
-    assert metric.structure_height_m == 10.0
-    assert metric.ground_elevation_m == 100.0
+    assert np.isclose(metric.structure_height_m, 10.0, atol=1e-9, rtol=0.0)
+    assert np.isclose(metric.ground_elevation_m, 100.0, atol=1e-9, rtol=0.0)
     assert metric.ground_sector_coverage == 1.0
 
 
