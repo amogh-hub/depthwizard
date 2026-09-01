@@ -182,9 +182,11 @@ def terrain_promotion_gate(
     baseline: StratifiedTerrainReport,
     candidate: StratifiedTerrainReport,
     *,
-    thresholds: TerrainPromotionThresholds = TerrainPromotionThresholds(),
+    thresholds: TerrainPromotionThresholds | None = None,
 ) -> TerrainPromotionDecision:
     """Require material steep-terrain gains without hiding regressions in easier strata."""
+    if thresholds is None:
+        thresholds = TerrainPromotionThresholds()
     reasons: list[str] = []
     if candidate.steep_valid_pixels < thresholds.min_steep_pixels:
         reasons.append(
