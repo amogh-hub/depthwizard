@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -81,7 +82,10 @@ def _high_resolution_project(tmp_path: Path) -> Path:
     structure_mask = np.zeros_like(values, dtype=bool)
     structure_mask[170:330, 170:330] = True
     values[structure_mask] = 110.0
-    distance_m = distance_transform_edt(~structure_mask, sampling=(gsd_m, gsd_m))
+    distance_m = cast(
+        np.ndarray,
+        distance_transform_edt(~structure_mask, sampling=(gsd_m, gsd_m)),
+    )
     edge_contamination = (~structure_mask) & (distance_m <= 1.0)
     values[edge_contamination] = 108.0
 
