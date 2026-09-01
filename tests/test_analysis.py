@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
@@ -22,7 +24,10 @@ def test_metric_structure_support_rejects_high_resolution_edge_contamination() -
     mask[170:330, 170:330] = True
     dsm[mask] = 110.0
 
-    distance_from_structure_m = distance_transform_edt(~mask, sampling=(gsd_m, gsd_m))
+    distance_from_structure_m = cast(
+        np.ndarray,
+        distance_transform_edt(~mask, sampling=(gsd_m, gsd_m)),
+    )
     contaminated_edge = (~mask) & (distance_from_structure_m <= 1.0)
     dsm[contaminated_edge] = 108.0
 
