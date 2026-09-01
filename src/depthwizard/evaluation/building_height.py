@@ -59,6 +59,10 @@ class BuildingHeightPromotionThresholds:
     min_p90_reduction_fraction: float = 0.05
     max_within_2m_fraction_drop: float = 0.0
     max_catastrophic_fraction_increase: float = 0.0
+    max_top_mae_degradation_fraction: float = 0.02
+    max_top_mae_degradation_m: float = 0.05
+    max_ground_mae_degradation_fraction: float = 0.02
+    max_ground_mae_degradation_m: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -340,13 +344,25 @@ def _fractional_reduction(baseline: float, candidate: float) -> float:
     return float((baseline - candidate) / baseline)
 
 
+def _allowed_mae(
+    baseline_mae_m: float,
+    *,
+    max_degradation_fraction: float,
+    max_degradation_m: float,
+) -> float:
+    return baseline_mae_m + max(
+        max_degradation_m,
+        baseline_mae_m * max_degradation_fraction,
+    )
+
+
 def building_height_promotion_gate(
     baseline: BuildingHeightBenchmarkReport,
     candidate: BuildingHeightBenchmarkReport,
     *,
     thresholds: BuildingHeightPromotionThresholds | None = None,
 ) -> BuildingHeightPromotionDecision:
-    """Require material per-building improvement before an urban model may be promoted.
+    """Require material per-building improvement without compensating roof/ground errors.
 
     This gate is necessary but not sufficient for production promotion. Whole-scene DSM metrics,
     natural-terrain non-degradation, human-visible operator validation, and reserved blind evidence
@@ -356,6 +372,13 @@ def building_height_promotion_gate(
         thresholds = BuildingHeightPromotionThresholds()
     if thresholds.min_instances < 1:
         raise ValueError("min_instances must be positive")
+    if (
+        thresholds.max_top_mae_degradation_fraction < 0.0
+        or thresholds.max_top_mae_degradation_m < 0.0
+        or thresholds.max_ground_mae_degradation_fraction < 0.0
+        or thresholds.max_ground_mae_degradation_m < 0.0
+    ):
+        raise ValueError("top/ground MAE non-regression tolerances cannot be negative")
     reasons: list[str] = []
 
     if baseline.eligible_instance_ids != candidate.eligible_instance_ids:
@@ -403,6 +426,28 @@ def building_height_promotion_gate(
         + thresholds.max_catastrophic_fraction_increase
     ):
         reasons.append("catastrophic >3 m building-error rate increased")
+
+    allowed_top_mae = _allowed_mae(
+        baseline.top_mae_m,
+        max_degradation_fraction=thresholds.max_top_mae_degradation_fraction,
+        max_degradation_m=thresholds.max_top_mae_degradation_m,
+    )
+    if candidate.top_mae_m > allowed_top_mae:
+        reasons.append(
+            f"roof-top MAE regressed from {baseline.top_mae_m:.3f} m to "
+            f"{candidate.top_mae_m:.3f} m; allowed maximum is {allowed_top_mae:.3f} m"
+        )
+
+    allowed_ground_mae = _allowed_mae(
+        baseline.ground_mae_m,
+        max_degradation_fraction=thresholds.max_ground_mae_degradation_fraction,
+        max_degradation_m=thresholds.max_ground_mae_degradation_m,
+    )
+    if candidate.ground_mae_m > allowed_ground_mae:
+        reasons.append(
+            f"local-ground MAE regressed from {baseline.ground_mae_m:.3f} m to "
+            f"{candidate.ground_mae_m:.3f} m; allowed maximum is {allowed_ground_mae:.3f} m"
+        )
 
     return BuildingHeightPromotionDecision(
         passed=not reasons,
