@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
+from scipy.ndimage import distance_transform_edt
 
 from depthwizard.analysis.project_structure import estimate_project_structure_height
 from depthwizard.contracts import NormalizedPoint, ProjectStructureHeightRequest
@@ -11,7 +12,7 @@ from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.provenance.manifest import sha256_file
 
 
-def _write_surface(path: Path, values: np.ndarray) -> None:
+def _write_surface(path: Path, values: np.ndarray, *, gsd_m: float = 1.0) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
         path,
@@ -22,7 +23,7 @@ def _write_surface(path: Path, values: np.ndarray) -> None:
         count=1,
         dtype="float32",
         crs="EPSG:32643",
-        transform=from_origin(500000, 1400000, 1.0, 1.0),
+        transform=from_origin(500000, 1400000, gsd_m, gsd_m),
         nodata=-9999.0,
     ) as dst:
         dst.write(values.astype(np.float32), 1)
@@ -56,11 +57,36 @@ def _sloping_project(tmp_path: Path) -> Path:
     ground = 300.0 + 0.45 * cols + 0.75 * rows
     values = ground.astype(np.float32)
     values[28:52, 28:52] += 12.0
-    # A few strong positive ring contaminants simulate nearby trees/structures.
     values[20:23, 35:38] += 20.0
     values[56:59, 42:45] += 16.0
     surface = project / "products" / "dsm.tif"
     _write_surface(surface, values)
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        surface,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(surface),
+    )
+    return project
+
+
+def _high_resolution_project(tmp_path: Path) -> Path:
+    source = tmp_path / "rgb-high-resolution.tif"
+    source.touch()
+    project = tmp_path / "project-high-resolution"
+    gsd_m = 0.05
+    values = np.full((500, 500), 100.0, dtype=np.float32)
+    structure_mask = np.zeros_like(values, dtype=bool)
+    structure_mask[170:330, 170:330] = True
+    values[structure_mask] = 110.0
+    distance_m = distance_transform_edt(~structure_mask, sampling=(gsd_m, gsd_m))
+    edge_contamination = (~structure_mask) & (distance_m <= 1.0)
+    values[edge_contamination] = 108.0
+
+    surface = project / "products" / "dsm.tif"
+    _write_surface(surface, values, gsd_m=gsd_m)
     manifest = ProjectManifest.create_or_load(project, source)
     manifest.register_artifact(
         "dsm",
@@ -92,6 +118,7 @@ def test_structure_height_uses_explicit_footprint_and_local_ground(tmp_path: Pat
     assert result.warnings == []
     assert "not an automatic building classification" in result.semantics
     assert "ground plane" in result.semantics
+    assert "physical" in result.semantics
 
 
 def test_structure_height_uses_local_ground_plane_on_hillside(tmp_path: Path) -> None:
@@ -110,6 +137,30 @@ def test_structure_height_uses_local_ground_plane_on_hillside(tmp_path: Path) ->
     assert result.structure_pixels > 400
     assert result.ground_pixels > 100
     assert result.warnings == []
+
+
+def test_project_structure_height_uses_metric_support_at_five_centimetres(
+    tmp_path: Path,
+) -> None:
+    project = _high_resolution_project(tmp_path)
+    polygon = [
+        NormalizedPoint(x=170 / 499, y=170 / 499),
+        NormalizedPoint(x=329 / 499, y=170 / 499),
+        NormalizedPoint(x=329 / 499, y=329 / 499),
+        NormalizedPoint(x=170 / 499, y=329 / 499),
+    ]
+    result = estimate_project_structure_height(
+        ProjectStructureHeightRequest(project_dir=project, polygon=polygon, ring_pixels=8)
+    )
+
+    assert result.structure_height_m == pytest.approx(10.0, abs=1e-4)
+    assert result.ground_elevation_m == pytest.approx(100.0, abs=1e-4)
+    assert result.ring_pixels >= 150
+    assert result.structure_pixels > 10_000
+    assert result.ground_pixels > 10_000
+    assert result.warnings == []
+    assert "1.50-8.00 m annulus" in result.semantics
+    assert "ring_pixels field does not control" in result.semantics
 
 
 def test_structure_height_rejects_relative_only_project(tmp_path: Path) -> None:
