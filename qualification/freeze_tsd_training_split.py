@@ -20,12 +20,15 @@ from depthwizard.height_model.terrain_structure_split import (
     EXPOSED_CORRECTIVE_TILE_IDS,
     EXTERNAL_EVALUATION_TILE_IDS,
     HISTORICAL_CHALLENGE_TEST_TILE_IDS,
+    INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS,
+    INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION,
     PARTICIPANT_GROUND_TRUTH_TILE_IDS,
     SEALED_BLIND_TILE_IDS,
     SUPERVISION_ELIGIBLE_TILE_IDS,
     TSD_SPLIT_PROTOCOL_VERSION,
     TerrainStructureDataSplit,
     freeze_tsd_data_split,
+    initial_tsd_campaign_split,
 )
 from depthwizard.provenance.manifest import sha256_file
 
@@ -39,10 +42,21 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--dataset-root", type=Path, required=True)
-    parser.add_argument("--train-tile", action="append", required=True, dest="train_tiles")
-    parser.add_argument("--dev-tile", action="append", required=True, dest="dev_tiles")
+    parser.add_argument(
+        "--campaign",
+        choices=(INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION,),
+        help="Freeze the predeclared spatially separated first urban TSD campaign.",
+    )
+    parser.add_argument("--train-tile", action="append", dest="train_tiles")
+    parser.add_argument("--dev-tile", action="append", dest="dev_tiles")
     parser.add_argument("--output", type=Path, required=True)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.campaign is not None:
+        if args.train_tiles or args.dev_tiles:
+            parser.error("--campaign cannot be combined with explicit --train-tile/--dev-tile")
+    elif not args.train_tiles or not args.dev_tiles:
+        parser.error("provide --campaign or both --train-tile and --dev-tile")
+    return args
 
 
 def _tracked_source_identity() -> tuple[str, str]:
@@ -148,10 +162,12 @@ def _write_manifest(
     source_sha: str,
     source_branch: str,
     records: list[dict[str, object]],
+    campaign_protocol_version: str | None,
 ) -> None:
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "protocol_version": TSD_SPLIT_PROTOCOL_VERSION,
+        "campaign_protocol_version": campaign_protocol_version,
         "status": "FROZEN_TSD_SUPERVISION_SPLIT",
         "qualification_git_sha": source_sha,
         "qualification_git_branch": source_branch,
@@ -162,7 +178,8 @@ def _write_manifest(
             "set minus DepthWizard reserved evidence. Historical challenge-test tiles remain "
             "prohibited even if later label packages are locally available. Exposed 2_14, external "
             "evaluation 3_14, and sealed blind 4_12/6_12 are prohibited from training, development "
-            "loss, early stopping, hyperparameter selection, or target generation."
+            "loss, early stopping, hyperparameter selection, or target generation. For the named "
+            "initial campaign, the recorded spatial-buffer tiles are also withheld from supervision."
         ),
         "participant_ground_truth_tile_ids": sorted(PARTICIPANT_GROUND_TRUTH_TILE_IDS),
         "supervision_eligible_tile_ids": sorted(SUPERVISION_ELIGIBLE_TILE_IDS),
@@ -171,6 +188,11 @@ def _write_manifest(
         ),
         "train_tile_ids": list(split.train_tile_ids),
         "dev_tile_ids": list(split.dev_tile_ids),
+        "campaign_buffer_tile_ids_withheld": (
+            sorted(INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS)
+            if campaign_protocol_version == INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION
+            else []
+        ),
         "reserved": {
             "exposed_corrective": list(EXPOSED_CORRECTIVE_TILE_IDS),
             "external_evaluation": list(EXTERNAL_EVALUATION_TILE_IDS),
@@ -190,7 +212,13 @@ def main() -> int:
     # Validate every requested id before checking dataset-root existence or traversing it. Reserved,
     # historical challenge-test, or arbitrary nonparticipant ids therefore fail without resolving
     # any of their filesystem entries.
-    split = freeze_tsd_data_split(args.train_tiles, args.dev_tiles)
+    if args.campaign == INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION:
+        split = initial_tsd_campaign_split()
+        campaign_protocol_version: str | None = INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION
+    else:
+        split = freeze_tsd_data_split(args.train_tiles, args.dev_tiles)
+        campaign_protocol_version = None
+
     if not args.dataset_root.is_dir():
         raise FileNotFoundError(args.dataset_root)
     source_sha, source_branch = _tracked_source_identity()
@@ -208,13 +236,17 @@ def main() -> int:
         source_sha=source_sha,
         source_branch=source_branch,
         records=records,
+        campaign_protocol_version=campaign_protocol_version,
     )
     print(f"split_manifest={args.output}")
     print(f"split_manifest_sha256={sha256_file(args.output)}")
     print(f"qualification_git_sha={source_sha}")
     print(f"protocol_version={TSD_SPLIT_PROTOCOL_VERSION}")
+    print(f"campaign_protocol_version={campaign_protocol_version or 'custom'}")
     print(f"train_tiles={','.join(split.train_tile_ids)}")
     print(f"dev_tiles={','.join(split.dev_tile_ids)}")
+    if campaign_protocol_version == INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION:
+        print("campaign_buffer_tiles_withheld=" + ",".join(sorted(INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS)))
     print("reserved_tiles_not_consumed=2_14,3_14,4_12,6_12")
     print("historical_challenge_test_tiles_not_consumed=true")
     return 0
