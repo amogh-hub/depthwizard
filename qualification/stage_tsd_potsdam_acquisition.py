@@ -507,7 +507,7 @@ def main() -> int:
 
     plan_root = payload.get("source_inventory_dataset_root")
     if not isinstance(plan_root, str):
-        raise ValueError("acquisition plan does not contain a valid source_inventory_dataset_root")
+        raise TypeError("acquisition plan does not contain a valid source_inventory_dataset_root")
     if Path(plan_root).resolve() != args.dataset_root.resolve():
         raise ValueError(
             "dataset root differs from the root used to create the frozen acquisition plan: "
