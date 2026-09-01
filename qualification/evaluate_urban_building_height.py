@@ -61,6 +61,30 @@ def _require_exact_grid(reference: Path, *others: Path) -> None:
             )
 
 
+def _prepare_evaluation_inputs(
+    prediction: np.ndarray,
+    prediction_valid: np.ndarray,
+    reference: np.ndarray,
+    reference_valid: np.ndarray,
+    buildings: np.ndarray,
+    ground: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+    """Apply independent validity support without allowing candidate NoData to alter eligibility.
+
+    Reference eligibility must be defined only by the reference DSM, official building labels, and
+    frozen ground policy. Candidate-invalid pixels remain NaN only in the prediction so an eligible
+    reference building that cannot be measured by the candidate becomes a prediction failure rather
+    than disappearing from the benchmark population.
+    """
+    prediction_out = np.where(prediction_valid, prediction, np.nan)
+    reference_out = np.where(reference_valid, reference, np.nan)
+    buildings_out = np.asarray(buildings, dtype=bool) & reference_valid
+    ground_out: np.ndarray | None = None
+    if ground is not None:
+        ground_out = np.asarray(ground, dtype=bool) & reference_valid
+    return prediction_out, reference_out, buildings_out, ground_out
+
+
 def _write_csv(path: Path, instances: list[dict[str, object]]) -> None:
     if not instances:
         return
@@ -118,12 +142,14 @@ def main() -> int:
     buildings = _read_binary_mask(args.building_mask)
     ground = _read_binary_mask(args.ground_mask) if args.ground_mask is not None else None
 
-    common_valid = prediction_valid & reference_valid
-    prediction = np.where(common_valid, prediction, np.nan)
-    reference = np.where(common_valid, reference, np.nan)
-    buildings &= reference_valid
-    if ground is not None:
-        ground &= reference_valid
+    prediction, reference, buildings, ground = _prepare_evaluation_inputs(
+        prediction,
+        prediction_valid,
+        reference,
+        reference_valid,
+        buildings,
+        ground,
+    )
 
     gsd = ground_sample_distance_m(args.reference)
     if gsd is None:
@@ -148,6 +174,8 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report_path = args.output_dir / "building-height-report.json"
     instances_path = args.output_dir / "building-height-instances.csv"
+    reference_valid_pixels = int(np.count_nonzero(reference_valid))
+    prediction_valid_on_reference = int(np.count_nonzero(prediction_valid & reference_valid))
     payload = {
         "schema_version": 1,
         "tile_id": EXPOSED_POTSDAM_TILE_ID,
@@ -155,7 +183,8 @@ def main() -> int:
         "claim_boundary": (
             "Exposed Potsdam 2_14 development diagnostic only. Reference values are used solely "
             "downstream for evaluation and must never enter inference, calibration, model selection "
-            "on sealed blind tiles, or production reconstruction."
+            "on sealed blind tiles, or production reconstruction. Reference eligibility is never "
+            "masked by candidate validity."
         ),
         "inputs": {
             "prediction": str(args.prediction.resolve()),
@@ -168,6 +197,11 @@ def main() -> int:
             "ground_mask_sha256": sha256_file(args.ground_mask) if args.ground_mask else None,
             "gsd_x_m": gsd[0],
             "gsd_y_m": gsd[1],
+            "reference_valid_pixels": reference_valid_pixels,
+            "prediction_valid_on_reference_pixels": prediction_valid_on_reference,
+            "prediction_valid_on_reference_fraction": float(
+                prediction_valid_on_reference / max(reference_valid_pixels, 1)
+            ),
         },
         "config": {
             "min_building_area_m2": args.min_building_area_m2,
@@ -193,6 +227,10 @@ def main() -> int:
     print(f"height_rmse_m={report.height_rmse_m:.6f}")
     print(f"height_p90_abs_error_m={report.height_p90_abs_error_m:.6f}")
     print(f"within_2m_fraction={report.within_2m_fraction:.6f}")
+    print(
+        "prediction_valid_on_reference_fraction="
+        f"{prediction_valid_on_reference / max(reference_valid_pixels, 1):.6f}"
+    )
     return 0
 
 
