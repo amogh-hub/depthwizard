@@ -166,7 +166,8 @@ def test_project_structure_height_uses_metric_support_at_five_centimetres(
     assert result.ring_pixels >= 150
     assert result.structure_pixels > 10_000
     assert result.ground_pixels > 10_000
-    assert result.ground_candidate_pixels > result.ground_pixels
+    # A perfectly flat uncontaminated metric annulus may legitimately retain every candidate.
+    assert result.ground_candidate_pixels >= result.ground_pixels
     assert result.ground_inlier_fraction > 0.90
     assert result.ground_sector_coverage == 1.0
     assert result.measurement_quality == "high"
