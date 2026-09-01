@@ -123,15 +123,21 @@ A future urban estimator is **not** eligible for blind evaluation or production 
 the following are true on frozen exposed development evidence:
 
 1. candidate and baseline use the same reference-selected building instances;
-2. there are no candidate measurement failures on reference-eligible buildings;
+2. baseline and candidate have no measurement failures on reference-eligible buildings;
 3. building-height MAE improves by at least 15% by default;
 4. building-height RMSE improves by at least 10% by default;
 5. building-height P90 absolute error improves by at least 5% by default;
 6. fraction within 2 m does not regress;
 7. catastrophic >3 m building-error rate does not increase;
-8. whole-scene DSM and slope safety gates remain satisfied;
-9. natural terrain does not regress materially;
-10. human-visible operator validation passes on exposed imagery.
+8. roof/top MAE does not regress beyond the larger of 0.05 m or 2% of baseline top MAE;
+9. local-ground MAE does not regress beyond the larger of 0.05 m or 2% of baseline ground MAE;
+10. whole-scene DSM and slope safety gates remain satisfied;
+11. natural terrain does not regress materially;
+12. human-visible operator validation passes on exposed imagery.
+
+The explicit top/ground non-regression gates prevent a candidate from appearing to improve
+`roof - ground` while moving both absolute surfaces in the wrong direction. Building-height improvement
+therefore cannot be obtained by compensating roof and ground errors.
 
 These default effect-size thresholds are deliberately much stronger than the millimetre-scale improvement
 that allowed V6 to become an automated candidate. Thresholds may be revised only **before** a benchmark
