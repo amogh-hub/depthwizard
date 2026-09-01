@@ -112,6 +112,40 @@ requires only its missing label. The other 12 active campaign tiles require RGB,
 The deterministic planner `qualification/plan_tsd_potsdam_acquisition.py` converts the inventory JSON
 into the exact active-component acquisition list without opening raster content.
 
+## Acquisition package policy
+
+The current ISPRS benchmark landing page points Potsdam downloads to the Leibniz Hannover Seafile
+share. DepthWizard does not depend on an unofficial mirror for scientific acquisition provenance.
+The first campaign uses the canonical Potsdam packages:
+
+- RGB: `2_Ortho_RGB.zip`
+- absolute reference DSM: `1_DSM.zip`
+- historical participant semantic labels: `5_Labels_for_participants.zip`
+
+The later `5_Labels_all.zip` package is deliberately **not** accepted by the TSD acquisition stager.
+Although full labels are publicly downloadable after the benchmark ended, allowing that package into
+the new training lane would weaken the supervision boundary and makes accidental challenge-test
+consumption easier. The participant-label package is sufficient for all 13 active campaign tiles.
+
+`qualification/stage_tsd_potsdam_acquisition.py` validates the three local archives before copying
+anything. It requires canonical package names, validates ZIP member paths and rejects symlinks,
+requires exactly one archive member for every planned missing file, rejects historical challenge-test
+labels in the supplied label archive, enforces member/total size safety limits, refuses stale plans or
+overwrites, and verifies enough free disk space. Only the 37 files listed by the current acquisition
+plan (12 RGB + 12 DSM + 13 labels) can be copied. `4_12`, `6_12`, buffer tiles, and all challenge-test
+payloads remain unextracted.
+
+The stager defaults to a dry run. `--execute` is required to copy selected raster bytes. In both modes
+it hashes the exact local source archives and records the acquisition-plan hash and source Git SHA.
+During execution it hashes each staged file while copying it atomically. This command does **not**
+decode raster pixels; archive central-directory metadata may enumerate package members, and selected
+active raster bytes are read only for byte-for-byte staging and hashing.
+
+The acquisition provenance intentionally does not claim a cryptographic remote-origin proof: the
+current ISPRS workflow does not expose a remote SHA-256 for these packages to DepthWizard. The
+operator must obtain the three canonical archives from the official ISPRS/Leibniz Hannover share;
+DepthWizard then records their exact local SHA-256 identities for reproducibility.
+
 ## Fail-closed implementation
 
 Split protocol version: `terrain-structure-training-split-v2`.
@@ -129,8 +163,12 @@ The following controls are executable rather than advisory:
    population. Historical challenge-test files are not promoted to candidates even if they exist.
 5. `plan_tsd_potsdam_acquisition.py` reports only components missing from the 13 active campaign
    tiles; buffer tiles are explicitly not required.
-6. Duplicate candidate files fail as ambiguous rather than being selected implicitly.
-7. Inventory and acquisition planning remain filename-metadata-only and do not open raster pixels.
+6. `stage_tsd_potsdam_acquisition.py` accepts only the three canonical source-package roles, selects
+   exactly the plan-listed missing members, refuses challenge-test labels in the label archive, and
+   never copies nonactive raster payloads.
+7. Duplicate candidate/archive members fail as ambiguous rather than being selected implicitly.
+8. Inventory and acquisition planning remain filename-metadata-only. Acquisition staging may copy and
+   hash only selected active raster bytes, but it does not decode or inspect raster pixels.
 
 ## Claim boundary
 
