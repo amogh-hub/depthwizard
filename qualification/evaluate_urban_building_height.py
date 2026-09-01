@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from affine import Affine
+from rasterio.crs import CRS
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
@@ -38,7 +40,7 @@ def _read_binary_mask(path: Path) -> np.ndarray:
     return valid & (values != 0)
 
 
-def _grid_signature(path: Path) -> tuple[int, int, object, object]:
+def _grid_signature(path: Path) -> tuple[int, int, CRS | None, Affine]:
     with rasterio.open(path) as src:
         return src.height, src.width, src.crs, src.transform
 
