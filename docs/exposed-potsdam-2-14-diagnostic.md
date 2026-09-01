@@ -38,6 +38,8 @@ The canonical diagnostic produces:
 - Minimum reference structure height: `2.00 m`.
 - A model cannot remove difficult buildings from evaluation: reference-selected eligible instances that
   fail on the candidate are recorded as prediction failures.
+- Future promotion cannot be earned by compensating errors: roof/top MAE and local-ground MAE each have
+  an explicit non-regression gate in addition to building-height improvement.
 
 ## Workstation execution
 
@@ -130,5 +132,6 @@ Interpretation examples:
 
 The next Terrain/Structure Expert architecture is selected only after these exposed-scene diagnostics are
 recorded. No blind tile is opened during architecture selection. Any candidate must then satisfy the
-material building-height gate, terrain non-degradation/steep-terrain gate, whole-scene safety metrics,
-and human-visible operator validation before blind evaluation is authorized.
+material building-height gate, roof/top and local-ground non-regression gates, terrain
+non-degradation/steep-terrain gate, whole-scene safety metrics, and human-visible operator validation
+before blind evaluation is authorized.
