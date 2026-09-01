@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
+from typing import Any
 
 import numpy as np
 from scipy.ndimage import find_objects, generate_binary_structure, label
@@ -314,6 +315,16 @@ def evaluate_building_height_instances(
         mean_reference_height_m=float(np.mean(reference_heights)),
         mean_predicted_height_m=float(np.mean(predicted_heights)),
     )
+
+
+def building_height_report_from_dict(payload: dict[str, Any]) -> BuildingHeightBenchmarkReport:
+    """Rehydrate a persisted report without weakening its typed comparison contract."""
+    data = dict(payload)
+    raw_instances = data.pop("instances", [])
+    data["instances"] = tuple(BuildingHeightInstance(**dict(item)) for item in raw_instances)
+    for key in ("eligible_instance_ids", "evaluated_instance_ids", "prediction_failure_ids"):
+        data[key] = tuple(int(value) for value in data[key])
+    return BuildingHeightBenchmarkReport(**data)
 
 
 def _fractional_reduction(baseline: float, candidate: float) -> float:
