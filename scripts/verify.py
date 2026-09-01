@@ -18,11 +18,12 @@ if __name__ == "__main__":
     # and those are runtime payload, not repository tests. Never let generated scientific runtime
     # contents alter the verification surface.
     run(sys.executable, "-m", "pytest", "tests")
-    run(sys.executable, "-m", "ruff", "check", "src", "tests", "scripts")
+    run(sys.executable, "-m", "ruff", "check", "src", "tests", "scripts", "qualification")
     # Pyright is a Node-backed checker even when launched through `python -m pyright`; without an
     # explicit interpreter it may inspect a system Python instead of the environment that actually
     # ran pytest. Pin it to this exact interpreter so imports and typing are checked against the
-    # same locked runtime used by qualification.
+    # same locked runtime used by qualification. Qualification generators are evidence-bearing code
+    # and therefore share the same static-analysis gate as the scientific core.
     run(
         sys.executable,
         "-m",
@@ -31,6 +32,7 @@ if __name__ == "__main__":
         sys.executable,
         "src",
         "tests",
+        "qualification",
         "scripts/train_ortholoc_height_acceptance.py",
         "scripts/train_ortholoc_multiscene.py",
         "scripts/train_ortholoc_multiscene_v2.py",
