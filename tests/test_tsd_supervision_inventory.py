@@ -1,14 +1,22 @@
 from pathlib import Path
 
-from depthwizard.height_model.terrain_structure_split import RESERVED_TILE_IDS
-from qualification.inventory_tsd_potsdam_supervision import _inventory
+from depthwizard.height_model.terrain_structure_split import (
+    HISTORICAL_CHALLENGE_TEST_TILE_IDS,
+    RESERVED_TILE_IDS,
+    SUPERVISION_ELIGIBLE_TILE_IDS,
+)
+from qualification.inventory_tsd_potsdam_supervision import TileInventory, _inventory
 
 
 def _index(*names: str) -> dict[str, list[Path]]:
     return {name.casefold(): [Path("/dataset") / name] for name in names}
 
 
-def test_inventory_reports_missing_label_for_safe_rgb_dsm_tile() -> None:
+def _record(records: tuple[TileInventory, ...], tile_id: str) -> TileInventory:
+    return next(record for record in records if record.tile_id == tile_id)
+
+
+def test_inventory_reports_missing_label_for_eligible_rgb_dsm_tile() -> None:
     records = _inventory(
         _index(
             "top_potsdam_2_10_RGB.tif",
@@ -16,17 +24,17 @@ def test_inventory_reports_missing_label_for_safe_rgb_dsm_tile() -> None:
         )
     )
 
-    assert len(records) == 1
-    record = records[0]
-    assert record.tile_id == "2_10"
+    assert len(records) == len(SUPERVISION_ELIGIBLE_TILE_IDS)
+    record = _record(records, "2_10")
     assert record.rgb_count == 1
     assert record.dsm_count == 1
     assert record.label_count == 0
     assert record.status == "MISSING_LABEL"
+    assert record.locally_present
     assert not record.complete
 
 
-def test_inventory_marks_complete_safe_supervision_tile() -> None:
+def test_inventory_marks_complete_eligible_supervision_tile() -> None:
     records = _inventory(
         _index(
             "top_potsdam_5_11_RGB.tif",
@@ -35,16 +43,15 @@ def test_inventory_marks_complete_safe_supervision_tile() -> None:
         )
     )
 
-    assert len(records) == 1
-    record = records[0]
-    assert record.tile_id == "5_11"
+    record = _record(records, "5_11")
     assert record.status == "COMPLETE"
     assert record.complete
 
 
-def test_inventory_omits_reserved_ids_before_diagnostics() -> None:
+def test_inventory_never_constructs_reserved_or_challenge_test_records() -> None:
     names: list[str] = []
-    for tile_id in RESERVED_TILE_IDS:
+    prohibited = RESERVED_TILE_IDS | HISTORICAL_CHALLENGE_TEST_TILE_IDS
+    for tile_id in prohibited:
         row, col = tile_id.split("_")
         names.extend(
             (
@@ -54,19 +61,20 @@ def test_inventory_omits_reserved_ids_before_diagnostics() -> None:
             )
         )
 
-    assert _inventory(_index(*names)) == ()
+    records = _inventory(_index(*names))
+    assert {record.tile_id for record in records} == SUPERVISION_ELIGIBLE_TILE_IDS
+    assert all(not record.locally_present for record in records)
 
 
 def test_inventory_fails_ambiguous_component_instead_of_selecting_one() -> None:
     index = _index(
-        "top_potsdam_6_14_RGB.tif",
-        "dsm_potsdam_06_14.tif",
-        "top_potsdam_6_14_label.tif",
+        "top_potsdam_6_11_RGB.tif",
+        "dsm_potsdam_06_11.tif",
+        "top_potsdam_6_11_label.tif",
     )
-    index["top_potsdam_6_14_rgb.tif"].append(Path("/duplicate/top_potsdam_6_14_RGB.tif"))
+    index["top_potsdam_6_11_rgb.tif"].append(Path("/duplicate/top_potsdam_6_11_RGB.tif"))
 
-    records = _inventory(index)
+    record = _record(_inventory(index), "6_11")
 
-    assert len(records) == 1
-    assert records[0].status == "AMBIGUOUS_RGB"
-    assert not records[0].complete
+    assert record.status == "AMBIGUOUS_RGB"
+    assert not record.complete
