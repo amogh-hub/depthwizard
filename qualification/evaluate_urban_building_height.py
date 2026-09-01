@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -14,9 +13,9 @@ import rasterio
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
 
-from depthwizard.evaluation.building_height import evaluate_building_height_instances  # noqa: E402
-from depthwizard.io.raster import ground_sample_distance_m  # noqa: E402
-from depthwizard.provenance.manifest import sha256_file  # noqa: E402
+from depthwizard.evaluation.building_height import evaluate_building_height_instances
+from depthwizard.io.raster import ground_sample_distance_m
+from depthwizard.provenance.manifest import sha256_file
 
 EXPOSED_POTSDAM_TILE_ID = "2_14"
 
