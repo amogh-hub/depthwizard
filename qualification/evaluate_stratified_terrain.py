@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from affine import Affine
+from rasterio.crs import CRS
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
@@ -17,7 +19,7 @@ from depthwizard.io.raster import ground_sample_distance_m
 from depthwizard.provenance.manifest import sha256_file
 
 
-def _grid_signature(path: Path) -> tuple[int, int, object, object]:
+def _grid_signature(path: Path) -> tuple[int, int, CRS | None, Affine]:
     with rasterio.open(path) as src:
         return src.height, src.width, src.crs, src.transform
 
