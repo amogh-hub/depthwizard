@@ -15,6 +15,8 @@ from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.provenance.manifest import sha256_file
 
 EXPOSED_TILE_ID = "2_14"
+CANONICAL_GROUND_POLICY = "strict"
+PROTOCOL_VERSION = "potsdam-2_14-building-diagnostic-v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,14 +24,14 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Run the complete downstream diagnostic for the already-exposed Potsdam 2_14 operator "
             "scene: project reference validation, deterministic official semantic-mask preparation, "
-            "and per-building height evaluation. Sealed blind tiles are not accepted."
+            "and per-building height evaluation. The canonical protocol is frozen to strict "
+            "impervious-surface ground support. Sealed blind tiles are not accepted."
         )
     )
     parser.add_argument("--project-dir", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--semantic-label", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--ground-policy", choices=("strict", "expanded"), default="strict")
     return parser.parse_args()
 
 
@@ -106,12 +108,12 @@ def main() -> int:
         "--output-dir",
         str(masks_dir),
         "--ground-policy",
-        args.ground_policy,
+        CANONICAL_GROUND_POLICY,
         "--tile-id",
         EXPOSED_TILE_ID,
     )
     building_mask = masks_dir / "potsdam-2_14-building-mask.tif"
-    ground_mask = masks_dir / f"potsdam-2_14-ground-mask-{args.ground_policy}.tif"
+    ground_mask = masks_dir / f"potsdam-2_14-ground-mask-{CANONICAL_GROUND_POLICY}.tif"
 
     _run(
         sys.executable,
@@ -138,12 +140,13 @@ def main() -> int:
     diagnosis_path = args.output_dir / "exposed-potsdam-2_14-diagnosis.json"
     diagnosis = {
         "schema_version": 1,
+        "protocol_version": PROTOCOL_VERSION,
         "tile_id": EXPOSED_TILE_ID,
         "status": "EXPOSED_DEVELOPMENT_DIAGNOSTIC",
         "claim_boundary": (
             "This artifact is restricted to the already-exposed Potsdam 2_14 development scene. "
             "It is downstream evaluation evidence only and does not authorize opening sealed blind "
-            "tiles 4_12 or 6_12."
+            "tiles 4_12 or 6_12. The canonical ground policy is frozen before result inspection."
         ),
         "project": {
             "project_dir": str(args.project_dir.resolve()),
@@ -161,7 +164,7 @@ def main() -> int:
         "semantic_label": {
             "path": str(args.semantic_label.resolve()),
             "sha256": sha256_file(args.semantic_label),
-            "ground_policy": args.ground_policy,
+            "ground_policy": CANONICAL_GROUND_POLICY,
         },
         "building_height": {
             "report_path": str(building_report_path.resolve()),
@@ -182,6 +185,8 @@ def main() -> int:
     temporary.replace(diagnosis_path)
 
     print(f"diagnosis={diagnosis_path}")
+    print(f"protocol_version={PROTOCOL_VERSION}")
+    print(f"ground_policy={CANONICAL_GROUND_POLICY}")
     print(f"global_rmse_m={validation.elevation.rmse_m:.6f}")
     print(f"global_mae_m={validation.elevation.mae_m:.6f}")
     print(f"slope_rmse_degrees={validation.slope.rmse_degrees:.6f}")
