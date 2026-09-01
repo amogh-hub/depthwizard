@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -13,9 +12,9 @@ import rasterio
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
 
-from depthwizard.evaluation.topography import compute_stratified_terrain_metrics  # noqa: E402
-from depthwizard.io.raster import ground_sample_distance_m  # noqa: E402
-from depthwizard.provenance.manifest import sha256_file  # noqa: E402
+from depthwizard.evaluation.topography import compute_stratified_terrain_metrics
+from depthwizard.io.raster import ground_sample_distance_m
+from depthwizard.provenance.manifest import sha256_file
 
 
 def _grid_signature(path: Path) -> tuple[int, int, object, object]:
