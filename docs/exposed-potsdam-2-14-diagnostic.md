@@ -4,9 +4,15 @@
 
 Frozen development diagnostic: `potsdam-2_14-building-diagnostic-v1`.
 
-This protocol is restricted to the already-exposed ISPRS Potsdam `2_14` scene. It is downstream
-evaluation evidence only. It does **not** authorize opening, inspecting, deriving labels for, or
-otherwise consuming sealed blind tiles `4_12` or `6_12`.
+This protocol is restricted to the already-exposed ISPRS Potsdam `2_14` scene and to the exact staged
+V6 metric DSM whose SHA-256 is:
+
+```text
+45e9ca10fee63a1a3078d2f0b2b978ab8d82d82c53cec9bb051fe6a3a3fb1062
+```
+
+It is downstream evaluation evidence only. It does **not** authorize opening, inspecting, deriving labels
+for, or otherwise consuming sealed blind tiles `4_12` or `6_12`.
 
 ## Purpose
 
@@ -26,6 +32,8 @@ The canonical diagnostic produces:
 ## Frozen scientific policy
 
 - Tile: `2_14` only.
+- Prediction: exact staged V6 native metric DSM, SHA-256
+  `45e9ca10fee63a1a3078d2f0b2b978ab8d82d82c53cec9bb051fe6a3a3fb1062`.
 - Reference data are evaluation-only and never enter inference or calibration.
 - Building support comes from the official ISPRS building class.
 - Canonical ground support is **strict impervious surface only**.
@@ -42,6 +50,9 @@ The canonical diagnostic produces:
   an explicit non-regression gate in addition to building-height improvement.
 - Qualification evidence must be generated from a Git-attributable checkout with no tracked local
   modifications. The top-level diagnosis records the exact Git SHA and runner-file SHA-256.
+- If the staged project DSM does not hash exactly to the frozen V6 prediction above, the canonical run
+  stops before reference validation. A different candidate requires a separately attributable diagnosis
+  rather than silently reusing the V6 evidence label.
 
 ## Workstation execution
 
@@ -79,6 +90,9 @@ python qualification/run_exposed_potsdam_2_14_diagnosis.py \
   --dataset-root /Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam \
   --output-dir /Users/amoghrb/Documents/depthwizard/qualification/evidence/potsdam-2_14-v6-diagnosis
 ```
+
+Before any reference metric is produced, the runner verifies that the project's persisted metric DSM has
+the frozen V6 SHA-256 above.
 
 The runner searches only TIFF candidates whose filename identifies exposed tile `2_14` and looks like a
 label/ground-truth raster. A candidate is accepted only if it is a three-band raster on the exact
@@ -123,8 +137,9 @@ The top-level artifact records:
 
 - exact qualification Git SHA;
 - qualification runner SHA-256;
+- exact frozen/actual V6 prediction SHA-256;
 - semantic-label resolution mode and label SHA-256;
-- project manifest and prediction SHA-256;
+- project manifest SHA-256;
 - reference SHA-256;
 - reference-validation metrics;
 - building-height, roof/top, and local-ground metrics.
