@@ -40,6 +40,8 @@ The canonical diagnostic produces:
   fail on the candidate are recorded as prediction failures.
 - Future promotion cannot be earned by compensating errors: roof/top MAE and local-ground MAE each have
   an explicit non-regression gate in addition to building-height improvement.
+- Qualification evidence must be generated from a Git-attributable checkout with no tracked local
+  modifications. The top-level diagnosis records the exact Git SHA and runner-file SHA-256.
 
 ## Workstation execution
 
@@ -50,7 +52,11 @@ cd ~/Documents/depthwizard
 git fetch origin
 git switch engineering/terrain-structure-vnext
 git pull --ff-only origin engineering/terrain-structure-vnext
+git status --short
 ```
+
+`git status --short` should show no tracked modifications before qualification. Untracked local data are
+not used to decide the source identity.
 
 The already-staged V6 project is expected at:
 
@@ -64,29 +70,36 @@ The exposed reference DSM is expected at:
 /Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/1_DSM/dsm_potsdam_02_14.tif
 ```
 
-Do **not** guess the local official semantic-label filename. First enumerate only candidate files that
-identify the exposed tile:
-
-```bash
-find /Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam \
-  -type f \
-  \( -iname '*2_14*.tif' -o -iname '*02_14*.tif' -o -iname '*2_14*.tiff' -o -iname '*02_14*.tiff' \) \
-  -print | sort
-```
-
-Choose the **official ISPRS semantic ground-truth label raster**, not an RGB orthophoto, DSM, participant
-prediction, or model-generated segmentation. The preparation code independently validates the official
-six-class RGB palette and rejects unknown label colors.
-
-Then run exactly one canonical diagnosis, substituting only the verified semantic-label path:
+Run one canonical diagnosis from the Potsdam dataset root:
 
 ```bash
 python qualification/run_exposed_potsdam_2_14_diagnosis.py \
   --project-dir /Users/amoghrb/Documents/depthwizard/workspace/operator-urban-potsdam-2-14-v6 \
   --reference /Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/1_DSM/dsm_potsdam_02_14.tif \
-  --semantic-label '/ABSOLUTE/PATH/TO/OFFICIAL_POTSDAM_2_14_LABEL.tif' \
+  --dataset-root /Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam \
   --output-dir /Users/amoghrb/Documents/depthwizard/qualification/evidence/potsdam-2_14-v6-diagnosis
 ```
+
+The runner searches only TIFF candidates whose filename identifies exposed tile `2_14` and looks like a
+label/ground-truth raster. A candidate is accepted only if it is a three-band raster on the exact
+reference grid, decodes completely under the official six-class ISPRS palette, and contains both
+building and impervious pixels. Exactly one valid candidate must resolve. If none or more than one valid
+candidate exists, the run stops before reference validation rather than guessing.
+
+If the local dataset intentionally contains multiple valid official label variants, freeze the desired
+variant **before looking at diagnostic results** and pass it explicitly:
+
+```bash
+python qualification/run_exposed_potsdam_2_14_diagnosis.py \
+  --project-dir /Users/amoghrb/Documents/depthwizard/workspace/operator-urban-potsdam-2-14-v6 \
+  --reference /Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/1_DSM/dsm_potsdam_02_14.tif \
+  --semantic-label '/ABSOLUTE/PATH/TO/FROZEN_OFFICIAL_POTSDAM_2_14_LABEL.tif' \
+  --output-dir /Users/amoghrb/Documents/depthwizard/qualification/evidence/potsdam-2_14-v6-diagnosis
+```
+
+The explicit label path is independently checked against the same tile identity, palette, and exact-grid
+contract. RGB orthophotos, DSMs, model-generated segmentation, unknown palettes, wrong grids, and blind
+tiles are rejected.
 
 ## Expected evidence
 
@@ -105,6 +118,16 @@ semantic-masks/potsdam-2_14-semantic-mask-manifest.json
 building-height/building-height-report.json
 building-height/building-height-instances.csv
 ```
+
+The top-level artifact records:
+
+- exact qualification Git SHA;
+- qualification runner SHA-256;
+- semantic-label resolution mode and label SHA-256;
+- project manifest and prediction SHA-256;
+- reference SHA-256;
+- reference-validation metrics;
+- building-height, roof/top, and local-ground metrics.
 
 Project reference validation also persists aligned reference, residual, metrics, and the human-readable
 validation report through the existing downstream validation subsystem.
