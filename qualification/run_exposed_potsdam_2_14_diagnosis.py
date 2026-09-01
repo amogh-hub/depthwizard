@@ -21,15 +21,19 @@ from depthwizard.provenance.manifest import sha256_file
 EXPOSED_TILE_ID = "2_14"
 CANONICAL_GROUND_POLICY = "strict"
 PROTOCOL_VERSION = "potsdam-2_14-building-diagnostic-v1"
+EXPECTED_V6_PREDICTION_SHA256 = (
+    "45e9ca10fee63a1a3078d2f0b2b978ab8d82d82c53cec9bb051fe6a3a3fb1062"
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the complete downstream diagnostic for the already-exposed Potsdam 2_14 operator "
+            "Run the complete downstream diagnostic for the already-exposed Potsdam 2_14 V6 operator "
             "scene: project reference validation, deterministic official semantic-mask preparation, "
-            "and per-building height evaluation. The canonical protocol is frozen to strict "
-            "impervious-surface ground support. Sealed blind tiles are not accepted."
+            "and per-building height evaluation. The canonical protocol is frozen to the exact "
+            "staged V6 metric-DSM hash and strict impervious-surface ground support. Sealed blind "
+            "tiles are not accepted."
         )
     )
     parser.add_argument("--project-dir", type=Path, required=True)
@@ -65,7 +69,13 @@ def _semantic_name_candidate(path: Path) -> bool:
     if path.suffix.casefold() not in {".tif", ".tiff"}:
         return False
     normalized = path.name.casefold().replace("-", "_")
-    return _contains_exposed_tile(path) and ("label" in normalized or "ground_truth" in normalized)
+    semantic_token = (
+        "label" in normalized
+        or "ground_truth" in normalized
+        or "_gt" in normalized
+        or "gt_" in normalized
+    )
+    return _contains_exposed_tile(path) and semantic_token
 
 
 def _palette_valid_exact_grid_label(candidate: Path, reference: Path) -> bool:
@@ -160,6 +170,16 @@ def _git_identity() -> str:
     return sha
 
 
+def _require_expected_v6_prediction(prediction: Path) -> str:
+    actual = sha256_file(prediction)
+    if actual != EXPECTED_V6_PREDICTION_SHA256:
+        raise ValueError(
+            "canonical exposed V6 diagnosis requires the frozen staged metric DSM; prediction hash "
+            f"mismatch: expected {EXPECTED_V6_PREDICTION_SHA256}, got {actual} from {prediction}"
+        )
+    return actual
+
+
 def _require_exposed_identity(
     *,
     manifest: ProjectManifest,
@@ -205,6 +225,7 @@ def main() -> int:
     prediction = manifest.artifact_path("dsm")
     if prediction is None or not prediction.is_file():
         raise ValueError("exposed diagnosis requires a completed metric DSM artifact")
+    prediction_sha256 = _require_expected_v6_prediction(prediction)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     masks_dir = args.output_dir / "semantic-masks"
@@ -249,7 +270,7 @@ def main() -> int:
         "--output-dir",
         str(building_dir),
         "--label",
-        "potsdam-2_14-exposed-vnext-diagnostic",
+        "potsdam-2_14-exposed-v6-diagnostic",
         "--tile-id",
         EXPOSED_TILE_ID,
     )
@@ -264,9 +285,10 @@ def main() -> int:
         "tile_id": EXPOSED_TILE_ID,
         "status": "EXPOSED_DEVELOPMENT_DIAGNOSTIC",
         "claim_boundary": (
-            "This artifact is restricted to the already-exposed Potsdam 2_14 development scene. "
-            "It is downstream evaluation evidence only and does not authorize opening sealed blind "
-            "tiles 4_12 or 6_12. The canonical ground policy is frozen before result inspection."
+            "This artifact is restricted to the exact frozen V6 prediction on the already-exposed "
+            "Potsdam 2_14 development scene. It is downstream evaluation evidence only and does not "
+            "authorize opening sealed blind tiles 4_12 or 6_12. The canonical ground policy and "
+            "prediction identity are frozen before result inspection."
         ),
         "qualification_runtime": {
             "git_sha": git_sha,
@@ -280,7 +302,8 @@ def main() -> int:
             "project_manifest_sha256": sha256_file(args.project_dir / "project-manifest.json"),
             "source_path": str(manifest.source_path),
             "prediction": str(prediction.resolve()),
-            "prediction_sha256": sha256_file(prediction),
+            "prediction_sha256": prediction_sha256,
+            "expected_v6_prediction_sha256": EXPECTED_V6_PREDICTION_SHA256,
         },
         "reference": {
             "path": str(args.reference.resolve()),
@@ -313,6 +336,7 @@ def main() -> int:
     print(f"diagnosis={diagnosis_path}")
     print(f"protocol_version={PROTOCOL_VERSION}")
     print(f"qualification_git_sha={git_sha}")
+    print(f"prediction_sha256={prediction_sha256}")
     print(f"semantic_label={semantic_label}")
     print(f"semantic_label_resolution={semantic_resolution}")
     print(f"ground_policy={CANONICAL_GROUND_POLICY}")
