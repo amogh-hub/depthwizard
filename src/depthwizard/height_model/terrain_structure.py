@@ -83,26 +83,36 @@ class TerrainStructureConfig:
 
     @property
     def height_bins(self) -> int:
+        """Number of disjoint metric height intervals induced by the configured edges."""
+
         return len(self.height_bin_edges_m) + 1
+
+    @property
+    def height_ordinal_channels(self) -> int:
+        """Number of cumulative ordinal thresholds predicted by the structure expert."""
+
+        return len(self.height_bin_edges_m)
 
 
 @dataclass(frozen=True)
 class TerrainStructureOutput:
     """Explicit relative terrain and above-ground outputs.
 
+    ``above_ground_amplitude_relative`` is the conditional structure height before support gating.
+    ``above_ground_relative`` is the support-gated field used in scientific recomposition. Keeping both
+    fields prevents uncertain structure support from attenuating the magnitude target during training.
     ``relative_height`` is the scientific recomposition ``terrain_relative + above_ground_relative``.
-    The terrain and structure components remain inspectable so a roof-height improvement cannot hide
-    a compensating ground-surface regression.
     """
 
     terrain_relative: torch.Tensor
     terrain_residual: torch.Tensor
+    above_ground_amplitude_relative: torch.Tensor
     above_ground_relative: torch.Tensor
     relative_height: torch.Tensor
     structure_logits: torch.Tensor
     structure_probability: torch.Tensor
     semantic_logits: torch.Tensor
-    height_bin_logits: torch.Tensor
+    height_ordinal_logits: torch.Tensor
     boundary_probability: torch.Tensor
     normals: torch.Tensor
     terrain_log_variance: torch.Tensor
@@ -123,10 +133,10 @@ class TerrainStructureModel(nn.Module):
     A shared RGB/context hierarchy is fused bidirectionally with terrain evidence. The terrain head
     is decoded only to a coarse feature scale before bilinear reconstruction, discouraging it from
     learning roof texture as bare-earth relief. The structure head returns to native input resolution
-    and predicts explicit building support, continuous above-ground height, ordinal height bins,
-    boundaries, normals, semantics, and uncertainty.
+    and predicts explicit building support, conditional continuous above-ground height, cumulative
+    ordinal height thresholds, boundaries, normals, semantics, and uncertainty.
 
-    At initialization both terrain residual and above-ground height are exactly zero, so the composed
+    At initialization both terrain residual and above-ground amplitude are exactly zero, so the composed
     relative field equals the supplied geometry prior. That identity is a safe optimization starting
     point, not a production guarantee or a claim that the prior is a bare-earth terrain estimate.
     """
@@ -208,9 +218,9 @@ class TerrainStructureModel(nn.Module):
             self.config.semantic_classes,
             kernel_size=1,
         )
-        self.height_bin_head = nn.Conv2d(
+        self.height_ordinal_head = nn.Conv2d(
             head_channels,
-            self.config.height_bins,
+            self.config.height_ordinal_channels,
             kernel_size=1,
         )
         self.boundary_head = nn.Conv2d(head_channels, 1, kernel_size=1)
@@ -333,12 +343,13 @@ class TerrainStructureModel(nn.Module):
         return TerrainStructureOutput(
             terrain_relative=terrain_relative,
             terrain_residual=terrain_residual,
+            above_ground_amplitude_relative=above_ground_amplitude,
             above_ground_relative=above_ground_relative,
             relative_height=relative_height,
             structure_logits=structure_logits,
             structure_probability=structure_probability,
             semantic_logits=self.semantic_head(structure),
-            height_bin_logits=self.height_bin_head(structure),
+            height_ordinal_logits=self.height_ordinal_head(structure),
             boundary_probability=boundary_probability,
             normals=normals,
             terrain_log_variance=terrain_log_variance,
