@@ -534,7 +534,7 @@ def _load_plan(path: Path, dataset_root: Path) -> tuple[dict[str, Any], tuple[Pl
 
 def _companion_world_filename(filename: str) -> str:
     lower = filename.casefold()
-    if not (lower.endswith(".tif") or lower.endswith(".tiff")):
+    if not lower.endswith((".tif", ".tiff")):
         raise ValueError(f"cannot derive world file from {filename}")
     return str(Path(filename).with_suffix(".tfw"))
 
