@@ -4,9 +4,11 @@ import argparse
 import json
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import rasterio
+from rasterio.errors import NotGeoreferencedWarning
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_ROOT / "src"))
@@ -110,30 +112,67 @@ def _unique_semantic_label(dataset_root: Path, tile_id: str) -> Path:
     return matches[0]
 
 
-def _semantic_metadata(path: Path) -> dict[str, object]:
-    with rasterio.open(path) as src:
-        if src.count != 3:
-            raise ValueError(f"Potsdam semantic label must have exactly 3 bands: {path}")
-        if (src.height, src.width) != (6000, 6000):
-            raise ValueError(
-                f"Potsdam semantic label must be 6000x6000; got {src.width}x{src.height}: {path}"
-            )
-        return {
-            "width": src.width,
-            "height": src.height,
-            "bands": src.count,
-            "dtype": src.dtypes[0],
-            "crs": src.crs.to_string() if src.crs is not None else None,
-            "transform_is_identity": bool(src.transform.is_identity),
-        }
+def _unique_tfw(raster_path: Path) -> Path:
+    matches = sorted(
+        path
+        for path in raster_path.parent.iterdir()
+        if path.is_file()
+        and path.stem.casefold() == raster_path.stem.casefold()
+        and path.suffix.casefold() == ".tfw"
+    )
+    if not matches:
+        raise FileNotFoundError(
+            f"missing mandatory Potsdam .tfw georeference sidecar for {raster_path}"
+        )
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"ambiguous Potsdam .tfw sidecars for {raster_path}: "
+            + ", ".join(str(path) for path in matches)
+        )
+    return matches[0]
+
+
+def _semantic_metadata(path: Path, rgb_path: Path) -> dict[str, object]:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
+        with rasterio.open(path) as src, rasterio.open(rgb_path) as rgb:
+            if src.count != 3:
+                raise ValueError(f"Potsdam semantic label must have exactly 3 bands: {path}")
+            if (src.height, src.width) != (6000, 6000):
+                raise ValueError(
+                    f"Potsdam semantic label must be 6000x6000; got {src.width}x{src.height}: {path}"
+                )
+            if (src.height, src.width) != (rgb.height, rgb.width):
+                raise ValueError(f"semantic-label dimensions disagree with RGB: {path}")
+
+            if src.transform.is_identity:
+                alignment_basis = "official_same_tile_exact_pixel_grid"
+            else:
+                if not src.transform.almost_equals(rgb.transform):
+                    raise ValueError(f"semantic-label affine transform disagrees with RGB: {path}")
+                if src.crs is not None and rgb.crs is not None and src.crs != rgb.crs:
+                    raise ValueError(f"semantic-label CRS disagrees with RGB: {path}")
+                alignment_basis = "geospatial_transform_match"
+
+            return {
+                "width": src.width,
+                "height": src.height,
+                "bands": src.count,
+                "dtype": src.dtypes[0],
+                "crs": src.crs.to_string() if src.crs is not None else None,
+                "transform_is_identity": bool(src.transform.is_identity),
+                "alignment_basis": alignment_basis,
+            }
 
 
 def _tile_record(dataset_root: Path, tile_id: str, role: str) -> dict[str, object]:
     paths = resolve_potsdam_tile_paths(dataset_root, tile_id)
     label = _unique_semantic_label(dataset_root, tile_id)
+    rgb_world_file = _unique_tfw(paths.rgb)
+    dsm_world_file = _unique_tfw(paths.reference_dsm)
     rgb_contract = inspect_potsdam_rgb_contract(paths.rgb)
     reference_contract = inspect_potsdam_reference_contract(paths.rgb, paths.reference_dsm)
-    label_metadata = _semantic_metadata(label)
+    label_metadata = _semantic_metadata(label, paths.rgb)
     if (label_metadata["height"], label_metadata["width"]) != (
         rgb_contract["height"],
         rgb_contract["width"],
@@ -144,8 +183,12 @@ def _tile_record(dataset_root: Path, tile_id: str, role: str) -> dict[str, objec
         "role": role,
         "rgb": str(paths.rgb.resolve()),
         "rgb_sha256": sha256_file(paths.rgb),
+        "rgb_world_file": str(rgb_world_file.resolve()),
+        "rgb_world_file_sha256": sha256_file(rgb_world_file),
         "reference_dsm": str(paths.reference_dsm.resolve()),
         "reference_dsm_sha256": sha256_file(paths.reference_dsm),
+        "reference_dsm_world_file": str(dsm_world_file.resolve()),
+        "reference_dsm_world_file_sha256": sha256_file(dsm_world_file),
         "semantic_label": str(label.resolve()),
         "semantic_label_sha256": sha256_file(label),
         "rgb_contract": rgb_contract,
@@ -165,7 +208,7 @@ def _write_manifest(
     campaign_protocol_version: str | None,
 ) -> None:
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "protocol_version": TSD_SPLIT_PROTOCOL_VERSION,
         "campaign_protocol_version": campaign_protocol_version,
         "status": "FROZEN_TSD_SUPERVISION_SPLIT",
@@ -179,7 +222,9 @@ def _write_manifest(
             "prohibited even if later label packages are locally available. Exposed 2_14, external "
             "evaluation 3_14, and sealed blind 4_12/6_12 are prohibited from training, development "
             "loss, early stopping, hyperparameter selection, or target generation. For the named "
-            "initial campaign, the recorded spatial-buffer tiles are also withheld from supervision."
+            "initial campaign, the recorded spatial-buffer tiles are also withheld from supervision. "
+            "RGB/DSM TIFF identities and their mandatory .tfw georeference sidecars are hashed "
+            "independently so a later world-file edit cannot silently change the frozen grid."
         ),
         "participant_ground_truth_tile_ids": sorted(PARTICIPANT_GROUND_TRUTH_TILE_IDS),
         "supervision_eligible_tile_ids": sorted(SUPERVISION_ELIGIBLE_TILE_IDS),
@@ -246,7 +291,11 @@ def main() -> int:
     print(f"train_tiles={','.join(split.train_tile_ids)}")
     print(f"dev_tiles={','.join(split.dev_tile_ids)}")
     if campaign_protocol_version == INITIAL_TSD_CAMPAIGN_PROTOCOL_VERSION:
-        print("campaign_buffer_tiles_withheld=" + ",".join(sorted(INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS)))
+        print(
+            "campaign_buffer_tiles_withheld="
+            + ",".join(sorted(INITIAL_TSD_CAMPAIGN_BUFFER_TILE_IDS))
+        )
+    print("world_file_hashes_frozen=true")
     print("reserved_tiles_not_consumed=2_14,3_14,4_12,6_12")
     print("historical_challenge_test_tiles_not_consumed=true")
     return 0
