@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
 import urllib.error
 from email.message import Message
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -68,3 +71,20 @@ def test_archive_range_mismatch_fails_immediately_without_retry(monkeypatch: pyt
 
     assert opener.calls == 1
     assert retry_transport.ResilientHttpRangeSource.retry_attempts_total == 0
+
+
+def test_launcher_is_directly_executable() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    launcher = repo_root / "qualification" / "run_tsd_potsdam_official_ranges.py"
+    completed = subprocess.run(
+        [sys.executable, str(launcher), "--help"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "usage:" in completed.stdout.casefold()
+    assert "--execute" in completed.stdout
