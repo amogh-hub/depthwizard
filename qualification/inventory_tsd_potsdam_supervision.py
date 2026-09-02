@@ -141,6 +141,7 @@ def main() -> int:
     payload = {
         "schema_version": 3,
         "mode": "filename_metadata_only",
+        "raster_content_opened": False,
         "protocol_version": TSD_SPLIT_PROTOCOL_VERSION,
         "dataset_root": str(args.dataset_root.resolve()),
         "supervision_eligible_tile_ids": list(_ordered_eligible_tile_ids()),
