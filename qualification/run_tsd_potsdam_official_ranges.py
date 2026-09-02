@@ -98,7 +98,7 @@ class ResilientHttpRangeSource(impl.HttpRangeSource):
 
 
 def main() -> int:
-    impl.HttpRangeSource = ResilientHttpRangeSource
+    setattr(impl, "HttpRangeSource", ResilientHttpRangeSource)
     result = impl.main()
     print(f"transient_range_retries={ResilientHttpRangeSource.retry_attempts_total}")
     return result
