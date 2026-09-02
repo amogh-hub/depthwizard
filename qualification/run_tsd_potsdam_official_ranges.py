@@ -6,9 +6,17 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Final
 
-from qualification import download_tsd_potsdam_official_ranges as impl
+# When invoked as `python qualification/run_tsd_potsdam_official_ranges.py`,
+# Python places qualification/ rather than the repository root on sys.path.
+# Add the root only for direct-script execution so the same launcher also
+# remains importable as qualification.run_tsd_potsdam_official_ranges.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from qualification import download_tsd_potsdam_official_ranges as impl  # noqa: E402
 
 MAX_RANGE_ATTEMPTS: Final = 5
 RANGE_OPEN_TIMEOUT_SECONDS: Final = 90
