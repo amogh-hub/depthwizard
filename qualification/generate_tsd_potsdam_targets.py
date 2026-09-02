@@ -354,10 +354,11 @@ def _generate_tile(
     tile_id = str(record["tile_id"])
     verified = _verify_record_identities(record, dataset_root)
     reference = _read_reference(verified["reference_dsm"])
+    reference_shape = (int(reference.shape[0]), int(reference.shape[1]))
     building, strict_ground, semantic_evidence = _read_semantics(
         verified["semantic_label"],
         verified["rgb"],
-        reference_shape=reference.shape,
+        reference_shape=reference_shape,
         expected_metadata=record["semantic_label_metadata"],
     )
 
@@ -456,7 +457,10 @@ def main() -> int:
     tile_records: list[dict[str, Any]] = []
     for index, record in enumerate(records, start=1):
         tile_id = record["tile_id"]
-        print(f"[{index}/{len(records)}] generating metric TSD targets for Potsdam {tile_id} ...", flush=True)
+        print(
+            f"[{index}/{len(records)}] generating metric TSD targets for Potsdam {tile_id} ...",
+            flush=True,
+        )
         result = _generate_tile(
             record,
             dataset_root=dataset_root,
