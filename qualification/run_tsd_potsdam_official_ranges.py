@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import socket
 import ssl
 import sys
 import time
@@ -76,7 +75,7 @@ class ResilientHttpRangeSource(impl.HttpRangeSource):
                 if exc.code not in RETRYABLE_HTTP_STATUS:
                     raise
                 last_error = exc
-            except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError) as exc:
+            except (urllib.error.URLError, TimeoutError, ssl.SSLError) as exc:
                 last_error = exc
 
             if attempt == MAX_RANGE_ATTEMPTS:
@@ -98,7 +97,7 @@ class ResilientHttpRangeSource(impl.HttpRangeSource):
 
 
 def main() -> int:
-    setattr(impl, "HttpRangeSource", ResilientHttpRangeSource)
+    impl.HttpRangeSource = ResilientHttpRangeSource
     result = impl.main()
     print(f"transient_range_retries={ResilientHttpRangeSource.retry_attempts_total}")
     return result
