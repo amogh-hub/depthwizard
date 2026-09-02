@@ -39,7 +39,7 @@ def test_unique_tfw_fails_closed_when_ambiguous(tmp_path: Path) -> None:
 def test_split_manifest_schema_freezes_georeference_identity_contract(tmp_path: Path) -> None:
     output = tmp_path / "split.json"
     split = initial_tsd_campaign_split()
-    record = {
+    record: dict[str, object] = {
         "tile_id": split.train_tile_ids[0],
         "role": "train",
         "rgb_world_file_sha256": "a" * 64,
