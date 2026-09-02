@@ -1,3 +1,6 @@
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 from depthwizard.height_model.terrain_structure_split import (
@@ -78,3 +81,28 @@ def test_inventory_fails_ambiguous_component_instead_of_selecting_one() -> None:
 
     assert record.status == "AMBIGUOUS_RGB"
     assert not record.complete
+
+
+def test_inventory_json_records_raster_content_opened_false(tmp_path: Path) -> None:
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    output = tmp_path / "inventory.json"
+    script = Path(__file__).resolve().parents[1] / "qualification" / "inventory_tsd_potsdam_supervision.py"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["mode"] == "filename_metadata_only"
+    assert payload["raster_content_opened"] is False
