@@ -110,41 +110,71 @@ spatial-buffer tile, so it is not required by the first campaign. `2_10` is a de
 requires only its missing label. The other 12 active campaign tiles require RGB, DSM, and label.
 
 The deterministic planner `qualification/plan_tsd_potsdam_acquisition.py` converts the inventory JSON
-into the exact active-component acquisition list without opening raster content.
+into the exact active-component acquisition list without opening raster content. For the recorded
+inventory, that plan contains 37 missing logical components: 12 RGB TIFFs, 12 DSM TIFFs, and 13
+participant-label TIFFs.
 
-## Acquisition package policy
+## Official selective range-acquisition policy
 
-The current ISPRS benchmark landing page points Potsdam downloads to the Leibniz Hannover Seafile
-share. DepthWizard does not depend on an unofficial mirror for scientific acquisition provenance.
-The first campaign uses the canonical Potsdam packages:
+The current official ISPRS/Leibniz Hannover interface exposes Potsdam as one remote `Potsdam.zip`
+rather than as individually downloadable tile files. DepthWizard therefore uses the same
+authenticated HTTP byte-range mechanism already proven by earlier qualification acquisition instead
+of downloading the complete outer archive.
 
-- RGB: `2_Ortho_RGB.zip`
-- absolute reference DSM: `1_DSM.zip`
-- historical participant semantic labels: `5_Labels_for_participants.zip`
+The verified remote hierarchy relevant to TSD is:
 
-The later `5_Labels_all.zip` package is deliberately **not** accepted by the TSD acquisition stager.
-Although full labels are publicly downloadable after the benchmark ended, allowing that package into
-the new training lane would weaken the supervision boundary and makes accidental challenge-test
-consumption easier. The participant-label package is sufficient for all 13 active campaign tiles.
+- outer `Potsdam.zip`: approximately 13.3 GB and HTTP `206 Partial Content` capable;
+- `Potsdam/2_Ortho_RGB.zip`: STORE-compressed in the outer ZIP, so its central directory and selected
+  member byte ranges can be addressed remotely without transferring the complete nested RGB ZIP;
+- `Potsdam/1_DSM.rar`: STORE-compressed in the outer ZIP, RAR4 and non-solid, so RAR headers can be
+  walked while packed payloads are skipped mathematically and only selected member byte ranges are
+  fetched;
+- `Potsdam/5_Labels_for_participants.zip`: DEFLATE-compressed in the outer ZIP and small enough that
+  only this approximately 17 MB outer compressed member is transferred and reconstructed
+  transiently before selecting the required participant labels.
 
-`qualification/stage_tsd_potsdam_acquisition.py` validates the three local archives before copying
-anything. It requires canonical package names, validates ZIP member paths and rejects symlinks,
-requires exactly one archive member for every planned missing file, rejects historical challenge-test
-labels in the supplied label archive, enforces member/total size safety limits, refuses stale plans or
-overwrites, and verifies enough free disk space. Only the 37 files listed by the current acquisition
-plan (12 RGB + 12 DSM + 13 labels) can be copied. `4_12`, `6_12`, buffer tiles, and all challenge-test
-payloads remain unextracted.
+The later `Potsdam/5_Labels_all.zip` is deliberately **not** used in the TSD supervision lane.
+Although full labels are publicly available after the benchmark ended, preserving the historical
+participant-label package makes accidental challenge-test supervision substantially harder.
 
-The stager defaults to a dry run. `--execute` is required to copy selected raster bytes. In both modes
-it hashes the exact local source archives and records the acquisition-plan hash and source Git SHA.
-During execution it hashes each staged file while copying it atomically. This command does **not**
-decode raster pixels; archive central-directory metadata may enumerate package members, and selected
-active raster bytes are read only for byte-for-byte staging and hashing.
+Each newly acquired RGB and DSM TIFF must also be accompanied by its matching official `.tfw` world
+file. The 37 logical missing components therefore expand to 61 physical files for transport:
 
-The acquisition provenance intentionally does not claim a cryptographic remote-origin proof: the
-current ISPRS workflow does not expose a remote SHA-256 for these packages to DepthWizard. The
-operator must obtain the three canonical archives from the official ISPRS/Leibniz Hannover share;
-DepthWizard then records their exact local SHA-256 identities for reproducibility.
+- 12 RGB TIFFs + 12 RGB TFW sidecars;
+- 12 DSM TIFFs + 12 DSM TFW sidecars;
+- 13 participant-label TIFFs.
+
+`qualification/download_tsd_potsdam_official_ranges.py` is the sole first-campaign acquisition path.
+It binds directly to the frozen acquisition-plan JSON, requires the exact dataset root used to create
+that plan, rejects sealed/nonactive tile requirements, and defaults to a preflight mode with no dataset
+outputs written. `--execute` is required before selected files can be materialized.
+
+The downloader fails closed if the official server does not return HTTP 206 ranges; it never falls
+back to downloading the full archive. It validates the exact outer member names and compression
+modes, reads remote ZIP/RAR metadata, verifies unique planned members, and verifies size/CRC for each
+materialized output. RGB and DSM packed member downloads are resumable in a local cache, while final
+outputs use partial/atomic staging. DSM extraction reconstructs a one-member RAR4 container and uses
+`bsdtar`, matching the previously proven Mac acquisition method.
+
+For labels, the complete small participant-label nested ZIP representation is reconstructed only in a
+temporary directory because the outer DEFLATE layer prevents random access inside that nested ZIP.
+The package is checked for historical challenge-test label entries, and only the 13 planned label
+entries are decompressed to dataset outputs. Nonselected participant-label raster entries are not
+decoded.
+
+The acquisition report records source Git identity, acquisition-plan SHA-256, exact selected member
+metadata, output SHA-256/CRC32 values, HTTP request count and transferred bytes. It explicitly records:
+
+- `full_outer_archive_downloaded=false`;
+- `full_rgb_inner_archive_downloaded=false`;
+- `full_dsm_rar_downloaded=false`;
+- `nonselected_participant_label_entries_decompressed=false`;
+- `raster_pixels_decoded_by_downloader=false`;
+- `sealed_blind_tile_payloads_extracted=false`.
+
+No remote SHA-256 for the complete official `Potsdam.zip` is asserted by this workflow. Provenance is
+the authenticated official ISPRS/Leibniz Hannover share plus exact archive/member metadata and local
+output hashes; the claim is intentionally no stronger than the available evidence.
 
 ## Fail-closed implementation
 
@@ -163,12 +193,12 @@ The following controls are executable rather than advisory:
    population. Historical challenge-test files are not promoted to candidates even if they exist.
 5. `plan_tsd_potsdam_acquisition.py` reports only components missing from the 13 active campaign
    tiles; buffer tiles are explicitly not required.
-6. `stage_tsd_potsdam_acquisition.py` accepts only the three canonical source-package roles, selects
-   exactly the plan-listed missing members, refuses challenge-test labels in the label archive, and
-   never copies nonactive raster payloads.
+6. `download_tsd_potsdam_official_ranges.py` binds the frozen plan to the official single remote
+   `Potsdam.zip`, selects only active-campaign TIFF/TFW/participant-label payloads, refuses full-archive
+   fallback, and never extracts sealed blind payloads.
 7. Duplicate candidate/archive members fail as ambiguous rather than being selected implicitly.
-8. Inventory and acquisition planning remain filename-metadata-only. Acquisition staging may copy and
-   hash only selected active raster bytes, but it does not decode or inspect raster pixels.
+8. Inventory and acquisition planning remain filename-metadata-only. Acquisition may copy/hash only
+   selected active raster bytes, but it does not decode or inspect raster pixels.
 
 ## Claim boundary
 
