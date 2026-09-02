@@ -337,6 +337,12 @@ class SeekableRemote(io.RawIOBase):
         self.position += len(data)
         return data
 
+    def readinto(self, buffer: Any) -> int:
+        view = memoryview(buffer)
+        data = self.read(len(view))
+        view[: len(data)] = data
+        return len(data)
+
 
 class _NoCloseBufferedReader(io.BufferedReader):
     def close(self) -> None:
