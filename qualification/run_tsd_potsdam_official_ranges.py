@@ -16,7 +16,7 @@ from typing import Final
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qualification import download_tsd_potsdam_official_ranges as impl  # noqa: E402
+from qualification import download_tsd_potsdam_official_ranges as impl
 
 MAX_RANGE_ATTEMPTS: Final = 5
 RANGE_OPEN_TIMEOUT_SECONDS: Final = 90
