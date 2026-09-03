@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import random
 import shutil
 import subprocess
 import sys
@@ -509,7 +508,8 @@ def _sample_windows(
         raise RuntimeError(f"scene {scene.record.tile_id} lacks required TSD patch support")
     classes = ("tall", "building", "valid")
     windows: list[PatchWindow] = []
-    width = valid.shape[1]
+    width = int(valid.shape[1])
+    shape = (int(valid.shape[0]), int(valid.shape[1]))
     for index in range(count):
         sampling_class = classes[index % len(classes)]
         candidates = indices[sampling_class]
@@ -517,7 +517,7 @@ def _sample_windows(
         for _ in range(64):
             flat = int(candidates[int(rng.integers(0, candidates.size))])
             row, col = divmod(flat, width)
-            top, left = _window_from_center(row, col, valid.shape, PATCH_SIZE)
+            top, left = _window_from_center(row, col, shape, PATCH_SIZE)
             patch_valid = valid[top : top + PATCH_SIZE, left : left + PATCH_SIZE]
             if float(np.mean(patch_valid)) < 0.20:
                 continue
@@ -529,8 +529,8 @@ def _sample_windows(
                 f"{scene.record.tile_id}"
             )
         windows.append(chosen)
-    rng.shuffle(windows)
-    return windows
+    permutation = rng.permutation(len(windows))
+    return [windows[int(index)] for index in permutation]
 
 
 def _patch_tensors(
@@ -615,8 +615,8 @@ def _train_epoch(
     rng: np.random.Generator,
 ) -> dict[str, float | int]:
     model.train()
-    order = list(records)
-    rng.shuffle(order)
+    permutation = rng.permutation(len(records))
+    order = [records[int(index)] for index in permutation]
     total_loss = 0.0
     steps = 0
     class_counts = {"tall": 0, "building": 0, "valid": 0}
@@ -865,7 +865,6 @@ def main() -> int:
     if device.type == "mps" and hasattr(torch, "mps"):
         torch.mps.empty_cache()
 
-    random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
 
@@ -895,7 +894,6 @@ def main() -> int:
     stale_epochs = max(0, completed_epoch - best_epoch)
     for epoch in range(completed_epoch + 1, EPOCHS + 1):
         epoch_seed = SEED + epoch
-        random.seed(epoch_seed)
         np.random.seed(epoch_seed)
         torch.manual_seed(epoch_seed)
         epoch_rng = np.random.default_rng(epoch_seed)
@@ -975,6 +973,13 @@ def main() -> int:
 
     if not best_path.is_file():
         raise RuntimeError("TSD training completed without a best checkpoint")
+    if history:
+        completed_epoch_value = history[-1].get("epoch")
+        if not isinstance(completed_epoch_value, int):
+            raise TypeError("TSD training history epoch must be an integer")
+        epochs_completed = completed_epoch_value
+    else:
+        epochs_completed = 0
     final_report = {
         "schema_version": 1,
         "status": "TRAINED_TSD_CANDIDATE_NOT_PROMOTED",
@@ -1009,7 +1014,7 @@ def main() -> int:
             "sampling_cycle": ["tall>=8m", "building", "valid"],
             "dev_selection_score": "2*tall_agl_mae + agl_mae + roof_mae + ground_mae",
         },
-        "epochs_completed": int(history[-1]["epoch"]) if history else 0,
+        "epochs_completed": epochs_completed,
         "best_epoch": best_epoch,
         "best_selection_score": best_score,
         "history": history,
