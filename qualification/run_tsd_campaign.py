@@ -24,8 +24,10 @@ EXPECTED_TARGET_MANIFEST_SHA256 = (
 TARGET_MANIFEST_REL = Path("qualification/evidence/tsd-metric-targets-v1.json")
 AUDIT_REL = Path("qualification/evidence/tsd-metric-target-supervision-audit-v1.json")
 AUTHORIZATION_REL = Path("qualification/evidence/tsd-training-authorization-v1.json")
+DEV_QUALIFICATION_REL = Path("qualification/evidence/tsd-dev-qualification-v1.json")
 TRAINING_DIR_REL = Path("artifacts/training/tsd-urban-v1")
 TRAINER_REL = Path("scripts/train_tsd_potsdam_v1.py")
+DEV_QUALIFIER_REL = Path("qualification/qualify_tsd_dev_candidate.py")
 
 
 def _repo_root() -> Path:
@@ -111,6 +113,45 @@ def _run_training(
     print(f"training_report_sha256={sha256_file(report_path)}")
 
 
+def _run_dev_qualification(root: Path, *, target_manifest: Path) -> bool:
+    qualifier = (root / DEV_QUALIFIER_REL).resolve()
+    if not qualifier.is_file():
+        raise FileNotFoundError(qualifier)
+    training_dir = (root / TRAINING_DIR_REL).resolve()
+    output = (root / DEV_QUALIFICATION_REL).resolve()
+    print("campaign_stage=TSD_FROZEN_DEV_QUALIFICATION", flush=True)
+    subprocess.run(
+        [
+            sys.executable,
+            str(qualifier),
+            "--target-manifest",
+            str(target_manifest),
+            "--training-dir",
+            str(training_dir),
+            "--output",
+            str(output),
+        ],
+        cwd=root,
+        check=True,
+    )
+    if not output.is_file():
+        raise RuntimeError("TSD dev qualifier returned without a qualification report")
+    report = json.loads(output.read_text(encoding="utf-8"))
+    if report.get("status") not in {"TSD_DEV_QUALIFICATION_PASS", "TSD_DEV_QUALIFICATION_FAIL"}:
+        raise RuntimeError("unexpected TSD dev qualification status")
+    if report.get("production_promoted") is not False:
+        raise RuntimeError("dev qualification unexpectedly claims production promotion")
+    if report.get("exposed_corrective_2_14_consumed") is not False:
+        raise RuntimeError("dev qualification consumed exposed corrective 2_14")
+    if report.get("external_evaluation_3_14_consumed") is not False:
+        raise RuntimeError("dev qualification consumed external evaluation 3_14")
+    if report.get("sealed_blind_tile_payloads_consumed") is not False:
+        raise RuntimeError("dev qualification violated sealed-blind boundary")
+    print(f"dev_qualification_report={output}")
+    print(f"dev_qualification_report_sha256={sha256_file(output)}")
+    return report.get("qualification_passed") is True
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Advance the frozen Potsdam TSD campaign through guarded local stages."
@@ -193,6 +234,19 @@ def main() -> int:
         authorization_path=authorization_path,
     )
     print("campaign_state=TSD_TRAINED_CANDIDATE_AWAITING_QUALIFICATION")
+    print("production_promoted=false")
+    print("sealed_blind_tile_payloads_consumed=false")
+
+    qualified = _run_dev_qualification(root, target_manifest=target_manifest)
+    if not qualified:
+        print("campaign_state=TSD_DEV_QUALIFICATION_FAILED")
+        print("exposed_corrective_2_14_consumed=false")
+        print("production_promoted=false")
+        print("sealed_blind_tile_payloads_consumed=false")
+        return 0
+
+    print("campaign_state=TSD_DEV_QUALIFIED_AWAITING_EXPOSED_2_14")
+    print("exposed_corrective_2_14_consumed=false")
     print("production_promoted=false")
     print("sealed_blind_tile_payloads_consumed=false")
     return 0
