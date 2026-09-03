@@ -14,12 +14,16 @@ from qualification.audit_tsd_target_supervision import (
     print_audit_summary,
     sha256_file,
 )
+from depthwizard.height_model.terrain_structure_campaign import (
+    assess_tsd_training_authorization,
+)
 
 EXPECTED_TARGET_MANIFEST_SHA256 = (
     "cffe83e74d6a58adf5ea4919f70de35fd0a2b7a3532d1d272a9d2e927f20716c"
 )
 TARGET_MANIFEST_REL = Path("qualification/evidence/tsd-metric-targets-v1.json")
 AUDIT_REL = Path("qualification/evidence/tsd-metric-target-supervision-audit-v1.json")
+AUTHORIZATION_REL = Path("qualification/evidence/tsd-training-authorization-v1.json")
 
 
 def _repo_root() -> Path:
@@ -47,6 +51,22 @@ def _write_json_atomic(path: Path, payload: object) -> None:
     temporary.replace(path)
 
 
+def _print_authorization_summary(authorization: dict[str, object]) -> None:
+    print("===== TSD TRAINING AUTHORIZATION =====")
+    checks = authorization.get("checks")
+    if not isinstance(checks, list):
+        raise TypeError("training authorization checks must be a list")
+    for check in checks:
+        if not isinstance(check, dict):
+            raise TypeError("training authorization check must be an object")
+        print(
+            f"{'PASS' if check['passed'] else 'FAIL'}: {check['name']} "
+            f"actual={float(check['actual']):.6f} "
+            f"required {check['operator']} {float(check['threshold']):.6f}"
+        )
+    print(f"training_authorized={str(bool(authorization['training_authorized'])).lower()}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Advance the frozen Potsdam TSD campaign through guarded local stages."
@@ -61,6 +81,7 @@ def main() -> int:
     source_sha, branch = _require_clean_tracked_worktree(root)
     target_manifest = (root / TARGET_MANIFEST_REL).resolve()
     audit_path = (root / AUDIT_REL).resolve()
+    authorization_path = (root / AUTHORIZATION_REL).resolve()
 
     if not target_manifest.is_file():
         raise FileNotFoundError(target_manifest)
@@ -88,10 +109,38 @@ def main() -> int:
         print("campaign_stage=TARGET_SUPERVISION_AUDIT_CREATED")
 
     print_audit_summary(audit)
+    audit_sha = sha256_file(audit_path)
     print(f"target_manifest_sha256={EXPECTED_TARGET_MANIFEST_SHA256}")
     print(f"audit={audit_path}")
-    print(f"audit_sha256={sha256_file(audit_path)}")
-    print("campaign_state=AWAITING_COMMITTED_TRAINING_GATE")
+    print(f"audit_sha256={audit_sha}")
+
+    if authorization_path.exists():
+        authorization = json.loads(authorization_path.read_text(encoding="utf-8"))
+        if authorization.get("target_manifest_sha256") != EXPECTED_TARGET_MANIFEST_SHA256:
+            raise RuntimeError("existing TSD authorization is bound to a different target manifest")
+        if authorization.get("audit_sha256") != audit_sha:
+            raise RuntimeError("existing TSD authorization is bound to a different supervision audit")
+        print("campaign_stage=TRAINING_AUTHORIZATION_ALREADY_COMPLETE")
+    else:
+        authorization = assess_tsd_training_authorization(audit)
+        authorization["target_manifest_sha256"] = EXPECTED_TARGET_MANIFEST_SHA256
+        authorization["audit"] = str(audit_path)
+        authorization["audit_sha256"] = audit_sha
+        authorization["qualification_git_sha"] = source_sha
+        authorization["qualification_git_branch"] = branch
+        _write_json_atomic(authorization_path, authorization)
+        print("campaign_stage=TRAINING_AUTHORIZATION_CREATED")
+
+    _print_authorization_summary(authorization)
+    print(f"authorization={authorization_path}")
+    print(f"authorization_sha256={sha256_file(authorization_path)}")
+    if authorization.get("training_authorized") is not True:
+        print("campaign_state=TRAINING_REJECTED_BY_DATA_GATE")
+        print("training_started=false")
+        print("sealed_blind_tile_payloads_consumed=false")
+        return 2
+
+    print("campaign_state=TRAINING_AUTHORIZED_AWAITING_TRAINER_COMMIT")
     print("training_started=false")
     print("sealed_blind_tile_payloads_consumed=false")
     return 0
