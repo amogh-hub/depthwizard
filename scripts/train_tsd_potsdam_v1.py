@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import random
 import shutil
 import subprocess
@@ -869,7 +868,6 @@ def main() -> int:
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
-    rng = np.random.default_rng(SEED)
 
     config = TerrainStructureConfig()
     model = TerrainStructureModel(config).to(device)
@@ -896,13 +894,18 @@ def main() -> int:
 
     stale_epochs = max(0, completed_epoch - best_epoch)
     for epoch in range(completed_epoch + 1, EPOCHS + 1):
+        epoch_seed = SEED + epoch
+        random.seed(epoch_seed)
+        np.random.seed(epoch_seed)
+        torch.manual_seed(epoch_seed)
+        epoch_rng = np.random.default_rng(epoch_seed)
         train_metrics = _train_epoch(
             model,
             optimizer,
             train_records,
             output_dir,
             device,
-            rng,
+            epoch_rng,
         )
         dev_metrics = _evaluate_dev(model, dev_records, output_dir, device)
         score = float(dev_metrics["selection_score"])
@@ -916,6 +919,7 @@ def main() -> int:
 
         epoch_record: dict[str, object] = {
             "epoch": epoch,
+            "epoch_seed": epoch_seed,
             "train": train_metrics,
             "dev": dev_metrics,
             "improved": improved,
@@ -942,6 +946,7 @@ def main() -> int:
                 "status": "TRAINING_TSD_CANDIDATE",
                 "protocol_version": PROTOCOL_VERSION,
                 "epoch": epoch,
+                "epoch_seed": epoch_seed,
                 "best_epoch": best_epoch,
                 "best_score": best_score,
                 "latest": epoch_record,
@@ -989,6 +994,7 @@ def main() -> int:
         "model_config": asdict(config),
         "training_hyperparameters": {
             "seed": SEED,
+            "epoch_seed_rule": "seed + epoch",
             "max_epochs": EPOCHS,
             "patch_size_px": PATCH_SIZE,
             "native_gsd_m": NATIVE_GSD_M,
