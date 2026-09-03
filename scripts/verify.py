@@ -41,6 +41,7 @@ if __name__ == "__main__":
         "scripts/train_ortholoc_structure_band_v5.py",
         "scripts/train_urban_structure_v6.py",
         "scripts/train_tsd_potsdam_v1.py",
+        "qualification/qualify_tsd_dev_candidate.py",
         "scripts/evaluate_ortholoc_adaptive_refinement.py",
         "scripts/evaluate_ortholoc_frozen_holdout.py",
         "scripts/evaluate_ortholoc_frozen_location_v2.py",
