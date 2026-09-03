@@ -8,7 +8,7 @@ import subprocess
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 import rasterio
@@ -21,6 +21,7 @@ if __package__ in {None, ""}:
 from depthwizard.evaluation.building_height import (
     BuildingHeightBenchmarkReport,
     BuildingHeightInstance,
+    BuildingHeightPromotionDecision,
     building_height_promotion_gate,
     evaluate_building_height_instances,
 )
@@ -55,6 +56,21 @@ MAX_TILE_HEIGHT_MAE_DEGRADATION_FRACTION = 0.10
 
 class QualificationError(RuntimeError):
     pass
+
+
+class QualificationCheck(TypedDict):
+    name: str
+    passed: bool
+    actual: float
+    operator: str
+    threshold: float
+
+
+class TallMetrics(TypedDict):
+    count: int
+    baseline_mae_m: float
+    candidate_mae_m: float
+    mae_reduction_fraction: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -126,8 +142,7 @@ def _blend_weight(size: int) -> np.ndarray:
         raise ValueError("blend size must be at least 2")
     axis = np.hanning(size).astype(np.float32)
     axis = np.maximum(axis, np.float32(0.05))
-    weight = np.outer(axis, axis).astype(np.float32)
-    return weight
+    return np.outer(axis, axis).astype(np.float32)
 
 
 def _resolve_device() -> torch.device:
@@ -167,12 +182,7 @@ def _read_target_pack(path: Path) -> dict[str, np.ndarray]:
         }
 
 
-def _write_prediction(
-    path: Path,
-    values: np.ndarray,
-    *,
-    template_path: Path,
-) -> None:
+def _write_prediction(path: Path, values: np.ndarray, *, template_path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with rasterio.open(template_path) as template:
@@ -206,7 +216,8 @@ def _load_model(checkpoint_path: Path, device: torch.device) -> TerrainStructure
         raise QualificationError("unexpected TSD checkpoint protocol")
     if payload.get("training_source_git_sha") != EXPECTED_TRAINING_SOURCE_SHA:
         raise QualificationError("TSD checkpoint source identity mismatch")
-    if int(payload.get("epoch", -1)) != 2:
+    epoch = payload.get("epoch")
+    if not isinstance(epoch, int) or epoch != 2:
         raise QualificationError("frozen TSD candidate is not the epoch-2 checkpoint")
     if payload.get("target_manifest_sha256") != EXPECTED_TARGET_MANIFEST_SHA256:
         raise QualificationError("TSD checkpoint target identity mismatch")
@@ -300,7 +311,12 @@ def _predict_relative_scene(
         with torch.inference_mode():
             for row in row_starts:
                 for col in col_starts:
-                    window = Window(col, row, INFERENCE_PATCH_SIZE, INFERENCE_PATCH_SIZE)
+                    window = Window(
+                        col_off=col,
+                        row_off=row,
+                        width=INFERENCE_PATCH_SIZE,
+                        height=INFERENCE_PATCH_SIZE,
+                    )
                     rgb_np = rgb_src.read((1, 2, 3), window=window).astype(np.float32)
                     if float(np.nanmax(rgb_np)) > 1.0:
                         rgb_np /= 255.0
@@ -320,10 +336,7 @@ def _predict_relative_scene(
                     weights[rows, cols] += blend
                     completed += 1
                     if completed % 50 == 0 or completed == total:
-                        print(
-                            f"dev_prediction {tile_id} patch={completed}/{total}",
-                            flush=True,
-                        )
+                        print(f"dev_prediction {tile_id} patch={completed}/{total}", flush=True)
 
     if np.any(weights <= 0.0):
         raise QualificationError(f"uncovered TSD inference pixels for {tile_id}")
@@ -354,7 +367,9 @@ def _predict_relative_scene(
     return prediction
 
 
-def _pixel_metrics(prediction: np.ndarray, reference: np.ndarray, mask: np.ndarray) -> dict[str, float | int]:
+def _pixel_metrics(
+    prediction: np.ndarray, reference: np.ndarray, mask: np.ndarray
+) -> dict[str, float | int]:
     support = np.asarray(mask, dtype=bool) & np.isfinite(prediction) & np.isfinite(reference)
     count = int(np.count_nonzero(support))
     if count <= 0:
@@ -413,7 +428,9 @@ def _aggregate_building_reports(
     )
 
 
-def _tall_mae(report: BuildingHeightBenchmarkReport, minimum_height_m: float = 8.0) -> tuple[int, float]:
+def _tall_mae(
+    report: BuildingHeightBenchmarkReport, minimum_height_m: float = 8.0
+) -> tuple[int, float]:
     selected = [
         abs(item.height_error_m)
         for item in report.instances
@@ -424,7 +441,9 @@ def _tall_mae(report: BuildingHeightBenchmarkReport, minimum_height_m: float = 8
     return len(selected), float(np.mean(np.asarray(selected, dtype=np.float64)))
 
 
-def _check(name: str, passed: bool, actual: float, operator: str, threshold: float) -> dict[str, object]:
+def _check(
+    name: str, passed: bool, actual: float, operator: str, threshold: float
+) -> QualificationCheck:
     return {
         "name": name,
         "passed": bool(passed),
@@ -432,6 +451,11 @@ def _check(name: str, passed: bool, actual: float, operator: str, threshold: flo
         "operator": operator,
         "threshold": float(threshold),
     }
+
+
+def _metric_value(metrics: dict[str, float | int], key: str) -> float:
+    value = metrics[key]
+    return float(value)
 
 
 def _qualification_checks(
@@ -443,21 +467,35 @@ def _qualification_checks(
     baseline_building_surface: dict[str, float | int],
     candidate_building_surface: dict[str, float | int],
     per_tile_mae_degradation: list[float],
-) -> tuple[list[dict[str, object]], dict[str, float | int], object]:
+) -> tuple[list[QualificationCheck], TallMetrics, BuildingHeightPromotionDecision]:
     promotion = building_height_promotion_gate(baseline_buildings, candidate_buildings)
     tall_count_baseline, tall_mae_baseline = _tall_mae(baseline_buildings)
     tall_count_candidate, tall_mae_candidate = _tall_mae(candidate_buildings)
     if tall_count_baseline != tall_count_candidate:
         raise QualificationError("candidate and baseline tall-building populations differ")
     tall_reduction = _fractional_reduction(tall_mae_baseline, tall_mae_candidate)
-    valid_rmse_ratio = float(candidate_valid["rmse_m"]) / float(baseline_valid["rmse_m"])
-    building_surface_mae_ratio = float(candidate_building_surface["mae_m"]) / float(
-        baseline_building_surface["mae_m"]
+    valid_rmse_ratio = _metric_value(candidate_valid, "rmse_m") / _metric_value(
+        baseline_valid, "rmse_m"
     )
+    building_surface_mae_ratio = _metric_value(
+        candidate_building_surface, "mae_m"
+    ) / _metric_value(baseline_building_surface, "mae_m")
     max_tile_degradation = max(per_tile_mae_degradation) if per_tile_mae_degradation else float("inf")
-    checks = [
-        _check("building_height_promotion_gate", promotion.passed, 1.0 if promotion.passed else 0.0, "==", 1.0),
-        _check("tall_building_count", tall_count_candidate >= MIN_TALL_BUILDINGS, tall_count_candidate, ">=", MIN_TALL_BUILDINGS),
+    checks: list[QualificationCheck] = [
+        _check(
+            "building_height_promotion_gate",
+            promotion.passed,
+            1.0 if promotion.passed else 0.0,
+            "==",
+            1.0,
+        ),
+        _check(
+            "tall_building_count",
+            tall_count_candidate >= MIN_TALL_BUILDINGS,
+            float(tall_count_candidate),
+            ">=",
+            float(MIN_TALL_BUILDINGS),
+        ),
         _check(
             "tall_building_mae_reduction",
             tall_reduction >= MIN_TALL_MAE_REDUCTION_FRACTION,
@@ -487,7 +525,7 @@ def _qualification_checks(
             MAX_TILE_HEIGHT_MAE_DEGRADATION_FRACTION,
         ),
     ]
-    tall = {
+    tall: TallMetrics = {
         "count": tall_count_candidate,
         "baseline_mae_m": tall_mae_baseline,
         "candidate_mae_m": tall_mae_candidate,
@@ -714,8 +752,8 @@ def main() -> int:
             f"dev[{index}/5] tile={tile_id} "
             f"building_mae baseline={baseline_buildings.height_mae_m:.4f}m "
             f"candidate={candidate_buildings.height_mae_m:.4f}m "
-            f"valid_rmse baseline={float(baseline_valid['rmse_m']):.4f}m "
-            f"candidate={float(candidate_valid['rmse_m']):.4f}m",
+            f"valid_rmse baseline={_metric_value(baseline_valid, 'rmse_m'):.4f}m "
+            f"candidate={_metric_value(candidate_valid, 'rmse_m'):.4f}m",
             flush=True,
         )
 
@@ -742,7 +780,7 @@ def main() -> int:
         candidate_building_surface=candidate_building_aggregate,
         per_tile_mae_degradation=per_tile_degradation,
     )
-    qualification_passed = all(bool(item["passed"]) for item in checks)
+    qualification_passed = all(item["passed"] for item in checks)
     report = {
         "schema_version": 1,
         "status": "TSD_DEV_QUALIFICATION_PASS" if qualification_passed else "TSD_DEV_QUALIFICATION_FAIL",
@@ -802,19 +840,18 @@ def main() -> int:
         f"reduction={_fractional_reduction(baseline_aggregate.height_rmse_m, candidate_aggregate.height_rmse_m):.2%}"
     )
     print(
-        f"tall_ge_8m_mae baseline={float(tall['baseline_mae_m']):.4f}m "
-        f"candidate={float(tall['candidate_mae_m']):.4f}m "
-        f"reduction={float(tall['mae_reduction_fraction']):.2%} "
-        f"n={int(tall['count'])}"
+        f"tall_ge_8m_mae baseline={tall['baseline_mae_m']:.4f}m "
+        f"candidate={tall['candidate_mae_m']:.4f}m "
+        f"reduction={tall['mae_reduction_fraction']:.2%} n={tall['count']}"
     )
     print(
-        f"valid_dsm_rmse baseline={float(baseline_valid_aggregate['rmse_m']):.4f}m "
-        f"candidate={float(candidate_valid_aggregate['rmse_m']):.4f}m"
+        f"valid_dsm_rmse baseline={_metric_value(baseline_valid_aggregate, 'rmse_m'):.4f}m "
+        f"candidate={_metric_value(candidate_valid_aggregate, 'rmse_m'):.4f}m"
     )
     for item in checks:
         print(
             f"{'PASS' if item['passed'] else 'FAIL'}: {item['name']} "
-            f"actual={float(item['actual']):.6f} required {item['operator']} {float(item['threshold']):.6f}"
+            f"actual={item['actual']:.6f} required {item['operator']} {item['threshold']:.6f}"
         )
     print(f"qualification_passed={str(qualification_passed).lower()}")
     print(f"qualification_report={output_path}")
