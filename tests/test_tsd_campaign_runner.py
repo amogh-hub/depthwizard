@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -100,3 +102,17 @@ def test_target_audit_rejects_manifest_hash_mismatch(tmp_path: Path) -> None:
     manifest = _make_manifest(tmp_path)
     with pytest.raises(ValueError, match="target manifest SHA-256 mismatch"):
         audit_target_supervision(manifest, expected_manifest_sha256="0" * 64)
+
+
+def test_campaign_runner_can_be_launched_as_a_file() -> None:
+    root = Path(__file__).resolve().parents[1]
+    script = root / "qualification" / "run_tsd_campaign.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Advance the frozen Potsdam TSD campaign" in result.stdout
