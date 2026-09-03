@@ -45,7 +45,7 @@ def _height_bin(value: float) -> str:
     return ">=20m"
 
 
-def _fraction(numerator: int | float, denominator: int | float) -> float:
+def _fraction(numerator: float, denominator: float) -> float:
     return float(numerator) / max(float(denominator), 1.0)
 
 
