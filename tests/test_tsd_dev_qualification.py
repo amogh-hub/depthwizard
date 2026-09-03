@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -67,7 +68,7 @@ def test_window_starts_cover_native_scene_edges() -> None:
     starts = _window_starts(6000, 512, 64)
     assert starts[0] == 0
     assert starts[-1] == 6000 - 512
-    assert all(later > earlier for earlier, later in zip(starts, starts[1:], strict=False))
+    assert all(later > earlier for earlier, later in pairwise(starts))
 
 
 def test_blend_weight_never_leaves_zero_coverage() -> None:
