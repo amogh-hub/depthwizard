@@ -13,7 +13,6 @@ from typing import Any, TypedDict
 import numpy as np
 import rasterio
 import torch
-from rasterio.windows import Window
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -311,11 +310,9 @@ def _predict_relative_scene(
         with torch.inference_mode():
             for row in row_starts:
                 for col in col_starts:
-                    window = Window(
-                        col_off=col,
-                        row_off=row,
-                        width=INFERENCE_PATCH_SIZE,
-                        height=INFERENCE_PATCH_SIZE,
+                    window = (
+                        (row, row + INFERENCE_PATCH_SIZE),
+                        (col, col + INFERENCE_PATCH_SIZE),
                     )
                     rgb_np = rgb_src.read((1, 2, 3), window=window).astype(np.float32)
                     if float(np.nanmax(rgb_np)) > 1.0:
@@ -454,8 +451,7 @@ def _check(
 
 
 def _metric_value(metrics: dict[str, float | int], key: str) -> float:
-    value = metrics[key]
-    return float(value)
+    return float(metrics[key])
 
 
 def _qualification_checks(
