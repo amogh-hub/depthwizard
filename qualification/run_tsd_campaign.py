@@ -9,13 +9,13 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from depthwizard.height_model.terrain_structure_campaign import (
+    assess_tsd_training_authorization,
+)
 from qualification.audit_tsd_target_supervision import (
     audit_target_supervision,
     print_audit_summary,
     sha256_file,
-)
-from depthwizard.height_model.terrain_structure_campaign import (
-    assess_tsd_training_authorization,
 )
 
 EXPECTED_TARGET_MANIFEST_SHA256 = (
