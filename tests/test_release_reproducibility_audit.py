@@ -156,3 +156,14 @@ def test_all_scientific_sidecar_build_targets_install_ml_extra() -> None:
         "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
         in workstation
     )
+
+
+def test_pyinstaller_build_enforces_offline_hook_subprocesses() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts" / "build_standalone_sidecar.py").read_text(encoding="utf-8")
+    bootstrap = root / "scripts" / "offline_build_bootstrap" / "sitecustomize.py"
+
+    assert '"HF_HUB_OFFLINE": "1"' in source
+    assert '"HF_HUB_DISABLE_TELEMETRY": "1"' in source
+    assert "strict_non_loopback_egress_guard_during_packaging" in source
+    assert "install_strict_offline_network_guard()" in bootstrap.read_text(encoding="utf-8")

@@ -33,6 +33,7 @@ DA3_VENDOR = ROOT / ".vendor" / "depth-anything-3" / "src"
 RUNTIME_MANIFEST_NAME = "runtime-manifest.json"
 PACKAGED_MODEL_RELATIVE_DIR = Path("models") / "da3mono-large"
 SELF_CHECK_TIMEOUT_SECONDS = 120.0
+OFFLINE_BUILD_BOOTSTRAP = ROOT / "scripts" / "offline_build_bootstrap"
 # Importing the complete frozen DA3/PyTorch closure is intentionally slower than the geospatial
 # bootstrap probe, but it must still complete before a runtime can be staged into the desktop app.
 DA3_IMPORT_CHECK_TIMEOUT_SECONDS = 300.0
@@ -101,11 +102,36 @@ def _offline_environment(trace_path: Path) -> dict[str, str]:
             "DEPTHWIZARD_OFFLINE_CORE": "1",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+            "DO_NOT_TRACK": "1",
             "PROJ_NETWORK": "OFF",
             "NO_PROXY": "127.0.0.1,localhost",
             "no_proxy": "127.0.0.1,localhost",
         }
     )
+    return environment
+
+
+def _offline_build_environment() -> dict[str, str]:
+    """Force PyInstaller and every hook subprocess into the strict offline build boundary."""
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DEPTHWIZARD_OFFLINE_CORE": "1",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+            "DO_NOT_TRACK": "1",
+            "PROJ_NETWORK": "OFF",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+        }
+    )
+    inherited_pythonpath = environment.get("PYTHONPATH", "").strip()
+    python_paths = [str(OFFLINE_BUILD_BOOTSTRAP), str(ROOT / "src")]
+    if inherited_pythonpath:
+        python_paths.append(inherited_pythonpath)
+    environment["PYTHONPATH"] = os.pathsep.join(python_paths)
     return environment
 
 
@@ -252,6 +278,31 @@ def main() -> None:
             "`python -m pip install -e '.[standalone]'`"
         )
 
+    # Packaging must be reproducible from already-installed inputs and must never phone home while
+    # importing model/Hub modules. Install the same process-level guard used by the packaged core;
+    # the sitecustomize bootstrap applies it to PyInstaller's isolated hook subprocesses too.
+    offline_build_environment = _offline_build_environment()
+    os.environ.update(
+        {
+            key: value
+            for key, value in offline_build_environment.items()
+            if key
+            in {
+                "DEPTHWIZARD_OFFLINE_CORE",
+                "HF_HUB_OFFLINE",
+                "TRANSFORMERS_OFFLINE",
+                "HF_HUB_DISABLE_TELEMETRY",
+                "DO_NOT_TRACK",
+                "PROJ_NETWORK",
+                "NO_PROXY",
+                "no_proxy",
+            }
+        }
+    )
+    from depthwizard.network_guard import install_strict_offline_network_guard
+
+    install_strict_offline_network_guard()
+
     # Fail before a 90-second PyInstaller build if the locked Python environment does not contain
     # the complete curated DA3 monocular dependency closure.
     build_dependency_modules = verify_da3_runtime_dependencies()
@@ -333,7 +384,7 @@ def main() -> None:
     for module_name in DA3_RUNTIME_DEPENDENCY_MODULES:
         command.extend(("--hidden-import", module_name))
     command.append(str(ENTRY))
-    subprocess.run(command, cwd=ROOT, check=True)
+    subprocess.run(command, cwd=ROOT, check=True, env=offline_build_environment)
 
     built_runtime = dist_dir / "depthwizard-core"
     built_executable = built_runtime / f"depthwizard-core{extension}"
@@ -394,6 +445,7 @@ def main() -> None:
         "da3_runtime_execution_gate": "release_train_5_full_acceptance",
         "model_weights_loaded_during_packaging_check": False,
         "network_used_during_packaging_check": False,
+        "strict_non_loopback_egress_guard_during_packaging": True,
         "model_payload": {
             "bundled": True,
             "source": DA3_MODEL_SOURCE,
@@ -450,6 +502,7 @@ def main() -> None:
             "model_revision": DA3_HF_REVISION,
             "checkpoint_file": DA3_CHECKPOINT_FILE,
             "checkpoint_sha256": packaged_checkpoint_sha256,
+            "strict_non_loopback_egress_guard": True,
         },
         "geospatial_packaging": {
             "rasterio_serde_hidden_import": True,

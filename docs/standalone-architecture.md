@@ -32,7 +32,7 @@ The directory is generated, ignored by Git, and bundled by Tauri into:
 
 `Contents/Resources/depthwizard-core-runtime/`
 
-PyInstaller symbolic links are preserved when the runtime tree is staged. The build resolves the exact pinned DA3 snapshot, verifies `model.safetensors` against the canonical SHA-256, copies that snapshot into `models/da3mono-large/`, and verifies the staged checkpoint again. The build report records a deterministic tree SHA-256, regular-file count, symlink count, logical bytes, executable SHA-256, model identity and target triple without leaking build-host cache paths.
+PyInstaller symbolic links are preserved when the runtime tree is staged. The build and all isolated PyInstaller hook subprocesses run under offline flags, disabled telemetry and the strict non-loopback Python egress guard. The build resolves the exact pinned DA3 snapshot from installed inputs, verifies `model.safetensors` against the canonical SHA-256, copies that snapshot into `models/da3mono-large/`, and verifies the staged checkpoint again. The build report records a deterministic tree SHA-256, regular-file count, symlink count, logical bytes, executable SHA-256, model identity and target triple without leaking build-host cache paths.
 
 ## Build-time frozen-runtime qualification
 
