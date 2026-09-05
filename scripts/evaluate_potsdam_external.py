@@ -32,12 +32,17 @@ from depthwizard.evaluation.potsdam import (
     resolve_potsdam_tile_paths,
     write_or_verify_protocol_seal,
 )
-from depthwizard.geometry_prior.da3 import DA3MonocularPrior
+from depthwizard.geometry_prior.da3 import (
+    DA3_CHECKPOINT_SHA256,
+    DA3_HF_REVISION,
+    DA3_MODEL_ID,
+    DA3MonocularPrior,
+)
 from depthwizard.height_model.model import DepthWizardHeightModel, HeightModelConfig
 from depthwizard.height_model.training import fit_rgb_ranges, normalize_rgb, patch_windows
 from depthwizard.io.raster import read_rgb, write_float_geotiff
 from depthwizard.pipeline.geometry import infer_geometry_scene
-from depthwizard.provenance.manifest import sha256_file
+from depthwizard.provenance.manifest import canonical_json_hash, sha256_file
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET_ROOT = Path(
@@ -141,14 +146,27 @@ def _ensure_benchmark_rgb(tile: PotsdamTilePaths) -> Path:
     tile_dir = OUT_DIR / "derived" / tile.tile_id
     output = tile_dir / "rgb_025m.tif"
     expected_height, expected_width, expected_transform, _ = _benchmark_grid(tile.rgb)
+    source_rgb_sha256 = sha256_file(tile.rgb)
+    derivation_sha256 = canonical_json_hash(
+        {
+            "source_rgb_sha256": source_rgb_sha256,
+            "source_gsd_m": POTSDAM_NATIVE_GSD_M,
+            "benchmark_gsd_m": POTSDAM_BENCHMARK_GSD_M,
+            "resampling": "average",
+            "rgb_bands": [1, 2, 3],
+        }
+    )
     if output.exists():
         with rasterio.open(output) as src:
+            tags = src.tags()
             if (
                 src.height == expected_height
                 and src.width == expected_width
                 and src.count == 3
                 and src.crs == POTSDAM_CRS
                 and src.transform.almost_equals(expected_transform)
+                and tags.get("SOURCE_RGB_SHA256") == source_rgb_sha256
+                and tags.get("DERIVATION_SHA256") == derivation_sha256
             ):
                 return output
 
@@ -185,6 +203,8 @@ def _ensure_benchmark_rgb(tile: PotsdamTilePaths) -> Path:
             SOURCE_GSD_M=str(POTSDAM_NATIVE_GSD_M),
             BENCHMARK_GSD_M=str(POTSDAM_BENCHMARK_GSD_M),
             SOURCE_TILE=tile.tile_id,
+            SOURCE_RGB_SHA256=source_rgb_sha256,
+            DERIVATION_SHA256=derivation_sha256,
         )
     temporary.replace(output)
     return output
@@ -287,13 +307,34 @@ def _ensure_da3_geometry(
     prior: DA3MonocularPrior,
 ) -> Path:
     output = OUT_DIR / "derived" / tile_id / "da3_rdsm_025m.tif"
+    source_rgb_sha256 = sha256_file(benchmark_rgb)
+    geometry_config_sha256 = canonical_json_hash(
+        {
+            "source_rgb_sha256": source_rgb_sha256,
+            "model_id": DA3_MODEL_ID,
+            "model_revision": DA3_HF_REVISION,
+            "checkpoint_sha256": DA3_CHECKPOINT_SHA256,
+            "tile_size": 768,
+            "overlap": 128,
+            "harmonize_overlaps": True,
+            "geometry_pipeline_sha256": sha256_file(
+                ROOT / "src" / "depthwizard" / "pipeline" / "geometry.py"
+            ),
+            "da3_adapter_sha256": sha256_file(
+                ROOT / "src" / "depthwizard" / "geometry_prior" / "da3.py"
+            ),
+        }
+    )
     if output.exists():
         with rasterio.open(output) as geometry, rasterio.open(benchmark_rgb) as rgb:
+            tags = geometry.tags()
             if (
                 geometry.height == rgb.height
                 and geometry.width == rgb.width
                 and geometry.crs == rgb.crs
                 and geometry.transform.almost_equals(rgb.transform)
+                and tags.get("SOURCE_RGB_SHA256") == source_rgb_sha256
+                and tags.get("GEOMETRY_CONFIG_SHA256") == geometry_config_sha256
             ):
                 print(f"Reusing external DA3 geometry: Potsdam {tile_id}")
                 return output
@@ -315,6 +356,10 @@ def _ensure_da3_geometry(
             "MODEL_ID": scene.model_id,
             "PURPOSE": "sealed_external_cross_dataset_evaluation",
             "SOURCE_TILE": tile_id,
+            "SOURCE_RGB_SHA256": source_rgb_sha256,
+            "GEOMETRY_CONFIG_SHA256": geometry_config_sha256,
+            "MODEL_REVISION": DA3_HF_REVISION,
+            "CHECKPOINT_SHA256": DA3_CHECKPOINT_SHA256,
         },
     )
     return output

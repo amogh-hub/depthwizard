@@ -133,8 +133,10 @@ def check_rt5(payload: dict[str, Any], head: str) -> dict[str, object]:
         raise CompletionEvidenceError("RT5 did not prove a clean application launch")
     if payload.get("user_visible_terminal_required") is not False:
         raise CompletionEvidenceError("RT5 still requires a user-visible terminal")
-    if payload.get("offline_after_model_install") is not True:
-        raise CompletionEvidenceError("RT5 did not prove offline-after-install behavior")
+    if payload.get("offline_first_reconstruction") is not True:
+        raise CompletionEvidenceError("RT5 did not prove offline-first reconstruction")
+    if payload.get("bundled_model_payload_verified") is not True:
+        raise CompletionEvidenceError("RT5 did not verify the bundled model payload")
     mesh = payload.get("mesh")
     if not isinstance(mesh, dict) or not isinstance(mesh.get("lod_count"), int) or mesh["lod_count"] < 1:
         raise CompletionEvidenceError("RT5 did not prove packaged mesh/LOD generation")
@@ -168,7 +170,7 @@ def check_input_formats(payload: dict[str, Any], head: str) -> dict[str, object]
 
 
 def check_science(payload: dict[str, Any]) -> dict[str, object]:
-    if payload.get("protocol") != "depthwizard_final_science_campaign_v1":
+    if payload.get("protocol") != "depthwizard_final_science_campaign_v2":
         raise CompletionEvidenceError("final science report uses an unknown protocol")
     requirements = payload.get("requirements")
     if not isinstance(requirements, dict):
@@ -177,6 +179,8 @@ def check_science(payload: dict[str, Any]) -> dict[str, object]:
         raise CompletionEvidenceError("final science geographic split integrity is not passed")
     if requirements.get("reference_independence") != "passed":
         raise CompletionEvidenceError("final science reference independence is not passed")
+    if requirements.get("vertical_reference_compatibility") != "passed":
+        raise CompletionEvidenceError("final science vertical-reference compatibility is not passed")
     coverage = set(requirements.get("test_terrain_coverage") or [])
     if coverage != set(REQUIRED_TERRAINS):
         raise CompletionEvidenceError(
@@ -250,7 +254,8 @@ def check_clean_machine(payload: dict[str, Any], head: str) -> dict[str, object]
         "packaged_app_launch",
         "no_user_visible_terminal",
         "owned_sidecar_boot",
-        "offline_after_model_install",
+        "offline_first_reconstruction",
+        "bundled_model_payload_verified",
         "end_to_end_reconstruction",
         "metric_calibration",
         "terrain_3d",
@@ -404,7 +409,8 @@ def _clean_machine_template(head: str) -> dict[str, object]:
         "packaged_app_launch": False,
         "no_user_visible_terminal": False,
         "owned_sidecar_boot": False,
-        "offline_after_model_install": False,
+        "offline_first_reconstruction": False,
+        "bundled_model_payload_verified": False,
         "end_to_end_reconstruction": False,
         "metric_calibration": False,
         "terrain_3d": False,

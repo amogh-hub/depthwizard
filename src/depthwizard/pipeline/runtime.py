@@ -21,6 +21,7 @@ from depthwizard.pipeline.runtime_base import (
     _CalibrationOutcome,
     _GeometryState,
     _mean_gsd,
+    _resolved_bias_sigma_px,
 )
 
 __all__ = ["ProductionElevationRuntime", "ProjectRunResult", "SceneRefiner"]
@@ -60,6 +61,8 @@ class ProductionElevationRuntime(_BaseProductionElevationRuntime):
                 "the optical source and DEM; metric scale was not guessed"
             )
 
+        bias_sigma_px = _resolved_bias_sigma_px(request, target_gsd_m=target_gsd_m)
+
         weighting = model_confidence_to_uncertainty(geometry.confidence)
         self._last_dem_confidence_weighting = weighting.evidence()
         if geometry.confidence is not None and not weighting.active:
@@ -73,7 +76,10 @@ class ProductionElevationRuntime(_BaseProductionElevationRuntime):
             aligned_dem,
             dem_valid=dem_valid & np.isfinite(geometry.relative_height),
             uncertainty=weighting.uncertainty if weighting.active else None,
-            low_frequency_sigma_px=request.low_frequency_sigma_px,
+            low_frequency_sigma_px=bias_sigma_px,
+            min_abs_anchor_correlation=request.min_dem_anchor_correlation,
+            max_anchor_rmse_m=request.max_dem_anchor_rmse_m,
+            max_normalized_rmse=request.max_dem_normalized_rmse,
             target_gsd_m=target_gsd_m,
             dem_effective_gsd_m=dem_effective_gsd_m,
         )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from depthwizard import __version__
 from depthwizard.analysis.project_structure import estimate_project_structure_height
 from depthwizard.calibration.gcp_io import inspect_ground_control_point_file
+from depthwizard.cancellation import CancellationRequested
 from depthwizard.contracts import (
     GroundControlPointFileReport,
     ProcessingRequest,
@@ -60,6 +61,7 @@ class ProjectJobState(BaseModel):
     submitted_at_utc: str
     updated_at_utc: str
     error: str | None = None
+    cancellation_requested: bool = False
 
 
 def _utc_now() -> str:
@@ -102,8 +104,33 @@ app.add_middleware(
 # project manifest, so a desktop can safely resubmit an interrupted project after service restart.
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="depthwizard-project")
 _jobs: dict[str, ProjectJobState] = {}
+_job_futures: dict[str, Future[None]] = {}
+_cancel_requested: set[str] = set()
 _jobs_lock = Lock()
 _production_runtime = ProductionElevationRuntime(prior=DA3MonocularPrior(device="auto"))
+
+
+def _bounded_environment_integer(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+_MAX_IN_FLIGHT_JOBS = _bounded_environment_integer(
+    "DEPTHWIZARD_MAX_IN_FLIGHT_JOBS", default=2, minimum=1, maximum=8
+)
+_MAX_JOB_HISTORY = _bounded_environment_integer(
+    "DEPTHWIZARD_MAX_JOB_HISTORY", default=64, minimum=8, maximum=1024
+)
+_TERMINAL_JOB_STATUSES = {
+    ProjectRunStatus.WAITING_FOR_CALIBRATION,
+    ProjectRunStatus.COMPLETE,
+    ProjectRunStatus.FAILED,
+    ProjectRunStatus.CANCELLED,
+}
 
 
 def _set_job(job_id: str, **updates: object) -> None:
@@ -115,10 +142,48 @@ def _set_job(job_id: str, **updates: object) -> None:
         _jobs[job_id] = current.model_copy(update=updates)
 
 
+def _prune_job_history_locked() -> None:
+    excess = len(_jobs) - _MAX_JOB_HISTORY
+    if excess <= 0:
+        return
+    removable = sorted(
+        (
+            state
+            for state in _jobs.values()
+            if state.status in _TERMINAL_JOB_STATUSES and state.job_id not in _job_futures
+        ),
+        key=lambda state: state.updated_at_utc,
+    )
+    for state in removable[:excess]:
+        _jobs.pop(state.job_id, None)
+        _cancel_requested.discard(state.job_id)
+
+
+def _job_cancelled(job_id: str) -> bool:
+    with _jobs_lock:
+        return job_id in _cancel_requested
+
+
+def _release_job_future(job_id: str) -> None:
+    with _jobs_lock:
+        _job_futures.pop(job_id, None)
+        _prune_job_history_locked()
+
+
 def _run_project_job(job_id: str, request: ProcessingRequest) -> None:
+    if _job_cancelled(job_id):
+        _set_job(job_id, status=ProjectRunStatus.CANCELLED, error=None)
+        return
     _set_job(job_id, status=ProjectRunStatus.RUNNING)
     try:
-        result = _production_runtime.run(request, job_id=job_id)
+        result = _production_runtime.run(
+            request,
+            job_id=job_id,
+            cancellation_probe=lambda: _job_cancelled(job_id),
+        )
+    except CancellationRequested:
+        _set_job(job_id, status=ProjectRunStatus.CANCELLED, error=None)
+        return
     except Exception as exc:  # noqa: BLE001
         # This is the outermost executor boundary. Scientific/runtime code already records its
         # stage-specific failure in the durable manifest; the worker must additionally convert any
@@ -182,8 +247,39 @@ def submit_project(request: ProcessingRequest) -> ProjectJobState:
         updated_at_utc=now,
     )
     with _jobs_lock:
+        in_flight = sum(
+            state.status in {ProjectRunStatus.QUEUED, ProjectRunStatus.RUNNING}
+            for state in _jobs.values()
+        )
+        if in_flight >= _MAX_IN_FLIGHT_JOBS:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "DepthWizard processing queue is full; wait for or cancel an active job "
+                    "before submitting another"
+                ),
+                headers={"Retry-After": "5"},
+            )
+        requested_project = request.output_dir.resolve(strict=False)
+        if any(
+            existing.status in {ProjectRunStatus.QUEUED, ProjectRunStatus.RUNNING}
+            and existing.project_dir.resolve(strict=False) == requested_project
+            for existing in _jobs.values()
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="this project directory already has an active DepthWizard job",
+            )
+        _prune_job_history_locked()
         _jobs[job_id] = state
-    _executor.submit(_run_project_job, job_id, request)
+    try:
+        future = _executor.submit(_run_project_job, job_id, request)
+    except RuntimeError as exc:
+        _set_job(job_id, status=ProjectRunStatus.FAILED, error=str(exc))
+        raise HTTPException(status_code=503, detail="DepthWizard worker is unavailable") from exc
+    with _jobs_lock:
+        _job_futures[job_id] = future
+    future.add_done_callback(lambda _future: _release_job_future(job_id))
     return state
 
 
@@ -198,6 +294,35 @@ def job_status(job_id: str) -> ProjectJobState:
     if state is None:
         raise HTTPException(status_code=404, detail="unknown DepthWizard job id")
     return state
+
+
+@app.post(
+    "/v1/jobs/{job_id}/cancel",
+    response_model=ProjectJobState,
+    dependencies=[Depends(_session_guard)],
+)
+def cancel_job(job_id: str) -> ProjectJobState:
+    with _jobs_lock:
+        state = _jobs.get(job_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="unknown DepthWizard job id")
+        if state.status in _TERMINAL_JOB_STATUSES:
+            return state
+        _cancel_requested.add(job_id)
+        future = _job_futures.get(job_id)
+        updated = state.model_copy(
+            update={
+                "cancellation_requested": True,
+                "updated_at_utc": _utc_now(),
+            }
+        )
+        _jobs[job_id] = updated
+    # Future.cancel() may invoke callbacks synchronously; never call it while holding _jobs_lock.
+    cancelled_before_start = future.cancel() if future is not None else False
+    if cancelled_before_start:
+        _set_job(job_id, status=ProjectRunStatus.CANCELLED, error=None)
+    with _jobs_lock:
+        return _jobs[job_id]
 
 
 @app.get("/v1/projects/manifest", dependencies=[Depends(_session_guard)])

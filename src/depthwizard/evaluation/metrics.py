@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.stats import rankdata
 
 from depthwizard.contracts import EvaluationMetrics, SlopeMetrics
 
@@ -38,29 +39,67 @@ def compute_elevation_metrics(
     p95 = float(np.percentile(abs_error, 95))
 
     pearson: float | None
+    spearman: float | None
     if p.size < 2 or np.std(p) == 0 or np.std(r) == 0:
         pearson = None
+        spearman = None
     else:
         pearson = float(np.corrcoef(p, r)[0, 1])
+        ranked_prediction = rankdata(p)
+        ranked_reference = rankdata(r)
+        spearman = float(np.corrcoef(ranked_prediction, ranked_reference)[0, 1])
+
+    median_error = float(np.median(error))
+    nmad = float(1.4826 * np.median(np.abs(error - median_error)))
 
     return EvaluationMetrics(
         valid_pixels=int(p.size),
         mae_m=mae,
         rmse_m=rmse,
         pearson_r=pearson,
+        spearman_r=spearman,
         mean_bias_m=bias,
         median_abs_error_m=medae,
+        nmad_m=nmad,
         p90_abs_error_m=p90,
         p95_abs_error_m=p95,
     )
 
 
-def slope_degrees(elevation: np.ndarray, *, gsd_x: float, gsd_y: float) -> np.ndarray:
-    if gsd_x <= 0 or gsd_y <= 0:
-        raise ValueError("gsd_x and gsd_y must be positive")
+def slope_degrees(
+    elevation: np.ndarray,
+    *,
+    gsd_x: float | None = None,
+    gsd_y: float | None = None,
+    ground_jacobian_m: np.ndarray | None = None,
+) -> np.ndarray:
+    """Calculate surface slope using either orthogonal GSD or a full local ground Jacobian."""
     z = np.asarray(elevation, dtype=np.float64)
-    dy, dx = np.gradient(z, gsd_y, gsd_x)
-    return np.degrees(np.arctan(np.hypot(dx, dy))).astype(np.float32)
+    dz_drow, dz_dcol = np.gradient(z)
+    if ground_jacobian_m is not None:
+        jacobian = np.asarray(ground_jacobian_m, dtype=np.float64)
+        if jacobian.shape != (2, 2) or not np.all(np.isfinite(jacobian)):
+            raise ValueError("ground_jacobian_m must be a finite 2x2 matrix")
+        determinant = float(np.linalg.det(jacobian))
+        if abs(determinant) <= 1e-12:
+            raise ValueError("ground_jacobian_m must be invertible")
+        pixel_to_ground_gradient = np.linalg.inv(jacobian.T)
+        gradient_east = (
+            pixel_to_ground_gradient[0, 0] * dz_dcol
+            + pixel_to_ground_gradient[0, 1] * dz_drow
+        )
+        gradient_north = (
+            pixel_to_ground_gradient[1, 0] * dz_dcol
+            + pixel_to_ground_gradient[1, 1] * dz_drow
+        )
+    else:
+        if gsd_x is None or gsd_y is None or gsd_x <= 0 or gsd_y <= 0:
+            raise ValueError(
+                "positive gsd_x/gsd_y or an invertible ground_jacobian_m is required"
+            )
+        gradient_east = dz_dcol / gsd_x
+        gradient_north = dz_drow / gsd_y
+    return np.degrees(np.arctan(np.hypot(gradient_east, gradient_north))).astype(np.float32)
 
 
 def compute_slope_metrics(
@@ -69,10 +108,21 @@ def compute_slope_metrics(
     *,
     gsd_x: float,
     gsd_y: float,
+    ground_jacobian_m: np.ndarray | None = None,
     valid_mask: np.ndarray | None = None,
 ) -> SlopeMetrics:
-    pred_slope = slope_degrees(prediction, gsd_x=gsd_x, gsd_y=gsd_y)
-    ref_slope = slope_degrees(reference, gsd_x=gsd_x, gsd_y=gsd_y)
+    pred_slope = slope_degrees(
+        prediction,
+        gsd_x=gsd_x,
+        gsd_y=gsd_y,
+        ground_jacobian_m=ground_jacobian_m,
+    )
+    ref_slope = slope_degrees(
+        reference,
+        gsd_x=gsd_x,
+        gsd_y=gsd_y,
+        ground_jacobian_m=ground_jacobian_m,
+    )
     mask = np.isfinite(pred_slope) & np.isfinite(ref_slope)
     if valid_mask is not None:
         mask &= np.asarray(valid_mask, dtype=bool)

@@ -405,6 +405,23 @@ fn launch_sidecar(
     boot_nonce: &str,
 ) -> Result<Child, Box<dyn std::error::Error>> {
     let executable = sidecar_executable(app)?;
+    let runtime_dir = executable.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "DepthWizard packaged runtime executable has no parent directory",
+        )
+    })?;
+    let model_snapshot = runtime_dir.join("models").join("da3mono-large");
+    let model_checkpoint = model_snapshot.join("model.safetensors");
+    if !model_checkpoint.is_file() {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "DepthWizard packaged DA3 checkpoint is missing at {model_checkpoint:?}; \
+                 refusing to launch an offline runtime that cannot reconstruct"
+            ),
+        )));
+    }
     let mut command = Command::new(&executable);
     command
         .arg("--host")
@@ -418,6 +435,7 @@ fn launch_sidecar(
         .env("DEPTHWIZARD_REQUIRE_BOOT_NONCE", "1")
         .env("DEPTHWIZARD_BOOT_NONCE", boot_nonce)
         .env("DEPTHWIZARD_OFFLINE_CORE", "1")
+        .env("DEPTHWIZARD_DA3_SNAPSHOT", &model_snapshot)
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PROJ_NETWORK", "OFF")

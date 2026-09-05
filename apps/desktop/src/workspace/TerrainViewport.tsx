@@ -68,6 +68,25 @@ function materialArray(material: THREE.Material | THREE.Material[]): THREE.Mater
   return Array.isArray(material) ? material : [material];
 }
 
+function disposeObject3D(root: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    geometries.add(object.geometry);
+    for (const material of materialArray(object.material)) {
+      materials.add(material);
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) textures.add(value);
+      }
+    }
+  });
+  textures.forEach((texture) => texture.dispose());
+  materials.forEach((material) => material.dispose());
+  geometries.forEach((geometry) => geometry.dispose());
+}
+
 export function TerrainViewport({
   meshUrl,
   cameraMode,
@@ -503,7 +522,10 @@ export function TerrainViewport({
     loader.load(
       meshUrl,
       (gltf) => {
-        if (disposed) return;
+        if (disposed) {
+          disposeObject3D(gltf.scene);
+          return;
+        }
         loaded = gltf.scene;
         terrainMeshes = [];
         let geometryVertices = 0;
@@ -516,6 +538,9 @@ export function TerrainViewport({
           }
         });
         if (terrainMeshes.length === 0 || geometryVertices < 3) {
+          disposeObject3D(loaded);
+          loaded = undefined;
+          terrainMeshes = [];
           fail("Terrain GLB parsed but contained no renderable triangle geometry.");
           return;
         }
@@ -796,14 +821,7 @@ export function TerrainViewport({
       freeCamera.dispose();
       restoreOriginalMaterials();
       renderer.dispose();
-      scene.traverse((object) => {
-        if (object instanceof THREE.Mesh) {
-          object.geometry.dispose();
-          materialArray(object.material).forEach((material) => material.dispose());
-        }
-      });
-      pathLine.geometry.dispose();
-      (pathLine.material as THREE.Material).dispose();
+      disposeObject3D(scene);
       renderer.domElement.remove();
     };
   }, [groundSampleDistanceM, meshUrl, retryGeneration, overlayRetryGeneration]);

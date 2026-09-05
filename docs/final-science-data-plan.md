@@ -82,6 +82,8 @@ Each selected evaluation tile must satisfy:
 - reference is metric elevation in metres;
 - CRS is known and parseable;
 - reference vertical units are metres;
+- prediction and reference vertical datums are known, recorded and identical (or transformed through a separately documented geodetic operation before prediction freeze);
+- orthometric, ellipsoidal or declared-local elevation reference is explicit and matches between prediction and truth;
 - no silent resampling or geometry repair occurs before registry freeze;
 - any required reprojection is deterministic and documented;
 - nodata/validity masks are preserved;

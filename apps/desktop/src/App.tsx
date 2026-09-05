@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   buildProjectExport,
   buildProjectMesh,
+  cancelProjectJob,
   estimateProjectStructureHeight,
   getProjectExport,
   getProjectExportUrl,
@@ -73,7 +74,7 @@ const cameraModes: { id: CameraMode; label: string }[] = [
   { id: "topDown", label: "Top down" },
 ];
 const exaggerations = [1, 1.5, 2, 3] as const;
-const terminalJobStates = new Set(["waiting_for_calibration", "complete", "failed"]);
+const terminalJobStates = new Set(["waiting_for_calibration", "complete", "failed", "cancelled"]);
 const recentProjectStorageKey = "depthwizard.recentProjects.v1";
 const emptyTerrainState: TerrainRenderState = {
   phase: "idle",
@@ -193,7 +194,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 function reopenedJobState(manifest: ProjectManifest, projectDir: string): ProjectJobState | null {
-  if (!["waiting_for_calibration", "complete", "failed"].includes(manifest.status)) return null;
+  if (!["waiting_for_calibration", "complete", "failed", "cancelled"].includes(manifest.status)) return null;
   return {
     job_id: manifest.job_id ?? `reopened-${manifest.project_id}`,
     project_dir: projectDir,
@@ -202,6 +203,7 @@ function reopenedJobState(manifest: ProjectManifest, projectDir: string): Projec
     submitted_at_utc: manifest.created_at_utc,
     updated_at_utc: manifest.updated_at_utc,
     error: manifest.status === "failed" ? manifest.errors.at(-1)?.message ?? "Project requires recovery" : null,
+    cancellation_requested: manifest.status === "cancelled",
   };
 }
 
@@ -356,6 +358,10 @@ export function App() {
           nodata: null,
           ground_sample_distance_x: absoluteReport.gsd_x_m,
           ground_sample_distance_y: absoluteReport.gsd_y_m,
+          valid_data_fraction: 1,
+          vertical_crs: null,
+          vertical_datum: null,
+          elevation_reference: "unknown",
         });
         setActiveView("3D Terrain");
         const preferred = benchmark.results.find((item) => item.anchor_count === 64) ?? benchmark.results.at(-1);
@@ -437,7 +443,7 @@ export function App() {
     !demoMode
       && projectDir
       && projectManifest
-      && ["created", "queued", "running", "failed"].includes(projectManifest.status),
+      && ["created", "queued", "running", "failed", "cancelled"].includes(projectManifest.status),
   );
   const previewLayer = projectPreviewLayer(activeView, activeLayer, projectManifest);
   const terrainOverlay = terrainOverlayLayer(activeLayer, projectManifest);
@@ -850,6 +856,16 @@ export function App() {
       setImportError(error instanceof Error ? error.message : "Unable to recover project processing");
     } finally {
       setSubmittingProject(false);
+    }
+  };
+
+  const cancelProcessing = async () => {
+    if (!projectJob || !processing || projectJob.cancellation_requested) return;
+    setImportError(null);
+    try {
+      setProjectJob(await cancelProjectJob(projectJob.job_id));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to cancel processing");
     }
   };
 
@@ -1270,6 +1286,16 @@ export function App() {
           {!demoMode && metadata && !projectDir && (
             <button className="dw-btn dw-btn--primary" onClick={() => void reconstruct()} disabled={submittingProject}>
               {submittingProject ? "Starting…" : "Reconstruct"}
+            </button>
+          )}
+          {!demoMode && processing && projectJob && (
+            <button
+              className="dw-btn"
+              onClick={() => void cancelProcessing()}
+              disabled={projectJob.cancellation_requested}
+              title="Cancel at the next safe tile or processing-stage boundary"
+            >
+              {projectJob.cancellation_requested ? "Cancelling…" : "Cancel processing"}
             </button>
           )}
           {needsRecovery && (

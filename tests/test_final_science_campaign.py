@@ -99,6 +99,10 @@ def _setup_campaign(
                 "prediction_path": f"../preds/{scene_id}-pred.tif",
                 "prediction_sha256": sha256_file(prediction),
                 "calibration_evidence_paths": [evidence_path],
+                "prediction_vertical_datum": "EGM96 geoid",
+                "reference_vertical_datum": "EGM96 geoid",
+                "prediction_elevation_reference": "orthometric",
+                "reference_elevation_reference": "orthometric",
             }
         )
 
@@ -129,6 +133,10 @@ def _setup_campaign(
             "prediction_path": f"../preds/{cross_scene_id}-pred.tif",
             "prediction_sha256": sha256_file(cross_prediction),
             "calibration_evidence_paths": [f"../data/{cross_scene_id}-dem.tif"],
+            "prediction_vertical_datum": "EGM96 geoid",
+            "reference_vertical_datum": "EGM96 geoid",
+            "prediction_elevation_reference": "orthometric",
+            "reference_elevation_reference": "orthometric",
         }
     )
 
@@ -143,7 +151,7 @@ def _setup_campaign(
     manifest.write_text(
         yaml.safe_dump(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "model_id": "DA3MONO-LARGE",
                 "checkpoint_sha256": "a" * 64,
                 "predictions": predictions,
@@ -187,7 +195,7 @@ def test_campaign_emits_required_four_terrain_and_cross_sensor_evidence(
     persisted = json.loads(
         (output_dir / "domain_generalization_report.json").read_text(encoding="utf-8")
     )
-    assert persisted["protocol"] == "depthwizard_final_science_campaign_v1"
+    assert persisted["protocol"] == "depthwizard_final_science_campaign_v2"
 
 
 def test_campaign_requires_all_four_test_terrains(tmp_path: Path) -> None:
@@ -234,6 +242,37 @@ def test_campaign_rejects_prediction_mutated_after_manifest_freeze(tmp_path: Pat
     prediction_path.write_bytes(prediction_path.read_bytes() + b"post-freeze-mutation")
 
     with pytest.raises(ValueError, match="no longer matches frozen manifest"):
+        evaluate_final_science_campaign(
+            registry,
+            manifest,
+            tmp_path / "out",
+            min_valid_pixels=4,
+        )
+
+
+def test_campaign_rejects_vertical_datum_mismatch_before_scoring(tmp_path: Path) -> None:
+    registry, manifest = _setup_campaign(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payload["predictions"][0]["reference_vertical_datum"] = "NAVD88"
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="vertical datums must match"):
+        evaluate_final_science_campaign(
+            registry,
+            manifest,
+            tmp_path / "out",
+            min_valid_pixels=4,
+        )
+
+
+def test_campaign_rejects_placeholder_vertical_datum_before_scoring(tmp_path: Path) -> None:
+    registry, manifest = _setup_campaign(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payload["predictions"][0]["prediction_vertical_datum"] = "unknown"
+    payload["predictions"][0]["reference_vertical_datum"] = "unknown"
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be explicit"):
         evaluate_final_science_campaign(
             registry,
             manifest,

@@ -66,6 +66,7 @@ def test_da3_adapter_defers_normalization_until_scene_assembly(
     assert float(np.ptp(output.relative_height)) == pytest.approx(30.0)
     assert output.metadata["scene_normalize_relative_height"] is True
     assert output.metadata["output_semantics"] == "affine_relative_surface_height_evidence"
+    assert output.metadata["checkpoint_location"] == "custom_or_local_source"
 
 
 def test_da3_production_identity_is_revision_and_checkpoint_pinned() -> None:

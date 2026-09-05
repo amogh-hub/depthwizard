@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import rasterio
@@ -200,6 +201,113 @@ def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
     return float(abs(gsd_x)), float(abs(gsd_y))
 
 
+def ground_pixel_jacobian_m(path: str | Path) -> np.ndarray | None:
+    """Return local east/north ground vectors for one pixel-column and pixel-row step.
+
+    The 2x2 matrix maps ``[delta_col, delta_row]`` to local ``[east_m, north_m]``. Unlike two
+    scalar GSD values, it preserves raster rotation, skew, and non-orthogonal axes for slope
+    analysis. Geographic/projected grids are evaluated geodesically at the scene centre.
+    """
+    trusted_spacing = ground_sample_distance_m(path)
+    if trusted_spacing is None:
+        return None
+
+    with rasterio.open(path) as src:
+        if ortholoc_metric_affine_override_enabled():
+            jacobian = np.array(
+                [[src.transform.a, src.transform.b], [src.transform.d, src.transform.e]],
+                dtype=np.float64,
+            )
+        else:
+            if src.crs is None:
+                return None
+            crs = CRS.from_user_input(src.crs)
+            col = (src.width - 1) / 2.0
+            row = (src.height - 1) / 2.0
+            x0, y0 = src.transform * (col + 0.5, row + 0.5)
+            x1, y1 = src.transform * (col + 1.5, row + 0.5)
+            x2, y2 = src.transform * (col + 0.5, row + 1.5)
+            point0 = _trusted_wgs84_coordinate(crs, float(x0), float(y0))
+            point1 = _trusted_wgs84_coordinate(crs, float(x1), float(y1))
+            point2 = _trusted_wgs84_coordinate(crs, float(x2), float(y2))
+            if point0 is None or point1 is None or point2 is None:
+                return None
+            geod = Geod(ellps="WGS84")
+            azimuth_col, _, distance_col = geod.inv(
+                point0[0], point0[1], point1[0], point1[1]
+            )
+            azimuth_row, _, distance_row = geod.inv(
+                point0[0], point0[1], point2[0], point2[1]
+            )
+
+            def components(azimuth_degrees: float, distance_m: float) -> tuple[float, float]:
+                radians = np.deg2rad(azimuth_degrees)
+                return float(np.sin(radians) * distance_m), float(np.cos(radians) * distance_m)
+
+            col_east, col_north = components(float(azimuth_col), float(distance_col))
+            row_east, row_north = components(float(azimuth_row), float(distance_row))
+            jacobian = np.array(
+                [[col_east, row_east], [col_north, row_north]],
+                dtype=np.float64,
+            )
+
+    determinant = float(np.linalg.det(jacobian))
+    scale = max(float(np.linalg.norm(jacobian, ord=2)), 1e-12)
+    if not np.all(np.isfinite(jacobian)) or abs(determinant) <= 1e-10 * scale * scale:
+        return None
+    return jacobian
+
+
+def _vertical_metadata(
+    src: DatasetReader,
+) -> tuple[
+    str | None,
+    str | None,
+    Literal["orthometric", "ellipsoidal", "local", "unknown"],
+]:
+    """Extract explicit vertical-reference metadata without guessing from horizontal CRS."""
+    tags = {str(key).upper(): str(value).strip() for key, value in src.tags().items()}
+    placeholders = {"unknown", "unspecified", "none", "null", "n/a", "na", "tbd"}
+
+    def explicit_tag(*names: str) -> str | None:
+        value = next((tags[name] for name in names if tags.get(name)), None)
+        if value is None or value.casefold() in placeholders:
+            return None
+        return value
+
+    vertical_crs = explicit_tag("VERTICAL_CRS", "VERTICAL_CRS_WKT")
+    vertical_datum = explicit_tag("VERTICAL_DATUM", "VERT_DATUM")
+    reference_raw = tags.get("ELEVATION_REFERENCE", "").strip().lower()
+    elevation_reference: Literal["orthometric", "ellipsoidal", "local", "unknown"]
+    if reference_raw == "orthometric":
+        elevation_reference = "orthometric"
+    elif reference_raw == "ellipsoidal":
+        elevation_reference = "ellipsoidal"
+    elif reference_raw == "local":
+        elevation_reference = "local"
+    else:
+        elevation_reference = "unknown"
+
+    if src.crs is not None:
+        try:
+            parsed = CRS.from_user_input(src.crs)
+            candidates = [parsed] if parsed.is_vertical else list(parsed.sub_crs_list)
+            vertical = next((candidate for candidate in candidates if candidate.is_vertical), None)
+            if vertical is not None:
+                vertical_crs = vertical.to_string()
+                if vertical_datum is None and vertical.datum is not None:
+                    vertical_datum = vertical.datum.name
+                descriptor = f"{vertical.name} {vertical_datum or ''}".lower()
+                if elevation_reference == "unknown":
+                    if "ellipsoid" in descriptor:
+                        elevation_reference = "ellipsoidal"
+                    elif any(word in descriptor for word in ("orthometric", "geoid", "gravity")):
+                        elevation_reference = "orthometric"
+        except (CRSError, AttributeError):
+            pass
+    return vertical_crs, vertical_datum, elevation_reference
+
+
 def inspect_raster(path: str | Path) -> RasterMetadata:
     p = Path(path)
     metric_gsd = ground_sample_distance_m(p)
@@ -217,6 +325,17 @@ def inspect_raster(path: str | Path) -> RasterMetadata:
         crs = src.crs.to_string() if src.crs is not None else None
         gsd_x = metric_gsd[0] if metric_gsd is not None else None
         gsd_y = metric_gsd[1] if metric_gsd is not None else None
+        vertical_crs, vertical_datum, elevation_reference = _vertical_metadata(src)
+        scale = min(1.0, 2048.0 / max(src.width, src.height))
+        out_h = max(1, round(src.height * scale))
+        out_w = max(1, round(src.width * scale))
+        mask_bands = min(3, src.count)
+        sampled_masks = src.read_masks(
+            list(range(1, mask_bands + 1)),
+            out_shape=(mask_bands, out_h, out_w),
+            resampling=Resampling.nearest,
+        )
+        valid_data_fraction = float(np.mean(np.all(sampled_masks > 0, axis=0)))
         return RasterMetadata(
             path=p,
             width=src.width,
@@ -228,6 +347,10 @@ def inspect_raster(path: str | Path) -> RasterMetadata:
             nodata=src.nodata,
             ground_sample_distance_x=gsd_x,
             ground_sample_distance_y=gsd_y,
+            valid_data_fraction=valid_data_fraction,
+            vertical_crs=vertical_crs,
+            vertical_datum=vertical_datum,
+            elevation_reference=elevation_reference,
         )
 
 

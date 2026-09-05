@@ -9,8 +9,10 @@ __pycache__/
 dist/
 build/
 node_modules/
+*.tsbuildinfo
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/binaries/depthwizard-core-*
 apps/desktop/src-tauri/resources/depthwizard-core-runtime/
 .DS_Store

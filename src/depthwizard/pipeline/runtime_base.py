@@ -13,7 +13,15 @@ from depthwizard.calibration.evidence import (
     EvidenceCalibrationOutput,
     calibrate_relative_height_with_dem,
 )
-from depthwizard.calibration.gcp import calibrate_relative_height_with_gcps
+from depthwizard.calibration.gcp import (
+    calibrate_relative_height_with_gcps,
+    validate_metric_dsm_with_gcps,
+)
+from depthwizard.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+    raise_if_cancelled,
+)
 from depthwizard.contracts import (
     CalibrationMode,
     InputKind,
@@ -22,16 +30,23 @@ from depthwizard.contracts import (
 )
 from depthwizard.evaluation.metrics import slope_degrees
 from depthwizard.geometry_prior.base import GeometryPrior
-from depthwizard.geometry_prior.da3 import DA3MonocularPrior
+from depthwizard.geometry_prior.da3 import (
+    DA3_ADAPTER_CONTRACT,
+    DA3_CHECKPOINT_SHA256,
+    DA3_HF_REVISION,
+    DA3_MODEL_SOURCE,
+    DA3MonocularPrior,
+)
 from depthwizard.io.products import write_unreferenced_float_tiff
 from depthwizard.io.raster import (
+    ground_pixel_jacobian_m,
     ground_sample_distance_m,
     inspect_raster,
     reproject_to_match,
     write_float_geotiff,
     write_relative_tiff,
 )
-from depthwizard.pipeline.geometry import infer_geometry_scene
+from depthwizard.pipeline.geometry import GEOMETRY_PIPELINE_CONTRACT, infer_geometry_scene
 from depthwizard.pipeline.policy import (
     EstimatorDecision,
     EstimatorPath,
@@ -90,6 +105,7 @@ class _GeometryState:
     model_id: str
     tile_count: int
     harmonized_tiles: int
+    valid_pixel_fraction: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -123,14 +139,40 @@ def _request_config(request: ProcessingRequest) -> dict[str, object]:
 def _geometry_config(
     request: ProcessingRequest,
     estimator_decision: EstimatorDecision,
+    *,
+    prior: GeometryPrior,
+    learned_refiner: SceneRefiner | None,
 ) -> dict[str, object]:
     """Hash every decision capable of changing the persisted relative geometry artifact."""
+    prior_class = f"{type(prior).__module__}.{type(prior).__qualname__}"
+    prior_identity: dict[str, object] = {"class": prior_class}
+    model_source = getattr(prior, "model_source", None)
+    if model_source is not None:
+        prior_identity["model_source"] = str(model_source)
+    if isinstance(prior, DA3MonocularPrior) and str(prior.model_source) == DA3_MODEL_SOURCE:
+        prior_identity.update(
+            {
+                "adapter_contract": DA3_ADAPTER_CONTRACT,
+                "model_revision": DA3_HF_REVISION,
+                "checkpoint_sha256": DA3_CHECKPOINT_SHA256,
+            }
+        )
+
+    refiner_identity: dict[str, object] | None = None
+    if learned_refiner is not None:
+        refiner_identity = {
+            "class": f"{type(learned_refiner).__module__}.{type(learned_refiner).__qualname__}",
+            "model_id": learned_refiner.model_id,
+        }
     return {
+        "geometry_pipeline_contract": GEOMETRY_PIPELINE_CONTRACT,
         "source": str(request.source.resolve(strict=False)),
         "band_indices": list(request.band_indices),
         "tile_size": request.tile_size,
         "overlap": request.overlap,
         "harmonize_overlaps": request.harmonize_overlaps,
+        "prior": prior_identity,
+        "learned_refiner": refiner_identity,
         "estimator": estimator_decision.as_dict(),
     }
 
@@ -194,8 +236,27 @@ def _dem_evidence_payload(dem_path: Path, result: EvidenceCalibrationOutput) -> 
         "anchor_correlation_after": result.anchor_correlation_after,
         "frequency_match_sigma_px": result.frequency_match_sigma_px,
         "anchor_stride_px": result.anchor_stride_px,
+        "bias_sigma_px": result.bias_sigma_px,
+        "anchor_spatial_coverage_fraction": result.anchor_spatial_coverage_fraction,
+        "metric_relief_span_m": result.metric_relief_span_m,
         "anchors": int(result.anchor_mask.sum()),
     }
+
+
+def _resolved_bias_sigma_px(
+    request: ProcessingRequest,
+    *,
+    target_gsd_m: float | None,
+) -> float | None:
+    """Resolve an operator smoothing request without silently mixing pixels and metres."""
+    if request.low_frequency_sigma_m is not None:
+        if target_gsd_m is None:
+            raise ValueError(
+                "low_frequency_sigma_m requires trustworthy physical source GSD; "
+                "the requested smoothing distance cannot be converted to pixels"
+            )
+        return float(request.low_frequency_sigma_m / target_gsd_m)
+    return request.low_frequency_sigma_px
 
 
 def _gcp_source_evidence_payload(request: ProcessingRequest) -> dict[str, object]:
@@ -221,6 +282,65 @@ def _gcp_source_evidence_payload(request: ProcessingRequest) -> dict[str, object
         "source": str(source.resolve()),
         "sha256": actual_sha256,
         "identity_verified": True,
+    }
+
+
+def _vertical_reference_payload(request: ProcessingRequest) -> dict[str, object]:
+    """Resolve explicit vertical semantics while keeping unknown metadata visibly unknown."""
+    vertical_crs = request.vertical_crs
+    vertical_datum = request.vertical_datum
+    elevation_reference = request.elevation_reference
+    source = "processing_request" if any(
+        value is not None for value in (vertical_crs, vertical_datum)
+    ) or elevation_reference != "unknown" else "unspecified"
+
+    dem_path = request.metric_dem_path
+    if dem_path is not None and dem_path.is_file():
+        dem_metadata = inspect_raster(dem_path)
+        if (
+            vertical_crs is not None
+            and dem_metadata.vertical_crs is not None
+            and vertical_crs.casefold() != dem_metadata.vertical_crs.casefold()
+        ):
+            raise ValueError(
+                "processing-request vertical CRS conflicts with calibration DEM metadata"
+            )
+        if (
+            vertical_datum is not None
+            and dem_metadata.vertical_datum is not None
+            and vertical_datum.casefold() != dem_metadata.vertical_datum.casefold()
+        ):
+            raise ValueError(
+                "processing-request vertical datum conflicts with calibration DEM metadata"
+            )
+        if (
+            elevation_reference != "unknown"
+            and dem_metadata.elevation_reference != "unknown"
+            and elevation_reference != dem_metadata.elevation_reference
+        ):
+            raise ValueError(
+                "processing-request elevation reference conflicts with calibration DEM metadata"
+            )
+        if vertical_crs is None and dem_metadata.vertical_crs is not None:
+            vertical_crs = dem_metadata.vertical_crs
+            source = "calibration_dem_metadata"
+        if vertical_datum is None and dem_metadata.vertical_datum is not None:
+            vertical_datum = dem_metadata.vertical_datum
+            source = "calibration_dem_metadata"
+        if elevation_reference == "unknown" and dem_metadata.elevation_reference != "unknown":
+            elevation_reference = dem_metadata.elevation_reference
+            source = "calibration_dem_metadata"
+
+    datum_resolved = bool(vertical_crs or vertical_datum) and elevation_reference != "unknown"
+    return {
+        "vertical_crs": vertical_crs,
+        "vertical_datum": vertical_datum,
+        "elevation_reference": elevation_reference,
+        "metadata_source": source,
+        "datum_resolved": datum_resolved,
+        "absolute_elevation_claim": datum_resolved,
+        "surface_product": "dsm",
+        "calibration_dem_surface_type": request.dem_surface_type if dem_path is not None else None,
     }
 
 
@@ -326,6 +446,7 @@ class ProductionElevationRuntime:
         request: ProcessingRequest,
         *,
         georeferenced: bool,
+        cancellation_probe: CancellationProbe | None = None,
     ) -> tuple[_GeometryState, bool]:
         existing = manifest.artifact_path("rdsm")
         reusable = (
@@ -349,11 +470,13 @@ class ProductionElevationRuntime:
                     model_id=str(details.get("model_id", "DA3MONO-LARGE")),
                     tile_count=int(details.get("tile_count", 0)),
                     harmonized_tiles=int(details.get("harmonized_tiles", 0)),
+                    valid_pixel_fraction=float(details.get("valid_pixel_fraction", 1.0)),
                 ),
                 True,
             )
 
         started = time.perf_counter()
+        raise_if_cancelled(cancellation_probe)
         manifest.record_stage(ProcessingStage.GEOMETRY, status="running")
         scene = infer_geometry_scene(
             request.source,
@@ -362,7 +485,9 @@ class ProductionElevationRuntime:
             tile_size=request.tile_size,
             overlap=request.overlap,
             harmonize_overlaps=request.harmonize_overlaps,
+            cancellation_probe=cancellation_probe,
         )
+        raise_if_cancelled(cancellation_probe)
         selected_relative = scene.relative_height
         selected_confidence = scene.confidence
         selected_model_id = scene.model_id
@@ -411,6 +536,7 @@ class ProductionElevationRuntime:
                 "estimator_path": self.estimator_decision.selected_path.value,
                 "tile_count": scene.tile_count,
                 "harmonized_tiles": scene.harmonized_tiles,
+                "valid_pixel_fraction": scene.valid_pixel_fraction,
                 "normalization": asdict(scene.normalization),
             },
             elapsed_seconds=time.perf_counter() - started,
@@ -422,6 +548,7 @@ class ProductionElevationRuntime:
                 model_id=selected_model_id,
                 tile_count=scene.tile_count,
                 harmonized_tiles=scene.harmonized_tiles,
+                valid_pixel_fraction=scene.valid_pixel_fraction,
             ),
             False,
         )
@@ -436,9 +563,13 @@ class ProductionElevationRuntime:
         aligned_dem, dem_valid = reproject_to_match(dem_path, request.source)
         target_gsd_m = _mean_gsd(ground_sample_distance_m(request.source))
         dem_effective_gsd_m = _mean_gsd(ground_sample_distance_m(dem_path))
+        bias_sigma_px = _resolved_bias_sigma_px(request, target_gsd_m=target_gsd_m)
         common = {
             "dem_valid": dem_valid & np.isfinite(geometry.relative_height),
-            "low_frequency_sigma_px": request.low_frequency_sigma_px,
+            "low_frequency_sigma_px": bias_sigma_px,
+            "min_abs_anchor_correlation": request.min_dem_anchor_correlation,
+            "max_anchor_rmse_m": request.max_dem_anchor_rmse_m,
+            "max_normalized_rmse": request.max_dem_normalized_rmse,
         }
         if target_gsd_m is not None and dem_effective_gsd_m is not None:
             return calibrate_relative_height_with_dem(
@@ -456,7 +587,10 @@ class ProductionElevationRuntime:
             geometry.relative_height,
             aligned_dem,
             dem_valid=dem_valid & np.isfinite(geometry.relative_height),
-            low_frequency_sigma_px=request.low_frequency_sigma_px,
+            low_frequency_sigma_px=bias_sigma_px,
+            min_abs_anchor_correlation=request.min_dem_anchor_correlation,
+            max_anchor_rmse_m=request.max_dem_anchor_rmse_m,
+            max_normalized_rmse=request.max_dem_normalized_rmse,
         )
 
     def _calibrate(
@@ -488,39 +622,59 @@ class ProductionElevationRuntime:
                     mode=CalibrationMode.DEM,
                 )
 
-            # DEM establishes broad spatial support. GCPs then receive highest reliability by
-            # refining the already metric field. A negative relation at this stage is contradictory
-            # evidence and is rejected instead of flipping an already metric surface.
-            gcp_result = calibrate_relative_height_with_gcps(
+            # DEM establishes broad terrain support and relief scale. Sparse GCPs are permitted to
+            # correct only one global vertical-datum offset; re-fitting scale here would distort all
+            # image-derived roofs, trees, and slopes from a handful of points.
+            gcp_validation = validate_metric_dsm_with_gcps(
                 dem_result.dsm,
                 transform=transform,
                 gcps=gcps,
-                low_frequency_sigma_px=request.low_frequency_sigma_px,
-                resolve_orientation=False,
+                min_gcps=request.min_gcp_count,
+                max_rmse_m=request.max_gcp_anchor_rmse_m,
+                max_cross_validation_rmse_m=request.max_gcp_cross_validation_rmse_m,
             )
             return _CalibrationOutcome(
-                dsm=gcp_result.dsm,
+                dsm=gcp_validation.dsm,
                 evidence={
-                    "fusion_method": "dem_then_gcp_high_reliability_refinement",
+                    "fusion_method": "dem_scale_then_gcp_robust_global_datum_offset",
+                    "relief_rescaled_by_gcps": False,
                     "dem": dem_payload,
-                    "gcp_refinement": {
+                    "gcp_validation": {
                         "source_evidence": gcp_source_evidence,
-                        "calibration": gcp_result.calibration.model_dump(),
                         "gcp_count_supplied": len(gcps),
-                        "gcp_residuals_m": gcp_result.gcp_residuals_m.tolist(),
-                        "anchor_correlation_before": gcp_result.anchor_correlation_before,
-                        "orientation_flipped": gcp_result.orientation_flipped,
+                        "offset_applied_m": gcp_validation.offset_applied_m,
+                        "rmse_before_m": gcp_validation.rmse_before_m,
+                        "rmse_after_m": gcp_validation.rmse_after_m,
+                        "cross_validation_rmse_m": (
+                            gcp_validation.cross_validation_rmse_m
+                        ),
+                        "gcp_residuals_before_m": (
+                            gcp_validation.gcp_residuals_before_m.tolist()
+                        ),
+                        "gcp_residuals_after_m": (
+                            gcp_validation.gcp_residuals_after_m.tolist()
+                        ),
+                        "spatial_coverage_fraction": (
+                            gcp_validation.spatial_coverage_fraction
+                        ),
+                        "spatial_rank_ratio": gcp_validation.spatial_rank_ratio,
+                        "semantics": "validation_and_global_vertical_datum_offset_only",
                     },
                 },
                 mode=CalibrationMode.DEM_GCP,
             )
 
+        target_gsd_m = _mean_gsd(ground_sample_distance_m(request.source))
+        gcp_bias_sigma_px = _resolved_bias_sigma_px(request, target_gsd_m=target_gsd_m)
         gcp_result = calibrate_relative_height_with_gcps(
             geometry.relative_height,
             transform=transform,
             gcps=gcps,
-            low_frequency_sigma_px=request.low_frequency_sigma_px,
+            low_frequency_sigma_px=gcp_bias_sigma_px,
             resolve_orientation=True,
+            min_gcps=request.min_gcp_count,
+            max_anchor_rmse_m=request.max_gcp_anchor_rmse_m,
+            max_cross_validation_rmse_m=request.max_gcp_cross_validation_rmse_m,
         )
         return _CalibrationOutcome(
             dsm=gcp_result.dsm,
@@ -532,6 +686,10 @@ class ProductionElevationRuntime:
                     "gcp_residuals_m": gcp_result.gcp_residuals_m.tolist(),
                     "anchor_correlation_before": gcp_result.anchor_correlation_before,
                     "orientation_flipped": gcp_result.orientation_flipped,
+                    "cross_validation_rmse_m": gcp_result.cross_validation_rmse_m,
+                    "spatial_coverage_fraction": gcp_result.spatial_coverage_fraction,
+                    "spatial_rank_ratio": gcp_result.spatial_rank_ratio,
+                    "bias_sigma_px": gcp_bias_sigma_px,
                 }
             },
             mode=CalibrationMode.GCP,
@@ -630,7 +788,13 @@ class ProductionElevationRuntime:
         manifest.mark_status(ProjectRunStatus.COMPLETE, job_id=job_id)
         return _result_from_manifest(manifest, resumed=resumed)
 
-    def run(self, request: ProcessingRequest, *, job_id: str | None = None) -> ProjectRunResult:
+    def run(
+        self,
+        request: ProcessingRequest,
+        *,
+        job_id: str | None = None,
+        cancellation_probe: CancellationProbe | None = None,
+    ) -> ProjectRunResult:
         if not request.source.is_file():
             raise FileNotFoundError(f"source raster does not exist: {request.source}")
         request.output_dir.mkdir(parents=True, exist_ok=True)
@@ -638,7 +802,14 @@ class ProductionElevationRuntime:
         current_stage: ProcessingStage | None = None
 
         source_hash = sha256_file(request.source)
-        geometry_hash = canonical_json_hash(_geometry_config(request, self.estimator_decision))
+        geometry_hash = canonical_json_hash(
+            _geometry_config(
+                request,
+                self.estimator_decision,
+                prior=self.prior,
+                learned_refiner=self.learned_refiner,
+            )
+        )
         run_hash = canonical_json_hash(_request_config(request))
 
         if manifest.source_sha256 is not None and manifest.source_sha256 != source_hash:
@@ -661,6 +832,7 @@ class ProductionElevationRuntime:
             return _result_from_manifest(manifest, resumed=True)
 
         try:
+            raise_if_cancelled(cancellation_probe)
             manifest.mark_status(ProjectRunStatus.RUNNING, job_id=job_id)
             metadata = inspect_raster(request.source)
             georeferenced = metadata.input_kind is InputKind.GEOREFERENCED
@@ -684,13 +856,16 @@ class ProductionElevationRuntime:
                 status="completed",
                 details={"raster": metadata.model_dump(mode="json")},
             )
+            raise_if_cancelled(cancellation_probe)
 
             current_stage = ProcessingStage.GEOMETRY
             geometry, geometry_resumed = self._load_or_run_geometry(
                 manifest,
                 request,
                 georeferenced=georeferenced,
+                cancellation_probe=cancellation_probe,
             )
+            raise_if_cancelled(cancellation_probe)
 
             current_stage = ProcessingStage.CALIBRATION
             if not georeferenced:
@@ -742,15 +917,41 @@ class ProductionElevationRuntime:
             started = time.perf_counter()
             manifest.record_stage(ProcessingStage.CALIBRATION, status="running")
             calibration = self._calibrate(manifest, request, geometry)
+            raise_if_cancelled(cancellation_probe)
+            vertical_reference = _vertical_reference_payload(request)
+            absolute_elevation_claim = bool(vertical_reference["absolute_elevation_claim"])
+            if not absolute_elevation_claim:
+                manifest.add_warning(
+                    "metric scale/offset calibration passed, but the vertical CRS/datum is not "
+                    "fully declared; output is a metric calibrated DSM, not a datum-resolved "
+                    "absolute-elevation claim"
+                )
             dsm_path = request.output_dir / "products" / "dsm.tif"
+            vertical_crs_tag = str(vertical_reference["vertical_crs"] or "unspecified")
+            vertical_datum_tag = str(vertical_reference["vertical_datum"] or "unspecified")
             write_float_geotiff(
                 dsm_path,
                 calibration.dsm,
                 template_path=request.source,
-                description="DepthWizard absolute Digital Surface Model (metres)",
+                description=(
+                    "DepthWizard datum-resolved absolute Digital Surface Model (metres)"
+                    if absolute_elevation_claim
+                    else "DepthWizard metric calibrated Digital Surface Model; vertical datum unspecified"
+                ),
                 tags={
-                    "DEPTHWIZARD_PRODUCT": "ABSOLUTE_DSM_METRES",
+                    "DEPTHWIZARD_PRODUCT": (
+                        "ABSOLUTE_DSM_METRES"
+                        if absolute_elevation_claim
+                        else "METRIC_DSM_VERTICAL_DATUM_UNSPECIFIED"
+                    ),
                     "ELEVATION_UNITS": "metres",
+                    "ABSOLUTE_ELEVATION_STATUS": (
+                        "datum_resolved" if absolute_elevation_claim else "vertical_datum_unspecified"
+                    ),
+                    "VERTICAL_CRS": vertical_crs_tag,
+                    "VERTICAL_DATUM": vertical_datum_tag,
+                    "ELEVATION_REFERENCE": str(vertical_reference["elevation_reference"]),
+                    "SURFACE_SEMANTICS": "digital_surface_model",
                     "CALIBRATION_MODE": calibration.mode.value,
                     "ESTIMATOR_PATH": self.estimator_decision.selected_path.value,
                 },
@@ -759,13 +960,19 @@ class ProductionElevationRuntime:
                 manifest,
                 "dsm",
                 dsm_path,
-                semantics="absolute_digital_surface_model",
+                semantics=(
+                    "datum_resolved_absolute_digital_surface_model"
+                    if absolute_elevation_claim
+                    else "metric_calibrated_digital_surface_model_vertical_datum_unspecified"
+                ),
                 units="m",
             )
             calibration_document: dict[str, object] = {
-                "schema": "depthwizard.calibration.v1",
+                "schema": "depthwizard.calibration.v2",
                 "mode": calibration.mode.value,
                 "metric_claim": True,
+                "absolute_elevation_claim": absolute_elevation_claim,
+                "vertical_reference": vertical_reference,
                 "evidence": calibration.evidence,
             }
             calibration_path = request.output_dir / "calibration.json"
@@ -787,21 +994,26 @@ class ProductionElevationRuntime:
                 details={
                     "mode": calibration.mode.value,
                     "metric_claim": True,
+                    "absolute_elevation_claim": absolute_elevation_claim,
+                    "vertical_reference": vertical_reference,
                     "evidence": calibration.evidence,
                 },
                 elapsed_seconds=time.perf_counter() - started,
             )
 
             current_stage = ProcessingStage.EXPORT
+            raise_if_cancelled(cancellation_probe)
             started = time.perf_counter()
             manifest.record_stage(ProcessingStage.EXPORT, status="running")
             source_gsd = ground_sample_distance_m(request.source)
+            source_ground_jacobian = ground_pixel_jacobian_m(request.source)
             slope_path: Path | None = None
-            if source_gsd is not None:
+            if source_gsd is not None and source_ground_jacobian is not None:
                 slope = slope_degrees(
                     calibration.dsm,
                     gsd_x=source_gsd[0],
                     gsd_y=source_gsd[1],
+                    ground_jacobian_m=source_ground_jacobian,
                 )
                 slope_path = request.output_dir / "products" / "slope.tif"
                 write_float_geotiff(
@@ -812,6 +1024,7 @@ class ProductionElevationRuntime:
                     tags={
                         "DEPTHWIZARD_PRODUCT": "SLOPE_DEGREES",
                         "ANGLE_UNITS": "degrees",
+                        "GROUND_GRADIENT_GEOMETRY": "local_east_north_2x2_jacobian",
                     },
                 )
                 _register_artifact(
@@ -823,8 +1036,8 @@ class ProductionElevationRuntime:
                 )
             else:
                 manifest.add_warning(
-                    "physical GSD unavailable; slope raster omitted rather than deriving slope in "
-                    "unknown coordinate units"
+                    "full local ground-pixel geometry unavailable; slope raster omitted rather "
+                    "than assuming orthogonal pixel axes"
                 )
 
             provenance = self._write_provenance(
@@ -849,6 +1062,8 @@ class ProductionElevationRuntime:
                 artifacts=export_artifacts,
                 details={
                     "metric_claim": True,
+                    "absolute_elevation_claim": absolute_elevation_claim,
+                    "vertical_reference": vertical_reference,
                     "elevation_units": "m",
                     "source_files_overwritten": False,
                 },
@@ -857,6 +1072,15 @@ class ProductionElevationRuntime:
             manifest.record_stage(ProcessingStage.COMPLETE, status="completed")
             manifest.mark_status(ProjectRunStatus.COMPLETE, job_id=job_id)
             return _result_from_manifest(manifest, resumed=geometry_resumed)
+        except CancellationRequested:
+            if current_stage is not None:
+                manifest.record_stage(
+                    current_stage,
+                    status="cancelled",
+                    details={"reason": "operator_requested_cancellation"},
+                )
+            manifest.mark_status(ProjectRunStatus.CANCELLED, job_id=job_id)
+            raise
         except Exception as exc:
             if current_stage is not None:
                 manifest.record_stage(

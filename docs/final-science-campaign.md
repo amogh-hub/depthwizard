@@ -34,7 +34,7 @@ immediately after that prediction was produced and before any reference evaluati
 For example:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 model_id: calibrated-da3-production
 checkpoint_sha256: 7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960
 predictions:
@@ -45,30 +45,50 @@ predictions:
       - ../evidence/urban-test-01-srtm.tif
     prediction_vertical_units: m
     reference_vertical_units: m
+    prediction_vertical_datum: EGM96 geoid
+    reference_vertical_datum: EGM96 geoid
+    prediction_elevation_reference: orthometric
+    reference_elevation_reference: orthometric
 
   - scene_id: sparse-test-01
     prediction_path: ../predictions/sparse-test-01-dsm.tif
     prediction_sha256: 2222222222222222222222222222222222222222222222222222222222222222
     calibration_evidence_paths:
       - ../evidence/sparse-test-01-gcps.csv
+    prediction_vertical_datum: EGM96 geoid
+    reference_vertical_datum: EGM96 geoid
+    prediction_elevation_reference: orthometric
+    reference_elevation_reference: orthometric
 
   - scene_id: hilly-test-01
     prediction_path: ../predictions/hilly-test-01-dsm.tif
     prediction_sha256: 3333333333333333333333333333333333333333333333333333333333333333
     calibration_evidence_paths:
       - ../evidence/hilly-test-01-srtm.tif
+    prediction_vertical_datum: EGM96 geoid
+    reference_vertical_datum: EGM96 geoid
+    prediction_elevation_reference: orthometric
+    reference_elevation_reference: orthometric
 
   - scene_id: forested-test-01
     prediction_path: ../predictions/forested-test-01-dsm.tif
     prediction_sha256: 4444444444444444444444444444444444444444444444444444444444444444
     calibration_evidence_paths:
       - ../evidence/forested-test-01-srtm.tif
+    prediction_vertical_datum: EGM96 geoid
+    reference_vertical_datum: EGM96 geoid
+    prediction_elevation_reference: orthometric
+    reference_elevation_reference: orthometric
 
   - scene_id: cross-sensor-01
     prediction_path: ../predictions/cross-sensor-01-dsm.tif
     prediction_sha256: 5555555555555555555555555555555555555555555555555555555555555555
     calibration_evidence_paths:
       - ../evidence/cross-sensor-01-srtm.tif
+    prediction_vertical_datum: EGM96 geoid
+    reference_vertical_datum: EGM96 geoid
+    prediction_elevation_reference: orthometric
+    reference_elevation_reference: orthometric
 ```
 
 The hashes above are illustrative placeholders only. Replace them with the real SHA-256 of the frozen
@@ -80,7 +100,9 @@ shasum -a 256 /path/to/prediction-dsm.tif
 ```
 
 Every evaluation scene must have exactly one prediction entry, and the prediction manifest may not
-contain extra scenes outside the registry's `test`/`cross_sensor_test` evaluation surface.
+contain extra scenes outside the registry's `test`/`cross_sensor_test` evaluation surface. Schema v2
+also requires explicit prediction/reference vertical datums and elevation-reference types. The
+evaluator refuses the scene before opening/scoring raster values when those semantics do not match.
 
 Prediction-manifest relative paths are resolved relative to the prediction manifest itself.
 

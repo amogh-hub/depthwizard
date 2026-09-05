@@ -151,5 +151,8 @@ def test_all_scientific_sidecar_build_targets_install_ml_extra() -> None:
         "\n# Final qualification", 1
     )[0]
 
-    assert 'pip install -e ".[ml,standalone]"' in sidecar
-    assert 'pip install -e ".[ml,dev,standalone]"' in workstation
+    assert "uv sync --frozen --python 3.12 --extra ml --extra standalone" in sidecar
+    assert (
+        "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
+        in workstation
+    )

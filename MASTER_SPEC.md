@@ -9,14 +9,14 @@
 
 ## 1. Mission
 
-Build a unified standalone software suite that converts a single RGB remote-sensing image into a high-fidelity elevation product and an interactive analytical 3D environment. Non-georeferenced PNG/JPG imagery produces an rDSM. Georeferenced GeoTIFF imagery produces an absolute metric DSM while preserving geospatial integrity. Every official requirement is mapped to implementation and verification evidence.
+Build a unified standalone software suite that converts a single RGB remote-sensing image into a high-fidelity elevation product and an interactive analytical 3D environment. Non-georeferenced PNG/JPG imagery produces an rDSM. Georeferenced GeoTIFF imagery with defensible calibration evidence produces a metric DSM while preserving geospatial integrity; it is called datum-resolved absolute elevation only when the vertical CRS/datum and orthometric, ellipsoidal, or declared-local reference are explicit. Every official requirement is mapped to implementation and verification evidence.
 
 ## 2. Immutable product contract
 
 1. Accept PNG, JPG/JPEG, TIFF and GeoTIFF RGB imagery.
 2. Detect whether usable CRS/transform metadata exists.
 3. For non-georeferenced input, output a relative DSM without pretending the values are absolute metres.
-4. For georeferenced input, output an absolute DSM in metres in a standard geospatial raster format.
+4. For georeferenced input with accepted DEM/GCP evidence, output a DSM in metres in a standard geospatial raster format. Keep vertical datum unspecified unless it is explicitly known; never silently equate horizontal CRS with vertical datum.
 5. Use a robust pretrained monocular-depth foundation model as the initial geometric prior.
 6. Correct the remote-sensing domain gap instead of exposing the foundation model output directly.
 7. Support metric calibration with low-resolution DEM evidence (including SRTM 30 m), sparse GCPs, scene statistics and semantic ground/object priors.
@@ -39,7 +39,7 @@ Preprocessing uses robust percentile normalization with train/inference parity, 
 
 ### 3.2 Foundation geometry prior
 
-Primary foundation prior: **Depth Anything 3 Monocular Large (DA3MONO-LARGE)**, subject to final local reproducibility verification and model-license capture in the repository. It is used as a pretrained monocular geometric prior, not treated as an absolute satellite-height estimator.
+Primary foundation prior: **Depth Anything 3 Monocular Large (DA3MONO-LARGE)**. The repository pins the upstream revision and checkpoint SHA-256; production verifies the actual checkpoint bytes before model construction, and standalone packaging includes the verified snapshot for offline-first reconstruction. It is used as a pretrained monocular geometric prior, not treated as an absolute satellite-height estimator.
 
 Required baselines include Depth Anything V2 and Metric3D v2 where technically reproducible. The baseline harness must run each method on identical tiles/splits and record runtime, memory, RMSE, MAE and correlation.
 
@@ -65,11 +65,11 @@ For georeferenced imagery, relative height is transformed into an absolute DSM u
 1. Reproject/co-register SRTM or another low-resolution DEM to the image footprint when supplied.
 2. Infer ground-confidence regions from semantic and structural evidence.
 3. Build reliable DEM anchors preferentially from ground/low-structure cells to avoid double-counting buildings/canopy.
-4. Add sparse GCP elevation anchors when supplied.
+4. Require at least four spatially distributed, non-collinear GCP elevation anchors when supplied; validate convex-hull coverage and leave-one-out error.
 5. Fit a robust positive global scale and vertical offset using confidence-weighted Huber/IRLS estimation.
-6. Fit only a smooth low-frequency terrain bias field; high-frequency object structure remains controlled by the image-derived height network.
+6. Fit only a smooth low-frequency terrain bias field whose default support is derived from physical DEM/GSD support rather than a fixed image-pixel radius; high-frequency object structure remains controlled by the image-derived height network.
 7. Reject/downweight anchors with high residual, low semantic-ground probability, NoData, severe slope mismatch or high model uncertainty.
-8. Produce calibration residual statistics and a calibration-confidence score.
+8. Fail closed on weak correlation, insufficient relief/coverage, ill-conditioning, non-convergence, excessive RMSE or excessive normalized RMSE; emit residual and cross-validation diagnostics.
 
 Conceptual form:
 
@@ -77,7 +77,7 @@ Conceptual form:
 
 where `T_anchor` is the terrain/elevation anchor field when available, `alpha` and `beta` are robust calibration parameters, and `B_lowfreq` is a heavily regularized spatial correction. Exact parametrization is selected by validation, but the evidence hierarchy and constraints are fixed.
 
-For GCP-only calibration, sparse elevation points define the vertical datum/scale and the low-frequency base field through robust spatial interpolation subject to smoothness constraints. For SRTM+GCP mode, GCPs receive highest reliability and SRTM provides broad spatial support.
+For GCP-only calibration, spatially distributed elevation points define scale and offset, with held-out quality checks. Optional residual interpolation is allowed only with enough control points and an explicit smoothing scale. For DEM+GCP mode, the DEM establishes scene relief scale and broad spatial support; GCPs may validate and correct one robust global vertical-datum offset only. Sparse GCPs must never re-scale DEM-calibrated roofs, vegetation, slopes, or terrain relief.
 
 ### 3.5 Non-georeferenced rDSM
 
@@ -93,6 +93,7 @@ Large rasters are processed window-by-window with overlap. Required controls:
 - overlap-based inter-tile offset/scale harmonization;
 - edge-aware seam diagnostics;
 - bounded RAM/VRAM scheduling;
+- bounded service queue, cooperative cancellation and terminal cancelled state;
 - resumable job manifest so an interrupted long scene does not restart from zero;
 - global metadata/provenance retained after mosaicking.
 
@@ -244,7 +245,7 @@ Every stage writes a provenance record with input hashes, model checkpoint ID, c
 
 For a georeferenced project:
 
-- `dsm.tif` — float32 metric DSM preserving CRS/geotransform.
+- `dsm.tif` — float32 metric DSM preserving CRS/geotransform, NoData and explicit vertical-reference status.
 - `confidence.tif` — float32 confidence/uncertainty layer.
 - `slope.tif` — derived slope raster.
 - `residual.tif` — if reference is available.
@@ -265,6 +266,7 @@ For non-georeferenced projects:
 
 - Validate extension, MIME/raster readability, band count and dimensions.
 - Enforce bounded job resource limits.
+- Enforce bounded job admission/history and cooperative cancellation between expensive inference stages.
 - Use temporary/work directories with atomic finalization.
 - Never overwrite source data.
 - Sanitize filenames and project paths.
@@ -272,6 +274,8 @@ For non-georeferenced projects:
 - Verify model weight hashes.
 - Preserve exact dependency lockfiles.
 - Detect CRS/transform inconsistencies before DEM/GCP fusion.
+- Preserve source validity masks through model inference, mosaicking and output products.
+- Use the complete local pixel-to-ground Jacobian for slope on rotated or sheared rasters.
 - Abort metric calibration if anchor geometry is underdetermined rather than emit fabricated metres.
 
 ## 10. Repository engineering standard

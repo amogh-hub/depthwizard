@@ -6,8 +6,8 @@ on:
   pull_request:
 
 jobs:
-  dependency-lock-bootstrap:
-    name: dependency lock bootstrap
+  dependency-lock-integrity:
+    name: dependency lock integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -19,24 +19,16 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v6
-      - name: Resolve Python lock
-        run: uv lock
-      - name: Resolve npm lock
+      - name: Verify Python lock is current
+        run: uv lock --check
+      - name: Verify npm lock installs exactly
         working-directory: apps/desktop
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Resolve Cargo lock
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify Cargo lock is current
         working-directory: apps/desktop/src-tauri
-        run: cargo generate-lockfile
-      - name: Upload deterministic lock candidates
-        uses: actions/upload-artifact@v4
-        with:
-          name: depthwizard-dependency-locks
-          if-no-files-found: error
-          retention-days: 7
-          path: |
-            uv.lock
-            apps/desktop/package-lock.json
-            apps/desktop/src-tauri/Cargo.lock
+        run: cargo metadata --locked --format-version 1 --no-deps
+      - name: Prove resolver inputs did not mutate
+        run: git diff --exit-code -- uv.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock
 
   python-core:
     runs-on: ubuntu-latest
@@ -49,14 +41,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
-      - run: >-
-          python -m pip install
-          --index-url https://download.pytorch.org/whl/cpu
-          torch==2.13.0 torchvision==0.28.0
-      - run: python scripts/verify.py
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra ml
+      - run: .venv/bin/python scripts/verify.py
 
   desktop-frontend:
     runs-on: ubuntu-latest
@@ -68,7 +55,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run build
 
@@ -93,5 +80,5 @@ jobs:
       - name: Create compile-only scientific runtime resource stub
         run: python3 ../../../scripts/ensure_tauri_sidecar_stub.py
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-targets --all-features
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets --all-features

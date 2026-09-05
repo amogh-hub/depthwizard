@@ -9,6 +9,10 @@ export type RasterMetadata = {
   nodata: number | null;
   ground_sample_distance_x: number | null;
   ground_sample_distance_y: number | null;
+  valid_data_fraction: number;
+  vertical_crs: string | null;
+  vertical_datum: string | null;
+  elevation_reference: "orthometric" | "ellipsoidal" | "local" | "unknown";
 };
 
 export type ProjectRunStatus =
@@ -17,7 +21,8 @@ export type ProjectRunStatus =
   | "running"
   | "waiting_for_calibration"
   | "complete"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export type GroundControlPoint = {
   x: number;
@@ -52,7 +57,18 @@ export type ProcessingRequest = {
   tile_size?: number;
   overlap?: number;
   harmonize_overlaps?: boolean;
-  low_frequency_sigma_px?: number;
+  low_frequency_sigma_px?: number | null;
+  low_frequency_sigma_m?: number | null;
+  min_dem_anchor_correlation?: number;
+  max_dem_anchor_rmse_m?: number | null;
+  max_dem_normalized_rmse?: number;
+  min_gcp_count?: number;
+  max_gcp_anchor_rmse_m?: number | null;
+  max_gcp_cross_validation_rmse_m?: number | null;
+  vertical_crs?: string | null;
+  vertical_datum?: string | null;
+  elevation_reference?: "orthometric" | "ellipsoidal" | "local" | "unknown";
+  dem_surface_type?: "dem" | "dtm" | "dsm" | "unknown";
 };
 
 export type ProjectJobState = {
@@ -63,6 +79,7 @@ export type ProjectJobState = {
   submitted_at_utc: string;
   updated_at_utc: string;
   error: string | null;
+  cancellation_requested: boolean;
 };
 
 export type ProjectArtifact = {
@@ -73,7 +90,7 @@ export type ProjectArtifact = {
 };
 
 export type ProjectStage = {
-  status: "running" | "completed" | "waiting" | "failed" | "skipped" | string;
+  status: "running" | "completed" | "waiting" | "failed" | "cancelled" | "skipped" | string;
   started_at_utc?: string;
   updated_at_utc?: string;
   completed_at_utc?: string;
@@ -121,8 +138,10 @@ export type EvaluationMetrics = {
   mae_m: number;
   rmse_m: number;
   pearson_r: number | null;
+  spearman_r: number | null;
   mean_bias_m: number;
   median_abs_error_m: number;
+  nmad_m: number;
   p90_abs_error_m: number;
   p95_abs_error_m: number;
 };
@@ -398,6 +417,12 @@ export function submitProject(request: ProcessingRequest): Promise<ProjectJobSta
 
 export function getProjectJob(jobId: string): Promise<ProjectJobState> {
   return coreFetch<ProjectJobState>(`/v1/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function cancelProjectJob(jobId: string): Promise<ProjectJobState> {
+  return coreFetch<ProjectJobState>(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+  });
 }
 
 export function getProjectManifest(projectDir: string): Promise<ProjectManifest> {

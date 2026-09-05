@@ -8,20 +8,23 @@ DepthWizard is a unified scientific geospatial workstation that converts one opt
 
 - PNG/JPG/JPEG/TIFF/GeoTIFF ingest with explicit RGB-band handling and CRS/transform inspection;
 - non-georeferenced **dimensionless rDSM** output with no fabricated metres or CRS;
-- georeferenced **metric DSM** calibration from low-resolution DEM, sparse GCPs, or DEM + GCP fusion;
-- DA3MONO-LARGE relative-geometry prior with exact upstream source commit, Hugging Face revision and checkpoint SHA identity pinned in source/model manifest;
-- robust polarity diagnosis, Huber/IRLS scale-offset fitting, coarse-DEM frequency matching, independent-support anchor sampling and low-frequency terrain-bias correction;
+- georeferenced **metric DSM** calibration from low-resolution DEM, spatially defensible sparse GCPs, or DEM + GCP fusion, with absolute/datum-resolved claims only when vertical metadata is explicit;
+- DA3MONO-LARGE relative-geometry prior with exact upstream source commit, Hugging Face revision and checkpoint SHA identity verified against the bytes before model load;
+- robust polarity diagnosis, conditioned Huber/IRLS scale-offset fitting, correlation/coverage/relief/RMSE gates, coarse-DEM frequency matching, independent-support anchor sampling and physical-scale-aware terrain-bias correction;
+- DEM + GCP fusion that preserves DEM-established relief and permits only robust global vertical-datum offset correction from GCPs;
 - DEM calibration fails closed when trustworthy physical ground support cannot be derived for both the optical target and DEM, rather than treating resampled pixels as independent evidence;
 - conservative model-native confidence weighting for DEM calibration when usable, explicitly **not probability calibrated**, with truthful DEM-only weighting fallback when confidence is missing/degenerate;
-- local-ground/geodesic spatial scale handling, including Web-Mercator correction for ground distance, slope spacing, mesh XY scale and analyst measurements;
+- local-ground/geodesic spatial scale handling, including Web-Mercator correction and the full rotated/sheared pixel-to-ground Jacobian for slope;
+- end-to-end source NoData validity preservation through tiled inference, rDSM/DSM/confidence output and provenance;
 - overlap-aware tiled inference/harmonization plus an objective seam-to-interior discontinuity evaluator for final large-scene evidence;
-- RMSE, MAE, Pearson correlation, bias, percentile errors, slope metrics, aligned reference DSM and residual products;
+- RMSE, MAE, Pearson/Spearman correlation, NMAD, bias, percentile errors, slope metrics, aligned reference DSM and residual products;
 - analyst probe, signed two-point surface Δz, subpixel elevation transects, cumulative profile gain/loss and synchronized reference/residual inspection;
 - explicit-footprint structural-height estimation using a robust surrounding local-ground plane rather than mislabelling arbitrary endpoint Δz as building height;
 - textured terrain GLB + persistent LOD pyramid with corrected upward-facing geometry, analytical overlays, Orbit/Fly/First Person/Top Down navigation and deterministic flythrough;
 - evidence-native 3D analyst interaction: registered surface probing, Measure, Profiles and Structures remain tied to authoritative raster coordinates;
 - immutable project/product SHA identities, source/evidence provenance, fail-closed artifact reuse and hash-audited export bundles;
-- packaged Tauri + React + Three.js workstation with PyInstaller ONEDIR scientific sidecar, loopback-only authenticated IPC, owned lifecycle and offline-after-model-install operation;
+- packaged Tauri + React + Three.js workstation with PyInstaller ONEDIR scientific sidecar, a bundled hash-verified DA3 snapshot, loopback-only authenticated IPC, owned lifecycle and offline-first operation;
+- bounded one-worker scientific queue, duplicate-project admission protection, cooperative cancellation, bounded job history and leak-safe replacement of late Three.js mesh loads;
 - Tauri startup binds readiness to the exact spawned sidecar with an independent 256-bit per-process boot nonce before the API session token is exposed to React;
 - standalone recovery/error paths, malformed-input rejection and no-terminal packaged processing acceptance;
 - exact problem-statement traceability in `docs/requirements-traceability.yaml`.
@@ -37,8 +40,9 @@ Previously earned RT5 engineering/standalone evidence remains historical evidenc
 Python source verification:
 
 ```bash
-python -m pip install -e ".[dev]"
-python scripts/verify.py
+uv lock --check
+uv sync --frozen --python 3.12 --extra dev --extra ml
+.venv/bin/python scripts/verify.py
 ```
 
 The suite covers calibration, confidence weighting, geospatial scale/reprojection/export, rDSM semantics, metrics, slope, analyst profiles, structural height, tiling/seams, mesh geometry, project integrity, dataset split integrity, service APIs and standalone architecture contracts.
@@ -66,16 +70,16 @@ depthwizard serve --host 127.0.0.1 --port 8765
 
 `apps/desktop` is the permanent Tauri + React + Three.js scientific workstation. The packaged application owns the local scientific sidecar, ephemeral loopback endpoint, per-process boot identity and per-session API token; users do not need to start a terminal service. Scientific layers and controls are enabled only when their corresponding persisted artifacts actually exist.
 
-Developer bootstrap before the committed npm lock exists:
+Deterministic desktop verification:
 
 ```bash
 cd apps/desktop
-npm install
+npm ci
 npm run test
 npm run build
 ```
 
-Once the release lock is committed, deterministic CI/release builds must use `npm ci` rather than resolving a new dependency graph. Tauri release packaging must use the repository's standalone qualification scripts/targets rather than treating a frontend-only build as standalone scientific acceptance.
+The committed lock is authoritative; CI/release builds use `npm ci` and never refresh it implicitly. Tauri release packaging must use the repository's standalone qualification scripts/targets rather than treating a frontend-only build as standalone scientific acceptance.
 
 ## Architecture authority
 
@@ -87,3 +91,6 @@ Read in this order:
 4. release-train evidence/claim-boundary documents
 
 Every feature and scientific claim must trace to an official SIH/ISRO requirement or an explicit competitive-quality objective, and no evidence result may be upgraded beyond the protocol that produced it.
+
+The exact boundary between implemented hardening and still-required exact-head/external evidence is
+maintained in `docs/elite-finalization-status.md`.

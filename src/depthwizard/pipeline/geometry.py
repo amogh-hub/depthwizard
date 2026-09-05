@@ -8,6 +8,7 @@ import rasterio
 from rasterio.windows import Window
 
 from depthwizard.calibration.robust import robust_affine_calibration
+from depthwizard.cancellation import CancellationProbe, raise_if_cancelled
 from depthwizard.geometry_prior.base import GeometryPrior
 from depthwizard.preprocess.stats import (
     RGBNormalizationStats,
@@ -22,6 +23,9 @@ _MIN_SCALE_CORRELATION = 0.35
 _MIN_AFFINE_ERROR_IMPROVEMENT = 0.10
 _MIN_HARMONIZATION_SCALE = 0.25
 _MAX_HARMONIZATION_SCALE = 4.0
+# Persisted rDSM artifacts are reusable only under this exact algorithm contract. Bump whenever
+# masking, tiling, harmonization, normalization, or prior-output interpretation changes.
+GEOMETRY_PIPELINE_CONTRACT = "depthwizard.geometry.v2_nodata_affine_scene_normalization"
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class GeometrySceneOutput:
     normalization: RGBNormalizationStats
     tile_count: int
     harmonized_tiles: int
+    valid_pixel_fraction: float
 
 
 def normalize_relative_height_scene(
@@ -180,6 +185,7 @@ def infer_geometry_scene(
     overlap: int = 128,
     harmonize_overlaps: bool = True,
     min_harmonization_pixels: int = 256,
+    cancellation_probe: CancellationProbe | None = None,
 ) -> GeometrySceneOutput:
     """Run memory-bounded overlapping geometry inference on a full remote-sensing scene.
 
@@ -198,16 +204,29 @@ def infer_geometry_scene(
         model_id: str | None = None
         harmonized_tiles = 0
         scene_normalization_required: bool | None = None
+        source_valid = np.zeros((src.height, src.width), dtype=bool)
 
         for tile in tiles:
+            raise_if_cancelled(cancellation_probe)
             window = Window.from_slices(
                 (tile.y, tile.y + tile.height),
                 (tile.x, tile.x + tile.width),
             )
-            rgb = src.read(list(band_indices), window=window).astype(np.float32)
+            masked_rgb = src.read(list(band_indices), window=window, masked=True)
+            tile_valid = ~np.any(np.ma.getmaskarray(masked_rgb), axis=0)
+            rgb_bands = np.asarray(masked_rgb.filled(0.0), dtype=np.float32)
+            tile_valid &= np.all(np.isfinite(rgb_bands), axis=0)
+            source_valid[
+                tile.y : tile.y + tile.height,
+                tile.x : tile.x + tile.width,
+            ] |= tile_valid
+            if not np.any(tile_valid):
+                continue
+            rgb = rgb_bands
             rgb = np.moveaxis(rgb, 0, -1)
             normalized = normalize_with_stats(rgb, stats)
             prediction = prior.infer(normalized)
+            raise_if_cancelled(cancellation_probe)
             if prediction.relative_height.shape != (tile.height, tile.width):
                 raise ValueError(
                     f"geometry prior returned {prediction.relative_height.shape} for tile "
@@ -230,7 +249,11 @@ def infer_geometry_scene(
             elif requested_scene_normalization != scene_normalization_required:
                 raise ValueError("geometry prior scene-normalization contract changed within a job")
 
-            relative_tile = prediction.relative_height.astype(np.float32, copy=False)
+            relative_tile = prediction.relative_height.astype(np.float32, copy=True)
+            # The model necessarily receives finite padding for invalid pixels, but its predictions
+            # there are never scientific data. Restore the source validity contract before overlap
+            # harmonization so NoData borders/holes cannot influence or appear in the rDSM/DSM.
+            relative_tile[~tile_valid] = np.nan
             if harmonize_overlaps:
                 existing, overlap_mask = height_acc.current_region(
                     tile.y,
@@ -252,9 +275,12 @@ def infer_geometry_scene(
                     raise ValueError("geometry confidence must match relative-height shape")
                 if confidence_acc is None:
                     confidence_acc = WeightedTileAccumulator(src.height, src.width)
-                confidence_acc.add(prediction.confidence, tile.y, tile.x)
+                confidence_tile = prediction.confidence.astype(np.float32, copy=True)
+                confidence_tile[~tile_valid] = np.nan
+                confidence_acc.add(confidence_tile, tile.y, tile.x)
 
     relative_height = height_acc.finalize()
+    raise_if_cancelled(cancellation_probe)
     if scene_normalization_required:
         relative_height = normalize_relative_height_scene(relative_height)
 
@@ -265,4 +291,5 @@ def infer_geometry_scene(
         normalization=stats,
         tile_count=len(tiles),
         harmonized_tiles=harmonized_tiles,
+        valid_pixel_fraction=float(np.mean(source_valid)),
     )

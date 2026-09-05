@@ -19,7 +19,7 @@ _ARTIFACT_INTEGRITY_LOCK = RLock()
 _VALID_PROJECT_STATUSES = {status.value for status in ProjectRunStatus}
 _VALID_INPUT_KINDS = {kind.value for kind in InputKind}
 _VALID_STAGE_NAMES = {stage.value for stage in ProcessingStage}
-_VALID_STAGE_STATUSES = {"running", "completed", "failed", "waiting", "skipped"}
+_VALID_STAGE_STATUSES = {"running", "completed", "failed", "cancelled", "waiting", "skipped"}
 
 
 class ProjectIntegrityError(RuntimeError, ValueError):
@@ -413,7 +413,7 @@ class ProjectManifest:
             "artifacts": artifacts or previous.get("artifacts", {}),
             "details": details or previous.get("details", {}),
         }
-        if status in {"completed", "failed", "waiting", "skipped"}:
+        if status in {"completed", "failed", "cancelled", "waiting", "skipped"}:
             entry["completed_at_utc"] = now
         if elapsed_seconds is not None:
             entry["elapsed_seconds"] = float(elapsed_seconds)

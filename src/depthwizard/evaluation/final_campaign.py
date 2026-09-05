@@ -29,11 +29,32 @@ class CampaignPrediction(BaseModel):
     calibration_evidence_paths: list[Path] = Field(min_length=1, max_length=32)
     prediction_vertical_units: Literal["m"] = "m"
     reference_vertical_units: Literal["m"] = "m"
+    prediction_vertical_datum: str = Field(min_length=1, max_length=256)
+    reference_vertical_datum: str = Field(min_length=1, max_length=256)
+    prediction_elevation_reference: Literal["orthometric", "ellipsoidal", "local"]
+    reference_elevation_reference: Literal["orthometric", "ellipsoidal", "local"]
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def matching_vertical_reference(self) -> CampaignPrediction:
+        prediction_datum = self.prediction_vertical_datum.strip().casefold()
+        reference_datum = self.reference_vertical_datum.strip().casefold()
+        placeholders = {"unknown", "unspecified", "none", "null", "n/a", "na", "tbd"}
+        if prediction_datum in placeholders or reference_datum in placeholders:
+            raise ValueError("vertical datums must be explicit, not placeholder values")
+        if prediction_datum != reference_datum:
+            raise ValueError(
+                "prediction/reference vertical datums must match before elevation-error scoring"
+            )
+        if self.prediction_elevation_reference != self.reference_elevation_reference:
+            raise ValueError(
+                "prediction/reference elevation-reference types must match before scoring"
+            )
+        return self
 
 
 class CampaignManifest(BaseModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     model_id: str = Field(min_length=1)
     checkpoint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     predictions: list[CampaignPrediction] = Field(min_length=1)
@@ -214,7 +235,9 @@ def _scene_csv(scenes: list[dict[str, Any]]) -> str:
         "rmse_m",
         "mae_m",
         "pearson_r",
+        "spearman_r",
         "mean_bias_m",
+        "nmad_m",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
     writer.writeheader()
@@ -232,7 +255,9 @@ def _scene_csv(scenes: list[dict[str, Any]]) -> str:
             "rmse_m": metrics["rmse_m"],
             "mae_m": metrics["mae_m"],
             "pearson_r": metrics["pearson_r"],
+            "spearman_r": metrics["spearman_r"],
             "mean_bias_m": metrics["mean_bias_m"],
+            "nmad_m": metrics["nmad_m"],
         }
         writer.writerow(
             {
@@ -415,6 +440,17 @@ def evaluate_final_science_campaign(
                     "sha256": reference_sha,
                     "vertical_units": prediction_entry.reference_vertical_units,
                 },
+                "vertical_reference": {
+                    "prediction_vertical_datum": prediction_entry.prediction_vertical_datum,
+                    "reference_vertical_datum": prediction_entry.reference_vertical_datum,
+                    "prediction_elevation_reference": (
+                        prediction_entry.prediction_elevation_reference
+                    ),
+                    "reference_elevation_reference": (
+                        prediction_entry.reference_elevation_reference
+                    ),
+                    "compatibility_check": "passed",
+                },
                 "calibration_evidence": calibration_evidence,
                 "independence_check": (
                     "reference_path_and_sha_differ_from_prediction_and_calibration_evidence"
@@ -441,8 +477,8 @@ def evaluate_final_science_campaign(
     _atomic_write_text(sensor_csv_path, _summary_csv("sensor", sensor_groups))
 
     report: dict[str, Any] = {
-        "schema_version": 1,
-        "protocol": "depthwizard_final_science_campaign_v1",
+        "schema_version": 2,
+        "protocol": "depthwizard_final_science_campaign_v2",
         "claim_boundary": (
             "Independent evaluation only. Production checkpoint identity and prediction bytes are "
             "frozen before reference evaluation. Reference rasters are prohibited from matching "
@@ -474,6 +510,7 @@ def evaluate_final_science_campaign(
             "checkpoint_identity_frozen": "passed",
             "prediction_identity_freeze": "passed",
             "reference_independence": "passed",
+            "vertical_reference_compatibility": "passed",
         },
         "test_overall": test_overall.summary(),
         "cross_sensor_overall": cross_sensor_overall.summary(),

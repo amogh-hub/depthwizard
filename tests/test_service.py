@@ -1,3 +1,4 @@
+from concurrent.futures import Future
 from pathlib import Path
 
 import numpy as np
@@ -5,6 +6,7 @@ import rasterio
 from fastapi.testclient import TestClient
 from rasterio.transform import from_origin
 
+import depthwizard.service as service_module
 from depthwizard.contracts import ProjectRunStatus
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.stages import ProcessingStage
@@ -92,6 +94,35 @@ def test_unknown_project_job_returns_404() -> None:
     response = client.get("/v1/jobs/does-not-exist")
     assert response.status_code == 404
     assert response.json()["detail"] == "unknown DepthWizard job id"
+
+
+def test_cancel_endpoint_cancels_queued_work_without_leaking_job_state(tmp_path: Path) -> None:
+    job_id = "queued-cancellation-test"
+    now = service_module._utc_now()
+    state = service_module.ProjectJobState(
+        job_id=job_id,
+        project_dir=tmp_path / "project",
+        status=ProjectRunStatus.QUEUED,
+        manifest_path=tmp_path / "project" / "project-manifest.json",
+        submitted_at_utc=now,
+        updated_at_utc=now,
+    )
+    future: Future[None] = Future()
+    with service_module._jobs_lock:
+        service_module._jobs[job_id] = state
+        service_module._job_futures[job_id] = future
+    try:
+        response = TestClient(app).post(f"/v1/jobs/{job_id}/cancel")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "cancelled"
+        assert payload["cancellation_requested"] is True
+        assert future.cancelled()
+    finally:
+        with service_module._jobs_lock:
+            service_module._jobs.pop(job_id, None)
+            service_module._job_futures.pop(job_id, None)
+            service_module._cancel_requested.discard(job_id)
 
 
 def _write_rgb(path: Path) -> None:

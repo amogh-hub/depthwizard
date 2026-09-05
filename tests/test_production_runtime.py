@@ -9,6 +9,7 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+from depthwizard.cancellation import CancellationRequested
 from depthwizard.contracts import (
     GroundControlPoint,
     GroundControlPointEvidence,
@@ -39,6 +40,10 @@ class FakePrior(GeometryPrior):
             model_id="FAKE-PRIOR",
             metadata={"purpose": "unit-test"},
         )
+
+
+class AlternateFakePrior(FakePrior):
+    pass
 
 
 def _write_rgb(path: Path, *, georeferenced: bool) -> None:
@@ -166,6 +171,28 @@ def test_georeferenced_project_waits_for_evidence_then_resumes_geometry(tmp_path
     prediction = _read_float(Path(completed.artifacts["dsm"]))
     truth = 180.0 + 12.0 * _relative((32, 32))
     assert float(np.nanmean(np.abs(prediction - truth))) < 0.5
+    with rasterio.open(completed.artifacts["dsm"]) as src:
+        assert src.tags()["ABSOLUTE_ELEVATION_STATUS"] == "vertical_datum_unspecified"
+        assert src.tags()["DEPTHWIZARD_PRODUCT"] == "METRIC_DSM_VERTICAL_DATUM_UNSPECIFIED"
+    calibration = json.loads(Path(completed.artifacts["calibration"]).read_text(encoding="utf-8"))
+    assert calibration["metric_claim"] is True
+    assert calibration["absolute_elevation_claim"] is False
+
+
+def test_waiting_project_rejects_geometry_prior_identity_drift(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    dem = tmp_path / "dem.tif"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=True)
+    _write_dem(dem)
+    ProductionElevationRuntime(prior=FakePrior()).run(
+        ProcessingRequest(source=source, output_dir=project)
+    )
+
+    with pytest.raises(RuntimeError, match="geometry-affecting configuration"):
+        ProductionElevationRuntime(prior=AlternateFakePrior()).run(
+            ProcessingRequest(source=source, output_dir=project, dem_path=dem)
+        )
 
 
 def test_gcp_only_metric_project_recovers_absolute_height(tmp_path: Path) -> None:
@@ -194,6 +221,85 @@ def test_gcp_only_metric_project_recovers_absolute_height(tmp_path: Path) -> Non
         "sha256": None,
         "source": None,
     }
+
+
+def test_declared_vertical_reference_produces_datum_resolved_absolute_dsm(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "rgb.tif"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=True)
+
+    result = ProductionElevationRuntime(prior=FakePrior()).run(
+        ProcessingRequest(
+            source=source,
+            output_dir=project,
+            gcps=_metric_gcps(),
+            requested_output="dsm",
+            vertical_crs="EPSG:5773",
+            vertical_datum="EGM96 geoid",
+            elevation_reference="orthometric",
+        )
+    )
+
+    with rasterio.open(result.artifacts["dsm"]) as src:
+        tags = src.tags()
+        assert tags["ABSOLUTE_ELEVATION_STATUS"] == "datum_resolved"
+        assert tags["VERTICAL_CRS"] == "EPSG:5773"
+        assert tags["VERTICAL_DATUM"] == "EGM96 geoid"
+        assert tags["ELEVATION_REFERENCE"] == "orthometric"
+    calibration = json.loads(Path(result.artifacts["calibration"]).read_text(encoding="utf-8"))
+    assert calibration["absolute_elevation_claim"] is True
+    assert calibration["vertical_reference"]["metadata_source"] == "processing_request"
+
+
+def test_conflicting_dem_vertical_metadata_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    dem = tmp_path / "dem.tif"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=True)
+    _write_dem(dem)
+    with rasterio.open(dem, "r+") as dataset:
+        dataset.update_tags(
+            VERTICAL_CRS="EPSG:5773",
+            VERTICAL_DATUM="EGM96 geoid",
+            ELEVATION_REFERENCE="orthometric",
+        )
+
+    with pytest.raises(ValueError, match="vertical datum conflicts"):
+        ProductionElevationRuntime(prior=FakePrior()).run(
+            ProcessingRequest(
+                source=source,
+                output_dir=project,
+                dem_path=dem,
+                requested_output="dsm",
+                vertical_crs="EPSG:5773",
+                vertical_datum="EGM2008 geoid",
+                elevation_reference="orthometric",
+            )
+        )
+
+
+def test_runtime_cancellation_is_durable_and_cooperative(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=False)
+    calls = 0
+
+    def cancellation_probe() -> bool:
+        nonlocal calls
+        calls += 1
+        return calls >= 3
+
+    with pytest.raises(CancellationRequested):
+        ProductionElevationRuntime(prior=FakePrior()).run(
+            ProcessingRequest(source=source, output_dir=project, requested_output="rdsm"),
+            cancellation_probe=cancellation_probe,
+        )
+
+    manifest = json.loads((project / "project-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "cancelled"
+    assert any(stage["status"] == "cancelled" for stage in manifest["stages"].values())
 
 
 def test_gcp_file_identity_is_verified_and_persisted(tmp_path: Path) -> None:

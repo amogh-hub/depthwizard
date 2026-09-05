@@ -10,11 +10,11 @@ service:
 	depthwizard serve --host 127.0.0.1 --port 8765
 
 frontend-build:
-	cd apps/desktop && npm install --no-audit --no-fund && npm run build
+	cd apps/desktop && npm ci --no-audit --no-fund && npm run build
 
 rust-verify:
 	python -m scripts.ensure_tauri_sidecar_stub
-	cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features
+	cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --locked --all-targets --all-features -- -D warnings && cargo test --locked --all-targets --all-features
 
 # Generate resolver outputs from the exact checked-out manifests. These files are release inputs and
 # must be reviewed/committed before the strict reproducibility audit can pass. This target resolves
@@ -98,8 +98,8 @@ release-train-4-analytical-smoke:
 # The production sidecar imports the frozen monocular model/height-model stack, so a clean build
 # must install the ML extra explicitly rather than relying on torch already being present locally.
 sidecar-build:
-	python -m pip install -e ".[ml,standalone]"
-	python -m scripts.build_standalone_sidecar
+	uv sync --frozen --python 3.12 --extra ml --extra standalone
+	.venv/bin/python -m scripts.build_standalone_sidecar
 
 release-train-5-sidecar-smoke:
 	python -m scripts.release_train_5_sidecar_smoke
@@ -117,10 +117,10 @@ release-train-5-standalone-acceptance: release-train-5-sidecar-smoke release-tra
 # an older FastAPI API surface (for example missing preview/legend workstation routes).
 # It deliberately avoids rerunning the already-earned heavy RT5 scientific acceptance campaign.
 release-train-5-workstation-build:
-	python -m pip install -e ".[ml,dev,standalone]"
+	uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
 	$(MAKE) verify
-	python -m scripts.build_standalone_sidecar
-	cd apps/desktop && npm install --no-audit --no-fund && npm test && npm run tauri build
+	.venv/bin/python -m scripts.build_standalone_sidecar
+	cd apps/desktop && npm ci --no-audit --no-fund && npm test && npm run tauri build
 
 # Final qualification is fail-closed on all three committed resolver locks. `uv lock --check`
 # proves pyproject.toml and uv.lock still describe the same Python resolution before `uv sync

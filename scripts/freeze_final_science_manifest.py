@@ -65,7 +65,7 @@ def freeze_prediction_manifest(
 
     The draft schema is intentionally smaller than the final CampaignManifest schema:
 
-    schema_version: 1
+    schema_version: 2
     model_id: ...
     checkpoint_path: ...
     predictions:
@@ -81,8 +81,8 @@ def freeze_prediction_manifest(
     draft_file = draft_path.resolve(strict=True)
     registry = load_registry(registry_file)
     draft = _load_mapping(draft_file)
-    if draft.get("schema_version") != 1:
-        raise PredictionFreezeError("draft prediction schema_version must be 1")
+    if draft.get("schema_version") != 2:
+        raise PredictionFreezeError("draft prediction schema_version must be 2")
     model_id = draft.get("model_id")
     if not isinstance(model_id, str) or not model_id.strip():
         raise PredictionFreezeError("draft model_id must be a non-empty string")
@@ -148,6 +148,47 @@ def freeze_prediction_manifest(
             for value in raw_calibration
         ]
         prediction_sha = sha256_file(prediction)
+        vertical_fields: dict[str, str] = {}
+        for key in (
+            "prediction_vertical_datum",
+            "reference_vertical_datum",
+            "prediction_elevation_reference",
+            "reference_elevation_reference",
+        ):
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise PredictionFreezeError(
+                    f"prediction {scene_id!r} requires non-empty vertical field {key!r}"
+                )
+            vertical_fields[key] = value.strip()
+        if vertical_fields["prediction_vertical_datum"].casefold() != vertical_fields[
+            "reference_vertical_datum"
+        ].casefold():
+            raise PredictionFreezeError(
+                f"prediction {scene_id!r} vertical datum does not match its reference"
+            )
+        placeholders = {"unknown", "unspecified", "none", "null", "n/a", "na", "tbd"}
+        if any(
+            vertical_fields[key].casefold() in placeholders
+            for key in ("prediction_vertical_datum", "reference_vertical_datum")
+        ):
+            raise PredictionFreezeError(
+                f"prediction {scene_id!r} vertical datum must be explicit, not a placeholder"
+            )
+        if vertical_fields["prediction_elevation_reference"] != vertical_fields[
+            "reference_elevation_reference"
+        ]:
+            raise PredictionFreezeError(
+                f"prediction {scene_id!r} elevation-reference type does not match its reference"
+            )
+        if vertical_fields["prediction_elevation_reference"] not in {
+            "orthometric",
+            "ellipsoidal",
+            "local",
+        }:
+            raise PredictionFreezeError(
+                f"prediction {scene_id!r} uses an unsupported elevation-reference type"
+            )
         frozen_entries.append(
             {
                 "scene_id": scene_id,
@@ -162,6 +203,7 @@ def freeze_prediction_manifest(
                 ],
                 "prediction_vertical_units": "m",
                 "reference_vertical_units": "m",
+                **vertical_fields,
                 "notes": entry.get("notes"),
             }
         )
@@ -178,7 +220,7 @@ def freeze_prediction_manifest(
         )
 
     frozen = {
-        "schema_version": 1,
+        "schema_version": 2,
         "model_id": model_id,
         "checkpoint_sha256": sha256_file(checkpoint),
         "predictions": frozen_entries,

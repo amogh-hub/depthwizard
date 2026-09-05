@@ -32,7 +32,8 @@ def _rt5() -> dict[str, object]:
         "git_head": HEAD,
         "clean_application_launch": True,
         "user_visible_terminal_required": False,
-        "offline_after_model_install": True,
+        "offline_first_reconstruction": True,
+        "bundled_model_payload_verified": True,
         "mesh": {"lod_count": 4},
         "export": {"zip_integrity": "PASS"},
         "lifecycle": {"sidecar_terminated_with_app": True},
@@ -56,10 +57,11 @@ def _inputs() -> dict[str, object]:
 
 def _science() -> dict[str, object]:
     return {
-        "protocol": "depthwizard_final_science_campaign_v1",
+        "protocol": "depthwizard_final_science_campaign_v2",
         "requirements": {
             "geographic_split_integrity": "passed",
             "reference_independence": "passed",
+            "vertical_reference_compatibility": "passed",
             "test_terrain_coverage": list(completion.REQUIRED_TERRAINS),
         },
         "test_overall": _metric(),
@@ -108,7 +110,8 @@ def _clean_machine() -> dict[str, object]:
         "packaged_app_launch": True,
         "no_user_visible_terminal": True,
         "owned_sidecar_boot": True,
-        "offline_after_model_install": True,
+        "offline_first_reconstruction": True,
+        "bundled_model_payload_verified": True,
         "end_to_end_reconstruction": True,
         "metric_calibration": True,
         "terrain_3d": True,

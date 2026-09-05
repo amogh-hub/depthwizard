@@ -32,6 +32,15 @@ def test_unique_tfw_fails_closed_when_ambiguous(tmp_path: Path) -> None:
     (tmp_path / "dsm_potsdam_02_10.tfw").write_text("one", encoding="utf-8")
     (tmp_path / "dsm_potsdam_02_10.TFW").write_text("two", encoding="utf-8")
 
+    matches = [
+        path
+        for path in tmp_path.iterdir()
+        if path.stem.casefold() == raster.stem.casefold()
+        and path.suffix.casefold() == ".tfw"
+    ]
+    if len(matches) < 2:
+        pytest.skip("the test filesystem is case-insensitive and cannot represent this ambiguity")
+
     with pytest.raises(RuntimeError, match="ambiguous Potsdam .tfw"):
         _unique_tfw(raster)
 

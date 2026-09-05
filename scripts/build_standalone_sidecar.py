@@ -10,6 +10,13 @@ import sys
 import time
 from pathlib import Path
 
+from depthwizard.geometry_prior.da3 import (
+    DA3_CHECKPOINT_FILE,
+    DA3_CHECKPOINT_SHA256,
+    DA3_HF_REVISION,
+    DA3_MODEL_SOURCE,
+    resolve_verified_da3_snapshot,
+)
 from depthwizard.geometry_prior.da3_runtime_contract import (
     DA3_RUNTIME_DEPENDENCY_MODULES,
     verify_da3_runtime_dependencies,
@@ -24,6 +31,7 @@ BUILD_ROOT = ROOT / "artifacts" / "standalone" / "pyinstaller"
 ENTRY = ROOT / "scripts" / "depthwizard_sidecar_entry.py"
 DA3_VENDOR = ROOT / ".vendor" / "depth-anything-3" / "src"
 RUNTIME_MANIFEST_NAME = "runtime-manifest.json"
+PACKAGED_MODEL_RELATIVE_DIR = Path("models") / "da3mono-large"
 SELF_CHECK_TIMEOUT_SECONDS = 120.0
 # Importing the complete frozen DA3/PyTorch closure is intentionally slower than the geospatial
 # bootstrap probe, but it must still complete before a runtime can be staged into the desktop app.
@@ -247,6 +255,7 @@ def main() -> None:
     # Fail before a 90-second PyInstaller build if the locked Python environment does not contain
     # the complete curated DA3 monocular dependency closure.
     build_dependency_modules = verify_da3_runtime_dependencies()
+    model_snapshot, _model_checkpoint, model_checkpoint_sha256 = resolve_verified_da3_snapshot()
 
     # The pinned upstream DA3 geometry helper uses import-time torch.jit.script, which cannot
     # compile inside a normal PyInstaller frozen loader because source retrieval is intentionally
@@ -337,6 +346,19 @@ def main() -> None:
         shutil.rmtree(RUNTIME_DIR)
     RUNTIME_DIR.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(built_runtime, RUNTIME_DIR, symlinks=True)
+    packaged_model_dir = RUNTIME_DIR / PACKAGED_MODEL_RELATIVE_DIR
+    # Hugging Face snapshots commonly contain symlinks into a host cache. Dereference them so the
+    # application bundle is self-contained and cannot accidentally pass only on the build machine.
+    shutil.copytree(model_snapshot, packaged_model_dir, symlinks=False)
+    packaged_checkpoint = packaged_model_dir / DA3_CHECKPOINT_FILE
+    if not packaged_checkpoint.is_file():
+        raise RuntimeError("staged standalone runtime is missing the bundled DA3 checkpoint")
+    packaged_checkpoint_sha256 = sha256_file(packaged_checkpoint)
+    if packaged_checkpoint_sha256 != DA3_CHECKPOINT_SHA256:
+        raise RuntimeError(
+            "bundled DA3 checkpoint changed while staging the standalone runtime: "
+            f"expected {DA3_CHECKPOINT_SHA256}, got {packaged_checkpoint_sha256}"
+        )
     staged_executable = RUNTIME_DIR / f"depthwizard-core{extension}"
     if not staged_executable.is_file():
         raise RuntimeError(f"staged Tauri scientific runtime is missing: {staged_executable}")
@@ -350,7 +372,7 @@ def main() -> None:
     executable_sha = sha256_file(staged_executable)
     payload_sha, payload_files, payload_symlinks, payload_bytes = tree_identity(RUNTIME_DIR)
     runtime_manifest = {
-        "schema_version": 6,
+        "schema_version": 7,
         "status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -372,6 +394,15 @@ def main() -> None:
         "da3_runtime_execution_gate": "release_train_5_full_acceptance",
         "model_weights_loaded_during_packaging_check": False,
         "network_used_during_packaging_check": False,
+        "model_payload": {
+            "bundled": True,
+            "source": DA3_MODEL_SOURCE,
+            "revision": DA3_HF_REVISION,
+            "packaged_relative_directory": PACKAGED_MODEL_RELATIVE_DIR.as_posix(),
+            "checkpoint_file": DA3_CHECKPOINT_FILE,
+            "checkpoint_sha256": model_checkpoint_sha256,
+            "packaged_checkpoint_sha256": packaged_checkpoint_sha256,
+        },
     }
     runtime_manifest_path = RUNTIME_DIR / RUNTIME_MANIFEST_NAME
     runtime_manifest_path.write_text(
@@ -387,7 +418,7 @@ def main() -> None:
         raise RuntimeError("runtime payload identity changed while writing qualification manifest")
 
     report = {
-        "schema_version": 8,
+        "schema_version": 9,
         "status": "PASS_QUALIFIED_SIDECAR_BUILD",
         "source_git_sha": source_git_sha,
         "target_triple": triple,
@@ -415,6 +446,10 @@ def main() -> None:
             "safetensors_submodules_collected": True,
             "package_data_collected": True,
             "runtime_execution_gate": "release_train_5_full_acceptance",
+            "model_snapshot_bundled": True,
+            "model_revision": DA3_HF_REVISION,
+            "checkpoint_file": DA3_CHECKPOINT_FILE,
+            "checkpoint_sha256": packaged_checkpoint_sha256,
         },
         "geospatial_packaging": {
             "rasterio_serde_hidden_import": True,
@@ -431,12 +466,13 @@ def main() -> None:
         "frozen_da3_import_check": da3_import_check,
         "frozen_da3_import_check_elapsed_seconds": round(da3_import_elapsed, 3),
         "da3_import_startup_phases": da3_import_phases,
-        "offline_after_model_install": True,
+        "offline_first_reconstruction_ready": True,
         "scientific_boundary": (
             "Packaging and frozen-runtime integrity evidence only. The build proves bundled "
             "Rasterio/GDAL/PROJ plus the complete curated DA3 monocular dependency/module closure "
-            "inside the actual frozen executable, without loading model weights or using network "
-            "access. Actual packaged DA3 correctness is still gated by "
+            "inside the actual frozen executable and packages the revision-pinned, SHA-256-verified "
+            "DA3 model snapshot for an offline first reconstruction. The lightweight packaging "
+            "check does not execute the weights. Actual packaged DA3 correctness is still gated by "
             "release_train_5_full_acceptance, which must launch the real application offline and "
             "complete an end-to-end DA3 reconstruction. This build report does not establish DSM "
             "accuracy, model promotion, clean-machine success, FPS, or soak."

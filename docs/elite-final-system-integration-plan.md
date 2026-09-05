@@ -94,13 +94,14 @@ Deliver the final deployable application:
 - Tauri sidecar lifecycle management;
 - loopback-only/session-token boundary;
 - packaged model/resource discovery;
-- offline core operation after model installation;
+- bundled hash-verified model resources and offline-first core operation;
 - clean install / clean launch / fresh project acceptance;
 - Python tests + Ruff + Pyright;
 - frontend build/test;
 - Rust build/clippy/tests;
 - malformed-input recovery;
 - resumability and interrupted-job recovery;
+- bounded queue admission/history and cooperative operator cancellation;
 - memory/runtime profiling on large scenes;
 - 3D navigation benchmark;
 - scripted soak test with no unhandled crashes;

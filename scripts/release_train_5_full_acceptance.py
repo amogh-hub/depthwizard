@@ -646,7 +646,7 @@ def main() -> None:
         raise TypeError("stored sidecar PID must be an integer")
 
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS_RT5_FULL_STANDALONE_ENGINEERING_ACCEPTANCE",
         "git_head": _git_head(),
         "platform": platform.platform(),
@@ -658,7 +658,8 @@ def main() -> None:
         "runtime_manifest_status": runtime_manifest.get("status"),
         "clean_application_launch": True,
         "user_visible_terminal_required": False,
-        "offline_after_model_install": True,
+        "offline_first_reconstruction": True,
+        "bundled_model_payload_verified": True,
         "strict_python_non_loopback_egress_guard": True,
         "session_guard": {
             "missing_token_http_status": evidence["missing_status"],

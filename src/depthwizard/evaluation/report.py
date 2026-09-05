@@ -8,6 +8,7 @@ import rasterio
 
 from depthwizard.evaluation.metrics import compute_elevation_metrics, compute_slope_metrics
 from depthwizard.io.raster import (
+    ground_pixel_jacobian_m,
     ground_sample_distance_m,
     reproject_to_match,
     write_float_geotiff,
@@ -40,9 +41,11 @@ def validate_geospatial_dsm(
             valid &= pred != np.float32(pred_src.nodata)
 
     ground_gsd = ground_sample_distance_m(prediction_path)
-    if ground_gsd is None:
+    ground_jacobian = ground_pixel_jacobian_m(prediction_path)
+    if ground_gsd is None or ground_jacobian is None:
         raise ValueError(
-            "metric DSM validation requires a georeferenced prediction with trustworthy physical GSD"
+            "metric DSM validation requires a georeferenced prediction with trustworthy full "
+            "local ground-pixel geometry"
         )
 
     ref, ref_valid = reproject_to_match(reference_path, prediction_path)
@@ -53,6 +56,7 @@ def validate_geospatial_dsm(
         ref,
         gsd_x=ground_gsd[0],
         gsd_y=ground_gsd[1],
+        ground_jacobian_m=ground_jacobian,
         valid_mask=valid,
     )
 
@@ -74,6 +78,13 @@ def validate_geospatial_dsm(
                 "x": ground_gsd[0],
                 "y": ground_gsd[1],
                 "semantics": "local_ground_geodesic_spacing",
+            },
+            "ground_pixel_jacobian_m": {
+                "east_per_col": float(ground_jacobian[0, 0]),
+                "east_per_row": float(ground_jacobian[0, 1]),
+                "north_per_col": float(ground_jacobian[1, 0]),
+                "north_per_row": float(ground_jacobian[1, 1]),
+                "semantics": "pixel_col_row_to_local_east_north_metres",
             },
         },
     }

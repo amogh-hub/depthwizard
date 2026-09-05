@@ -4,7 +4,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class InputKind(str, Enum):
@@ -26,6 +26,7 @@ class ProjectRunStatus(str, Enum):
     WAITING_FOR_CALIBRATION = "waiting_for_calibration"
     COMPLETE = "complete"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RasterMetadata(BaseModel):
@@ -39,6 +40,10 @@ class RasterMetadata(BaseModel):
     nodata: float | None = None
     ground_sample_distance_x: float | None = None
     ground_sample_distance_y: float | None = None
+    valid_data_fraction: float = Field(default=1.0, ge=0.0, le=1.0)
+    vertical_crs: str | None = None
+    vertical_datum: str | None = None
+    elevation_reference: Literal["orthometric", "ellipsoidal", "local", "unknown"] = "unknown"
 
     @property
     def input_kind(self) -> InputKind:
@@ -74,8 +79,10 @@ class EvaluationMetrics(BaseModel):
     mae_m: float
     rmse_m: float
     pearson_r: float | None
+    spearman_r: float | None = None
     mean_bias_m: float
     median_abs_error_m: float
+    nmad_m: float = 0.0
     p90_abs_error_m: float
     p95_abs_error_m: float
 
@@ -326,9 +333,14 @@ class CalibrationResult(BaseModel):
     offset: float
     rmse_anchor: float
     median_abs_residual: float = 0.0
+    mae_anchor: float = 0.0
+    normalized_rmse: float | None = None
+    condition_number: float | None = None
     anchors_used: int = 0
     iterations: int
     converged: bool
+    quality_passed: bool = True
+    quality_notes: list[str] = Field(default_factory=list)
     method: str = "robust_affine_huber_irls"
 
 
@@ -355,7 +367,32 @@ class ProcessingRequest(BaseModel):
     tile_size: int = Field(default=1024, ge=256, le=4096)
     overlap: int = Field(default=128, ge=0, le=4095)
     harmonize_overlaps: bool = True
-    low_frequency_sigma_px: float = Field(default=24.0, ge=0.0, le=4096.0)
+    # Pixel-space smoothing is retained only as an explicit legacy override. Production defaults
+    # derive the correction scale from physical source/DEM support so identical settings mean the
+    # same thing at different image resolutions.
+    low_frequency_sigma_px: float | None = Field(default=None, ge=0.0, le=4096.0)
+    low_frequency_sigma_m: float | None = Field(default=None, gt=0.0, le=100_000.0)
+    min_dem_anchor_correlation: float = Field(default=0.25, ge=0.0, le=1.0)
+    max_dem_anchor_rmse_m: float | None = Field(default=15.0, gt=0.0)
+    max_dem_normalized_rmse: float = Field(default=0.35, gt=0.0, le=1.0)
+    min_gcp_count: int = Field(default=4, ge=4, le=10_000)
+    max_gcp_anchor_rmse_m: float | None = Field(default=10.0, gt=0.0)
+    max_gcp_cross_validation_rmse_m: float | None = Field(default=15.0, gt=0.0)
+    vertical_crs: str | None = Field(default=None, max_length=512)
+    vertical_datum: str | None = Field(default=None, max_length=256)
+    elevation_reference: Literal["orthometric", "ellipsoidal", "local", "unknown"] = "unknown"
+    dem_surface_type: Literal["dem", "dtm", "dsm", "unknown"] = "dem"
+
+    @field_validator("vertical_crs", "vertical_datum")
+    @classmethod
+    def validate_vertical_declaration(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        placeholders = {"unknown", "unspecified", "none", "null", "n/a", "na", "tbd"}
+        if not normalized or normalized.casefold() in placeholders:
+            raise ValueError("vertical reference declarations must be explicit, not placeholders")
+        return normalized
 
     @property
     def metric_dem_path(self) -> Path | None:
@@ -370,6 +407,16 @@ class ProcessingRequest(BaseModel):
             raise ValueError("supply either dem_path or legacy srtm_path, not both")
         if self.gcp_evidence is not None and not self.gcps:
             raise ValueError("gcp_evidence cannot be supplied without GCP points")
+        if self.gcps and len(self.gcps) < self.min_gcp_count:
+            raise ValueError(
+                f"GCP metric calibration requires at least {self.min_gcp_count} points; "
+                "two points only determine an affine transform and do not provide independent "
+                "quality evidence"
+            )
+        if self.low_frequency_sigma_px is not None and self.low_frequency_sigma_m is not None:
+            raise ValueError(
+                "supply low_frequency_sigma_m or the legacy low_frequency_sigma_px override, not both"
+            )
         if self.overlap >= self.tile_size:
             raise ValueError("overlap must be smaller than tile_size")
         if len(set(self.band_indices)) != 3 or any(index < 1 for index in self.band_indices):

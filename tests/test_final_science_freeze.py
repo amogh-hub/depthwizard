@@ -101,7 +101,7 @@ def _touch_inputs(root: Path) -> None:
 
 def _draft(path: Path, scene_ids: list[str]) -> Path:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "model_id": "calibrated-da3-production",
         "checkpoint_path": "checkpoint.bin",
         "predictions": [
@@ -109,6 +109,10 @@ def _draft(path: Path, scene_ids: list[str]) -> Path:
                 "scene_id": scene_id,
                 "prediction_path": f"{scene_id}-prediction.tif",
                 "calibration_evidence_paths": [f"{scene_id}-dem.tif"],
+                "prediction_vertical_datum": "EGM96 geoid",
+                "reference_vertical_datum": "EGM96 geoid",
+                "prediction_elevation_reference": "orthometric",
+                "reference_elevation_reference": "orthometric",
             }
             for scene_id in scene_ids
         ],
@@ -151,4 +155,18 @@ def test_freeze_refuses_missing_or_extra_evaluation_predictions(tmp_path: Path) 
     )
 
     with pytest.raises(PredictionFreezeError, match="must exactly match"):
+        freeze_prediction_manifest(registry, draft, tmp_path / "frozen.yaml")
+
+
+def test_freeze_refuses_placeholder_vertical_datum(tmp_path: Path) -> None:
+    _touch_inputs(tmp_path)
+    registry = _registry(tmp_path / "registry.yaml")
+    scene_ids = ["urban-test", "sparse-test", "hilly-test", "forested-test", "cross-test"]
+    draft = _draft(tmp_path / "draft.yaml", scene_ids)
+    payload = yaml.safe_load(draft.read_text(encoding="utf-8"))
+    payload["predictions"][0]["prediction_vertical_datum"] = "unspecified"
+    payload["predictions"][0]["reference_vertical_datum"] = "unspecified"
+    draft.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(PredictionFreezeError, match="must be explicit"):
         freeze_prediction_manifest(registry, draft, tmp_path / "frozen.yaml")

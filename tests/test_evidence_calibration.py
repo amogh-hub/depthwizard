@@ -135,3 +135,64 @@ def test_coarse_dem_frequency_contract_requires_both_resolutions() -> None:
         assert "must either both be supplied or both be omitted" in str(exc)
     else:
         raise AssertionError("missing target GSD must be rejected")
+
+
+def test_default_bias_scale_tracks_dem_support_not_fixed_image_pixels() -> None:
+    y, x = np.mgrid[:256, :256]
+    relative = (0.003 * x + 0.005 * y).astype(np.float32)
+    dem = (5.0 * relative + 100.0).astype(np.float32)
+
+    result = calibrate_relative_height_with_dem(
+        relative,
+        dem,
+        target_gsd_m=0.5,
+        dem_effective_gsd_m=8.0,
+        min_anchors=32,
+    )
+
+    assert result.anchor_stride_px == 16
+    assert result.bias_sigma_px == 16.0
+
+
+def test_unknown_dem_support_uses_conservative_bias_scale() -> None:
+    y, x = np.mgrid[:64, :64]
+    relative = (0.1 * x + 0.2 * y).astype(np.float32)
+    dem = (3.0 * relative + 120.0).astype(np.float32)
+
+    result = calibrate_relative_height_with_dem(relative, dem)
+
+    assert result.bias_sigma_px == 24.0
+
+
+def test_dem_calibration_rejects_high_residual_metric_claim() -> None:
+    y, x = np.mgrid[:64, :64]
+    relative = (0.1 * x + 0.2 * y).astype(np.float32)
+    structured_error = np.where((x + y) % 2 == 0, 8.0, -8.0)
+    dem = (3.0 * relative + 120.0 + structured_error).astype(np.float32)
+
+    try:
+        calibrate_relative_height_with_dem(
+            relative,
+            dem,
+            low_frequency_sigma_px=0,
+            max_anchor_rmse_m=2.0,
+        )
+    except ValueError as exc:
+        assert "anchor RMSE" in str(exc)
+    else:
+        raise AssertionError("high residual DEM evidence must not produce a metric DSM claim")
+
+
+def test_dem_calibration_rejects_spatially_clustered_anchor_mask() -> None:
+    y, x = np.mgrid[:64, :64]
+    relative = (0.1 * x + 0.2 * y).astype(np.float32)
+    dem = (3.0 * relative + 120.0).astype(np.float32)
+    valid = np.zeros_like(relative, dtype=bool)
+    valid[:16, :16] = True
+
+    try:
+        calibrate_relative_height_with_dem(relative, dem, dem_valid=valid)
+    except ValueError as exc:
+        assert "spatially clustered" in str(exc)
+    else:
+        raise AssertionError("clustered DEM evidence must not support a scene-level metric claim")

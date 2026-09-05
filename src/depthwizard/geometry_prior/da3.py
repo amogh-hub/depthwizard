@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -17,6 +19,16 @@ DA3_MODEL_SOURCE = "depth-anything/DA3MONO-LARGE"
 DA3_HF_REVISION = "f465978e618db8cc79c83b8bbf24964857db1875"
 DA3_CHECKPOINT_SHA256 = "7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960"
 DA3_UPSTREAM_SOURCE_COMMIT = "3d835ec1a5802d64a8b8b15f817a1ab54809bfe4"
+DA3_CHECKPOINT_FILE = "model.safetensors"
+DA3_ADAPTER_CONTRACT = "depthwizard.da3_adapter.v2_verified_affine_height_evidence"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def depth_to_affine_height_evidence(depth: np.ndarray) -> np.ndarray:
@@ -78,6 +90,61 @@ class DA3MonocularPrior(GeometryPrior):
     _model: Any | None = None
     _resolved_device: str | None = None
     _resolved_model_revision: str | None = None
+    _resolved_checkpoint_path: Path | None = None
+    _resolved_checkpoint_sha256: str | None = None
+
+    def _resolve_production_snapshot(self) -> Path:
+        """Resolve the exact Hub snapshot and verify the bytes before model construction."""
+        packaged_snapshot = os.environ.get("DEPTHWIZARD_DA3_SNAPSHOT", "").strip()
+        if packaged_snapshot:
+            snapshot = Path(packaged_snapshot)
+            if not snapshot.is_dir():
+                raise RuntimeError(
+                    "DEPTHWIZARD_DA3_SNAPSHOT does not identify a packaged model directory"
+                )
+        else:
+            try:
+                huggingface_hub: Any = importlib.import_module("huggingface_hub")
+                snapshot_download = huggingface_hub.snapshot_download
+            except (ImportError, AttributeError) as exc:
+                raise RuntimeError(
+                    "Hugging Face snapshot support is unavailable; the pinned DA3 checkpoint "
+                    "cannot be resolved or verified"
+                ) from exc
+
+            offline = os.environ.get("HF_HUB_OFFLINE") == "1" or os.environ.get(
+                "DEPTHWIZARD_OFFLINE_CORE"
+            ) == "1"
+            try:
+                snapshot = Path(
+                    snapshot_download(
+                        repo_id=DA3_MODEL_SOURCE,
+                        revision=DA3_HF_REVISION,
+                        local_files_only=offline,
+                    )
+                )
+            except Exception as exc:
+                mode = "offline packaged" if offline else "online/cache"
+                raise RuntimeError(
+                    f"the pinned DA3 snapshot is unavailable in {mode} mode; install the verified "
+                    "DepthWizard model payload before reconstruction"
+                ) from exc
+
+        checkpoint = snapshot / DA3_CHECKPOINT_FILE
+        if not checkpoint.is_file():
+            raise RuntimeError(
+                f"pinned DA3 snapshot is missing required checkpoint {DA3_CHECKPOINT_FILE!r}"
+            )
+        actual_sha256 = _sha256_file(checkpoint)
+        if actual_sha256 != DA3_CHECKPOINT_SHA256:
+            raise RuntimeError(
+                "Depth Anything 3 checkpoint SHA-256 mismatch; refusing to load unverified model "
+                f"bytes (expected {DA3_CHECKPOINT_SHA256}, got {actual_sha256})"
+            )
+        self._resolved_checkpoint_path = checkpoint.resolve()
+        self._resolved_checkpoint_sha256 = actual_sha256
+        self._resolved_model_revision = DA3_HF_REVISION
+        return snapshot
 
     def _load(self) -> tuple[Any, Any, str]:
         try:
@@ -111,8 +178,12 @@ class DA3MonocularPrior(GeometryPrior):
                 resolved = self.device
 
             source = str(self.model_source)
+            snapshot: Path | None = None
             if source == DA3_MODEL_SOURCE:
-                model = depth_anything_3.from_pretrained(source, revision=DA3_HF_REVISION)
+                # Build from the exact verified local snapshot, not a second independently resolved
+                # Hub path. This binds the model actually executed to the evidence manifest hash.
+                snapshot = self._resolve_production_snapshot()
+                model = depth_anything_3.from_pretrained(str(snapshot))
             else:
                 # Explicit local/custom sources remain supported for controlled tests and research.
                 # They do not inherit the production Hub revision because that would be misleading.
@@ -121,16 +192,26 @@ class DA3MonocularPrior(GeometryPrior):
             loaded_revision = getattr(model, "_commit_hash", None)
             if source == DA3_MODEL_SOURCE and loaded_revision is not None:
                 loaded_revision = str(loaded_revision)
-                if loaded_revision != DA3_HF_REVISION:
+                snapshot_identity_matches = snapshot is not None and (
+                    Path(loaded_revision).resolve(strict=False)
+                    == snapshot.resolve(strict=False)
+                )
+                if loaded_revision != DA3_HF_REVISION and not snapshot_identity_matches:
                     raise RuntimeError(
                         "Depth Anything 3 resolved an unexpected model revision: "
                         f"{loaded_revision}; expected {DA3_HF_REVISION}"
                     )
-                self._resolved_model_revision = loaded_revision
-            elif source == DA3_MODEL_SOURCE:
-                # The revision argument still pins Hub resolution even when a particular Hub mixin
-                # version does not expose its private commit-hash field after loading.
+            if source == DA3_MODEL_SOURCE:
+                # A model loaded from a local snapshot may expose that path through its private
+                # commit field. Public provenance must still record the immutable Hub revision,
+                # never a host-specific cache path.
                 self._resolved_model_revision = DA3_HF_REVISION
+
+            if source != DA3_MODEL_SOURCE:
+                custom_checkpoint = Path(source) / DA3_CHECKPOINT_FILE
+                if custom_checkpoint.is_file():
+                    self._resolved_checkpoint_path = custom_checkpoint.resolve()
+                    self._resolved_checkpoint_sha256 = _sha256_file(custom_checkpoint)
 
             model = model.to(device=torch.device(resolved))
             model.eval()
@@ -180,7 +261,18 @@ class DA3MonocularPrior(GeometryPrior):
                 "model_source": str(self.model_source),
                 "model_revision": self._resolved_model_revision or "custom_or_local_source",
                 "checkpoint_sha256": (
-                    DA3_CHECKPOINT_SHA256
+                    self._resolved_checkpoint_sha256 or "custom_or_local_source_unverified"
+                ),
+                "checkpoint_identity_verified": (
+                    str(self.model_source) == DA3_MODEL_SOURCE
+                    and self._resolved_checkpoint_sha256 == DA3_CHECKPOINT_SHA256
+                ),
+                "checkpoint_location": (
+                    (
+                        "packaged_snapshot"
+                        if os.environ.get("DEPTHWIZARD_DA3_SNAPSHOT", "").strip()
+                        else "verified_local_cache"
+                    )
                     if str(self.model_source) == DA3_MODEL_SOURCE
                     else "custom_or_local_source"
                 ),
@@ -192,3 +284,14 @@ class DA3MonocularPrior(GeometryPrior):
                 "license": "Apache-2.0",
             },
         )
+
+
+def resolve_verified_da3_snapshot() -> tuple[Path, Path, str]:
+    """Resolve the production snapshot for packaging and return its verified identity."""
+    prior = DA3MonocularPrior()
+    snapshot = prior._resolve_production_snapshot()
+    checkpoint = prior._resolved_checkpoint_path
+    sha256 = prior._resolved_checkpoint_sha256
+    if checkpoint is None or sha256 != DA3_CHECKPOINT_SHA256:
+        raise RuntimeError("DA3 snapshot resolution completed without verified checkpoint identity")
+    return snapshot, checkpoint, sha256

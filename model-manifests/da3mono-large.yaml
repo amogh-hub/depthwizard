@@ -24,7 +24,7 @@ qualification:
   source_revision_pinning:
     status: enforced
   checkpoint_identity:
-    status: pinned
+    status: verified_before_model_load_and_standalone_staging
 remaining_validation:
   - CUDA compatibility matrix is not yet qualified
   - CPU performance/compatibility matrix is not yet qualified

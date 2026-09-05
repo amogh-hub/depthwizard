@@ -17,7 +17,7 @@ Evidence: estimator policy/manifest, `height_model_manifest.json`, training repo
 ## Gate B — Scientific validation
 
 - Independent evaluation does not reuse the calibration source as the reference source.
-- RMSE, MAE and Pearson correlation are reported.
+- RMSE, MAE, Pearson/Spearman correlation, NMAD and bias/tail diagnostics are reported.
 - Geographic splits prevent adjacent-patch leakage.
 - Urban, sparse, hilly and forested results are reported separately.
 - Cross-sensor holdout is reported.
@@ -33,10 +33,14 @@ Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablatio
 - DEM-only calibration is operational and spatial-frequency matched to the DEM's effective resolution.
 - GCP-only calibration is operational.
 - DEM + GCP fusion is operational with GCPs receiving higher reliability.
+- DEM + GCP fusion preserves DEM-established relief scale; sparse GCPs may validate and correct only a robust global vertical-datum offset.
+- GCP calibration requires at least four spatially distributed, non-collinear points and passes leave-one-out error gates.
 - Analyst-supplied GCP file identity is hash-audited from inspection through calibration; post-inspection byte changes cause an explicit abort.
 - Weak/underdetermined evidence causes an explicit abort instead of fabricated metric elevation.
 - Calibration residual diagnostics and evidence provenance are emitted. Confidence/uncertainty is consumed or emitted only when its semantics are explicitly defined; undefined confidence is never fabricated.
 - High-frequency image-derived structure is preserved while only low-frequency terrain bias is corrected.
+- Default low-frequency correction support is derived from physical DEM/GSD support rather than fixed image pixels.
+- Metric output remains explicitly vertical-datum-unspecified until a vertical CRS/datum and elevation-reference type are declared; final accuracy scoring refuses prediction/reference datum mismatch.
 
 Evidence: `calibration_dem_report.json`, `calibration_gcp_report.json`, `calibration_fusion_report.json`.
 
@@ -56,12 +60,15 @@ Georeferenced projects emit:
 
 Non-georeferenced projects emit a truthful dimensionless rDSM with no invented CRS or metric units, plus provenance and mesh outputs when built. A native confidence product is included only when emitted by the selected estimator. Missing confidence is an explicit unavailable state, never a reason to synthesize or mislabel one.
 
+All raster products preserve source NoData/validity. Slope products use the complete local pixel-to-ground Jacobian and therefore remain truthful for rotated or sheared geospatial grids.
+
 Evidence: round-trip raster tests and complete project artifact manifest.
 
 ## Gate E — Unified production workflow
 
 - One project job executes ingest -> preprocess -> geometry prior -> estimator selection/refinement -> metric calibration -> geospatial export -> validation -> mesh assets -> desktop analysis.
 - Jobs are atomic and resumable.
+- Queue admission/history are bounded, duplicate active project submissions are rejected and running work supports cooperative cancellation with a durable terminal status.
 - Large imagery uses bounded-memory tiling, overlap blending and harmonization.
 - Source files are never overwritten.
 - Every stage records timing, warnings, config hash, selected estimator path, calibration evidence and product paths.
@@ -92,7 +99,7 @@ Evidence: interaction acceptance checklist and screenshots captured from real pr
 ## Gate G — Standalone deployment and stability
 
 - Tauri application launches the packaged local scientific sidecar securely.
-- Core processing works offline after model installation.
+- The packaged application contains the hash-verified pinned model and completes first reconstruction offline without a pre-populated model cache.
 - Loopback/session-token boundary is enforced.
 - Production app processes a fresh image, produces products, validates a reference and exports from a clean launch.
 - Frontend build, Rust build/clippy/tests and Python quality gates pass.

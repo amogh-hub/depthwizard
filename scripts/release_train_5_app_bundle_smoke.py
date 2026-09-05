@@ -18,6 +18,7 @@ SIDECAR_RESOURCE = Path("Contents/Resources/depthwizard-core-runtime/depthwizard
 RUNTIME_MANIFEST_RESOURCE = Path(
     "Contents/Resources/depthwizard-core-runtime/runtime-manifest.json"
 )
+MODEL_CHECKPOINT_RELATIVE = Path("models/da3mono-large/model.safetensors")
 # Real Apple Silicon packaged-core cold starts are currently ~41 s. This is a liveness watchdog,
 # not the RT7 startup-performance target; measured timing remains evidence rather than being hidden.
 APP_BOOT_ACCEPTANCE_TIMEOUT_SECONDS = 95.0
@@ -140,6 +141,21 @@ def _macos_bundle() -> tuple[Path, Path, Path, dict[str, object]]:
         raise TypeError("packaged runtime manifest is missing frozen self-check evidence")
     if self_check.get("status") != "PASS_PACKAGED_GEOSPATIAL_SELF_CHECK":
         raise RuntimeError("packaged runtime frozen geospatial self-check is not passing")
+    model_payload = runtime_manifest.get("model_payload")
+    if not isinstance(model_payload, dict) or model_payload.get("bundled") is not True:
+        raise RuntimeError("packaged runtime manifest does not declare a bundled DA3 model")
+    model_checkpoint = sidecar.parent / MODEL_CHECKPOINT_RELATIVE
+    if not model_checkpoint.is_file():
+        raise RuntimeError(f"packaged DA3 checkpoint is missing: {model_checkpoint}")
+    expected_model_sha = model_payload.get("checkpoint_sha256")
+    staged_model_sha = model_payload.get("packaged_checkpoint_sha256")
+    actual_model_sha = _sha256(model_checkpoint)
+    if (
+        not isinstance(expected_model_sha, str)
+        or staged_model_sha != expected_model_sha
+        or actual_model_sha != expected_model_sha
+    ):
+        raise RuntimeError("packaged DA3 checkpoint does not match its verified runtime identity")
     return bundle, executable, sidecar, runtime_manifest
 
 
@@ -188,7 +204,7 @@ def main() -> None:
                 "Tauri boot report did not prove a 256-bit per-process sidecar boot identity"
             )
         if payload.get("offlineCore") is not True:
-            raise RuntimeError("Tauri boot report did not enforce offline-after-install mode")
+            raise RuntimeError("Tauri boot report did not enforce packaged offline mode")
         if payload.get("strictPythonEgressGuard") is not True:
             raise RuntimeError("Tauri boot report did not enforce the strict Python egress guard")
         api_base = payload.get("apiBase")
@@ -234,7 +250,7 @@ def main() -> None:
         "session_token_exported": False,
         "sidecar_boot_identity_bound": True,
         "sidecar_boot_identity_bits": 256,
-        "offline_after_model_install": True,
+        "offline_first_model_payload_bundled_and_verified": True,
         "strict_python_egress_guard": True,
         "sidecar_terminated_with_app": True,
         "user_visible_terminal_required": False,
@@ -260,7 +276,7 @@ def main() -> None:
     print("Loopback scientific core readiness: PASS")
     print("256-bit child-process boot identity: PASS")
     print("256-bit session token exported to evidence: NO")
-    print("Offline-after-install mode: YES")
+    print("Packaged offline mode: YES")
     print("Strict Python non-loopback egress guard: YES")
     print("Sidecar terminated with desktop: PASS")
     print("User-visible terminal required by packaged app: NO")

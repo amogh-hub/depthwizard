@@ -16,7 +16,12 @@ from depthwizard.contracts import (
     ReliabilityDiagnostics,
 )
 from depthwizard.evaluation.metrics import compute_elevation_metrics, compute_slope_metrics
-from depthwizard.io.raster import ground_sample_distance_m, reproject_to_match, write_float_geotiff
+from depthwizard.io.raster import (
+    ground_pixel_jacobian_m,
+    ground_sample_distance_m,
+    reproject_to_match,
+    write_float_geotiff,
+)
 from depthwizard.pipeline.project import ProjectManifest
 from depthwizard.pipeline.stages import ProcessingStage
 from depthwizard.provenance.manifest import sha256_file
@@ -288,8 +293,12 @@ def validate_project_reference(request: ReferenceValidationRequest) -> Reference
         prediction_support = int(prediction_valid.sum())
         coverage = valid_pixels / max(prediction_support, 1)
         gsd = ground_sample_distance_m(prediction_path)
-        if gsd is None:
-            raise ValueError("metric validation requires a georeferenced prediction with physical GSD")
+        ground_jacobian = ground_pixel_jacobian_m(prediction_path)
+        if gsd is None or ground_jacobian is None:
+            raise ValueError(
+                "metric validation requires a georeferenced prediction with full local "
+                "ground-pixel geometry"
+            )
 
         elevation = compute_elevation_metrics(prediction, reference, valid_mask=valid)
         slope = compute_slope_metrics(
@@ -297,6 +306,7 @@ def validate_project_reference(request: ReferenceValidationRequest) -> Reference
             reference,
             gsd_x=gsd[0],
             gsd_y=gsd[1],
+            ground_jacobian_m=ground_jacobian,
             valid_mask=valid,
         )
         residual = np.full(prediction.shape, np.nan, dtype=np.float32)

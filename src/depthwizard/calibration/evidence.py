@@ -22,6 +22,9 @@ class EvidenceCalibrationOutput:
     anchor_correlation_after: float
     frequency_match_sigma_px: float
     anchor_stride_px: int
+    bias_sigma_px: float
+    anchor_spatial_coverage_fraction: float
+    metric_relief_span_m: float
 
 
 def build_anchor_weights(
@@ -171,9 +174,13 @@ def calibrate_relative_height_with_dem(
     dem_valid: np.ndarray | None = None,
     ground_probability: np.ndarray | None = None,
     uncertainty: np.ndarray | None = None,
-    low_frequency_sigma_px: float = 24.0,
+    low_frequency_sigma_px: float | None = None,
     min_anchors: int = 32,
-    min_abs_anchor_correlation: float = 0.05,
+    min_abs_anchor_correlation: float = 0.25,
+    max_anchor_rmse_m: float | None = 15.0,
+    max_normalized_rmse: float = 0.35,
+    min_metric_relief_span_m: float = 1.0,
+    min_anchor_spatial_coverage_fraction: float = 0.10,
     resolve_orientation: bool = True,
     target_gsd_m: float | None = None,
     dem_effective_gsd_m: float | None = None,
@@ -211,6 +218,18 @@ def calibrate_relative_height_with_dem(
         raise ValueError("min_abs_anchor_correlation must be in [0, 1]")
     if min_anchors < 2:
         raise ValueError("min_anchors must be >= 2")
+    if max_anchor_rmse_m is not None and (
+        not np.isfinite(max_anchor_rmse_m) or max_anchor_rmse_m <= 0
+    ):
+        raise ValueError("max_anchor_rmse_m must be finite and positive when supplied")
+    if not np.isfinite(max_normalized_rmse) or not 0 < max_normalized_rmse <= 1:
+        raise ValueError("max_normalized_rmse must be in (0, 1]")
+    if not np.isfinite(min_metric_relief_span_m) or min_metric_relief_span_m <= 0:
+        raise ValueError("min_metric_relief_span_m must be finite and positive")
+    if not 0 <= min_anchor_spatial_coverage_fraction <= 1:
+        raise ValueError("min_anchor_spatial_coverage_fraction must be in [0, 1]")
+    if low_frequency_sigma_px is not None and low_frequency_sigma_px < 0:
+        raise ValueError("low_frequency_sigma_px must be non-negative when supplied")
 
     valid = np.isfinite(rel) & np.isfinite(dem)
     if dem_valid is not None:
@@ -262,6 +281,17 @@ def calibrate_relative_height_with_dem(
             f"{anchor_count}; need at least {min_anchors}"
         )
 
+    anchor_rows, anchor_cols = np.nonzero(anchor_mask)
+    row_span = float(np.ptp(anchor_rows) / max(rel.shape[0] - 1, 1))
+    col_span = float(np.ptp(anchor_cols) / max(rel.shape[1] - 1, 1))
+    spatial_coverage = row_span * col_span
+    if spatial_coverage < min_anchor_spatial_coverage_fraction:
+        raise ValueError(
+            "DEM anchors are too spatially clustered for a scene-level metric claim "
+            f"(coverage={spatial_coverage:.3f} < "
+            f"{min_anchor_spatial_coverage_fraction:.3f})"
+        )
+
     anchor_weights = weights[anchor_mask]
     correlation_before = _weighted_correlation(
         calibration_rel[anchor_mask], dem[anchor_mask], anchor_weights
@@ -286,6 +316,40 @@ def calibrate_relative_height_with_dem(
         weights=anchor_weights,
         require_positive_scale=True,
     )
+    metric_relief_span = float(
+        np.percentile(dem[anchor_mask], 95.0) - np.percentile(dem[anchor_mask], 5.0)
+    )
+    if metric_relief_span < min_metric_relief_span_m:
+        raise ValueError(
+            "DEM anchors do not contain enough metric relief to determine monocular scale "
+            f"({metric_relief_span:.3f} m < {min_metric_relief_span_m:.3f} m)"
+        )
+    if not fit.converged:
+        raise ValueError("DEM calibration fit did not converge")
+    if max_anchor_rmse_m is not None and fit.rmse_anchor > max_anchor_rmse_m:
+        raise ValueError(
+            f"DEM anchor RMSE {fit.rmse_anchor:.3f} m exceeds the configured "
+            f"{max_anchor_rmse_m:.3f} m quality limit"
+        )
+    if fit.normalized_rmse is None or fit.normalized_rmse > max_normalized_rmse:
+        normalized = "undefined" if fit.normalized_rmse is None else f"{fit.normalized_rmse:.3f}"
+        raise ValueError(
+            "DEM normalized anchor RMSE is too high for defensible metric calibration "
+            f"({normalized}; limit={max_normalized_rmse:.3f})"
+        )
+    fit = fit.model_copy(
+        update={
+            "quality_passed": True,
+            "quality_notes": [
+                "fit_converged",
+                "anchor_correlation_passed",
+                "anchor_rmse_passed",
+                "normalized_rmse_passed",
+                "spatial_coverage_passed",
+                "metric_relief_passed",
+            ],
+        }
+    )
     globally_scaled = fit.scale * oriented_rel + fit.offset
     calibration_band_scaled = fit.scale * oriented_calibration_rel + fit.offset
 
@@ -294,14 +358,24 @@ def calibrate_relative_height_with_dem(
     raw_residual[anchor_mask] = dem[anchor_mask] - calibration_band_scaled[anchor_mask]
     residual_weight[anchor_mask] = weights[anchor_mask]
 
-    if low_frequency_sigma_px <= 0:
+    # If physical resolution is known, keep the correction inside the DEM's resolvable frequency
+    # band. Direct callers that omit both resolutions retain the conservative historical 24-pixel
+    # scale: falling back to one pixel would let a same-resolution DEM residual overwrite the very
+    # monocular structure this fusion stage is meant to preserve.
+    if low_frequency_sigma_px is not None:
+        bias_sigma_px = float(low_frequency_sigma_px)
+    elif target_gsd_m is None and dem_effective_gsd_m is None:
+        bias_sigma_px = 24.0
+    else:
+        bias_sigma_px = max(float(anchor_stride_px), float(frequency_match_sigma_px), 1.0)
+    if bias_sigma_px <= 0:
         smooth_bias = np.zeros(rel.shape, dtype=np.float64)
     else:
         numerator = scipy.ndimage.gaussian_filter(
-            raw_residual * residual_weight, sigma=low_frequency_sigma_px
+            raw_residual * residual_weight, sigma=bias_sigma_px
         )
         denominator = scipy.ndimage.gaussian_filter(
-            residual_weight, sigma=low_frequency_sigma_px
+            residual_weight, sigma=bias_sigma_px
         )
         smooth_bias = np.divide(
             numerator,
@@ -322,4 +396,7 @@ def calibrate_relative_height_with_dem(
         anchor_correlation_after=float(correlation_after),
         frequency_match_sigma_px=frequency_match_sigma_px,
         anchor_stride_px=anchor_stride_px,
+        bias_sigma_px=bias_sigma_px,
+        anchor_spatial_coverage_fraction=spatial_coverage,
+        metric_relief_span_m=metric_relief_span,
     )

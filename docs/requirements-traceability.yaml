@@ -22,7 +22,7 @@ requirements:
       - depthwizard.calibration.evidence
       - depthwizard.calibration.gcp
       - depthwizard.io.raster.write_float_geotiff
-    verification: "metric calibration + CRS/transform preserving GeoTIFF tests"
+    verification: "metric calibration + CRS/transform/NoData preserving GeoTIFF tests + explicit vertical-datum claim boundary"
     evidence: "dsm_export_test.json"
 
   - id: PS-BACKBONE-001
@@ -55,7 +55,7 @@ requirements:
       - depthwizard.io.raster.ground_sample_distance_m
       - depthwizard.calibration.evidence.calibrate_relative_height_with_dem
       - depthwizard.pipeline.runtime.ProductionElevationRuntime
-    verification: "coarse-DEM spatial-frequency/support test + geodesic-GSD contract + fail-closed missing-support test + calibration residual benchmark"
+    verification: "coarse-DEM spatial-frequency/support test + physical smoothing support + correlation/coverage/relief/RMSE gates + geodesic-GSD contract + calibration residual benchmark"
     evidence: "calibration_dem_report.json"
 
   - id: PS-CAL-GCP-001
@@ -65,7 +65,7 @@ requirements:
       - depthwizard.calibration.gcp_io.inspect_ground_control_point_file
       - depthwizard.pipeline.runtime.ProductionElevationRuntime
       - desktop GCP-only and DEM+GCP evidence workflows
-    verification: "world-coordinate GCP sampling, scale/offset recovery, CSV SHA identity, post-inspection mutation rejection and DEM+GCP fusion tests"
+    verification: "minimum-count/spatial-rank/convex-hull/leave-one-out gates + world-coordinate sampling + CSV SHA identity + post-inspection mutation rejection + DEM+GCP datum-offset-only relief-preservation test"
     evidence: "calibration_gcp_report.json"
 
   - id: PS-CAL-SEM-001
@@ -186,14 +186,14 @@ requirements:
       - Tauri desktop application
       - packaged loopback Python scientific sidecar with per-session authentication
       - independent 256-bit boot nonce proving the expected child process before runtime acceptance
-      - offline-after-model-install operation and owned lifecycle
-    verification: "identity-bound packaged boot + lifecycle/process/validate/mesh/export acceptance + final clean-machine test"
+      - bundled hash-verified DA3 snapshot, offline-first operation and owned lifecycle
+    verification: "pre-load and staged-checkpoint SHA validation + identity-bound packaged boot + first-reconstruction-offline lifecycle/process/validate/mesh/export acceptance + final clean-machine test"
     evidence: "standalone_acceptance_report.md"
 
   - id: PS-STABILITY-001
     clause: "Software stability"
     implementation:
-      - typed contracts, bounded tiling, fail-closed errors, provenance and immutable project manifests
+      - typed contracts, bounded tiling/queue/history, cooperative cancellation, fail-closed errors, provenance and immutable project manifests
       - authenticated standalone runtime recovery path
       - CI/unit/integration test suite
     verification: "2-hour scripted soak test + malformed raster/error-recovery suite"

@@ -32,7 +32,7 @@ The directory is generated, ignored by Git, and bundled by Tauri into:
 
 `Contents/Resources/depthwizard-core-runtime/`
 
-PyInstaller symbolic links are preserved when the runtime tree is staged. The build report records a deterministic tree SHA-256, regular-file count, symlink count, logical bytes, executable SHA-256 and the target triple.
+PyInstaller symbolic links are preserved when the runtime tree is staged. The build resolves the exact pinned DA3 snapshot, verifies `model.safetensors` against the canonical SHA-256, copies that snapshot into `models/da3mono-large/`, and verifies the staged checkpoint again. The build report records a deterministic tree SHA-256, regular-file count, symlink count, logical bytes, executable SHA-256, model identity and target triple without leaking build-host cache paths.
 
 ## Build-time frozen-runtime qualification
 
@@ -56,7 +56,7 @@ When `DEPTHWIZARD_STARTUP_TRACE=<path>` is explicitly set for acceptance or diag
 
 The qualified Apple Silicon runtime has demonstrated a cold packaged-core readiness time of roughly 41 seconds. Tauri therefore uses a 90-second liveness watchdog. This watchdog is a correctness bound, not a performance claim; finale-Mac FPS and responsiveness qualification remains RT7 evidence.
 
-## Offline-after-install contract
+## Offline-first model contract
 
 Packaged launches set:
 
@@ -67,7 +67,7 @@ Packaged launches set:
 
 When `DEPTHWIZARD_OFFLINE_CORE=1`, the sidecar also installs a process-wide Python INET connection guard. IPv4/IPv6 connections are permitted only to explicit loopback destinations (`127.0.0.0/8`, `::1`, or `localhost`). Other hostnames are not DNS-resolved and are rejected before connection. This is an application-layer egress barrier in addition to the Hugging Face/Transformers offline flags; it is not presented as an operating-system firewall.
 
-The final core uses model assets already installed/cached on the machine. It must not silently download model weights during an offline judging run. The consolidated RT5 acceptance proves that real DA3 reconstruction succeeds while this packaged offline policy is active.
+The final bundle carries the exact verified model snapshot as an application resource. Rust refuses to launch a package whose checkpoint resource is missing, and the Python adapter hashes the checkpoint again before model construction. The installed application therefore does not depend on a pre-populated Hugging Face cache and must not download model weights during an offline judging run. Exact-head packaged acceptance must still prove a real first reconstruction with caches absent and the offline policy active.
 
 ## Acceptance-only control hooks
 
@@ -90,7 +90,7 @@ Standalone source qualification has three resolver surfaces and all three must b
 
 `scripts/check_release_reproducibility.py --strict` is the source prerequisite gate. A passing lock audit proves only that dependency resolution is frozen; it does not replace the final clean-machine build/install/process test.
 
-When lockfiles are not yet committed, CI contains a temporary lock-bootstrap job that resolves and uploads the three lock candidates for review. The generated files must be committed only after the exact-head test/build matrix passes with them, after which ordinary CI should consume the locks (`npm ci`, locked Cargo, locked Python resolution) rather than continuously resolving new graphs.
+CI treats every committed lock as immutable: `uv lock --check`, `uv sync --frozen`, `npm ci`, and locked Cargo metadata/builds fail instead of rewriting resolver state. Lock refresh is an explicit reviewed maintenance operation, never an implicit CI bootstrap.
 
 ## RT5 acceptance
 
