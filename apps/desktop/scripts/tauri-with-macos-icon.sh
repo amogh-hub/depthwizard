@@ -79,6 +79,18 @@ fi
 # alternate config-file directory affecting relative asset paths.
 BUNDLE_OVERRIDE='{"bundle":{"icon":["icons/32x32.png","icons/128x128.png","icons/128x128@2x.png","icons/icon.icns","icons/icon.ico"]}}'
 
+# A local macOS package still needs a complete bundle resource seal even when the
+# workstation has no Developer ID certificate. Tauri honours APPLE_SIGNING_IDENTITY,
+# so default to ad-hoc signing while preserving an explicitly configured release
+# identity. Run the DMG helper in its deterministic non-Finder CI mode by default;
+# developers can opt back into Finder cosmetics by exporting
+# TAURI_BUNDLER_DMG_IGNORE_CI=true before invoking this wrapper.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
+  export CI="${CI:-true}"
+  echo "DepthWizard: macOS bundle signing identity is configured and DMG assembly is non-interactive."
+fi
+
 echo "DepthWizard: generated and validated the complete bundle icon set from the canonical app mark."
 echo "DepthWizard: raw Cargo uses tracked icons/icon.png; Tauri packaging uses the temporary Retina/ICNS override."
 

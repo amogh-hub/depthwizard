@@ -48,6 +48,9 @@ describe("DepthWizard product identity chrome", () => {
     expect(wrapper).toContain('"icon.ico"');
     expect(wrapper).toContain("BUNDLE_OVERRIDE=");
     expect(wrapper).toContain('build --config "$BUNDLE_OVERRIDE"');
+    expect(wrapper).toContain('APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"');
+    expect(wrapper).toContain('CI="${CI:-true}"');
+    expect(wrapper).toContain("TAURI_BUNDLER_DMG_IGNORE_CI=true");
     expect(wrapper).toContain("raw Cargo uses tracked icons/icon.png");
   });
 });
