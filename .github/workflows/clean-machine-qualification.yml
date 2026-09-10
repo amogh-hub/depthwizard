@@ -90,7 +90,7 @@ jobs:
           snapshot = Path(snapshot_download(
               repo_id="depth-anything/DA3MONO-LARGE",
               revision=revision,
-              allow_patterns=["config.json", "model.safetensors"],
+              allow_patterns=[".gitattributes", "README.md", "config.json", "model.safetensors"],
           ))
           checkpoint = snapshot / "model.safetensors"
           digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
