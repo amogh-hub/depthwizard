@@ -1,0 +1,181 @@
+name: clean-machine-qualification-eb4aca3
+
+on:
+  push:
+    branches: [qualification/clean-machine-eb4aca3]
+    paths:
+      - .github/workflows/clean-machine-qualification.yml
+      - qualification/clean_machine_acceptance.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: clean-machine-eb4aca3
+  cancel-in-progress: false
+
+jobs:
+  exact-release-on-fresh-macos:
+    name: exact eb4aca3 on fresh macOS M1
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      TARGET_SHA: eb4aca36b05745931b7ea4dd4797569e176d98f9
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+      HF_HOME: artifacts/hf-cache
+      UV_CACHE_DIR: artifacts/uv-cache
+      PIP_NO_CACHE_DIR: "1"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout qualification harness
+        uses: actions/checkout@v4
+        with:
+          path: qualifier
+
+      - name: Checkout exact frozen release
+        uses: actions/checkout@v4
+        with:
+          ref: eb4aca36b05745931b7ea4dd4797569e176d98f9
+          fetch-depth: 0
+          path: qualified
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Prove fresh ARM64 runner and exact checkout
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git status --porcelain)"
+          sw_vers
+          sysctl -n machdep.cpu.brand_string
+          df -h .
+
+      - name: Install exact locked scientific environment
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
+          .venv/bin/python -c "from depthwizard.geometry_prior.da3_runtime_contract import verify_da3_runtime_dependencies; print('DA3 dependencies:', len(verify_da3_runtime_dependencies()))"
+          git diff --exit-code -- uv.lock
+
+      - name: Cache and verify the exact DA3 model snapshot
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from huggingface_hub import snapshot_download
+
+          revision = "f465978e618db8cc79c83b8bbf24964857db1875"
+          expected = "7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960"
+          snapshot = Path(snapshot_download(
+              repo_id="depth-anything/DA3MONO-LARGE",
+              revision=revision,
+              allow_patterns=["config.json", "model.safetensors"],
+          ))
+          checkpoint = snapshot / "model.safetensors"
+          digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+          if digest != expected:
+              raise SystemExit(f"DA3 checkpoint mismatch: {digest}")
+          print(f"Verified DA3 checkpoint: {digest}")
+          PY
+
+      - name: Pin and validate official DA3 source
+        working-directory: qualified
+        run: bash scripts/setup_da3_macos.sh
+
+      - name: Verify release source and resolver contracts
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m scripts.check_release_reproducibility --strict
+          .venv/bin/python scripts/verify.py
+          test -z "$(git status --porcelain)"
+
+      - name: Build and qualify self-contained scientific sidecar
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m scripts.build_standalone_sidecar
+          .venv/bin/python -m scripts.release_train_5_sidecar_smoke
+          rm -rf artifacts/standalone/pyinstaller
+          rm -rf artifacts/hf-cache
+          rm -rf artifacts/uv-cache
+          df -h .
+
+      - name: Build standalone macOS application bundle
+        working-directory: qualified/apps/desktop
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm test
+          npm run tauri -- build --bundles app
+          df -h .
+
+      - name: Reclaim duplicated bundle intermediates
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          rm -rf apps/desktop/src-tauri/resources/depthwizard-core-runtime
+          rm -rf apps/desktop/src-tauri/target/release/depthwizard-core-runtime
+          rm -rf apps/desktop/src-tauri/target/release/build
+          rm -rf apps/desktop/src-tauri/target/release/deps
+          df -h .
+
+      - name: Run packaged lifecycle and offline reconstruction
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m scripts.release_train_5_app_bundle_smoke
+          .venv/bin/python -m scripts.release_train_5_full_acceptance
+
+      - name: Relaunch, reopen, and compile fail-closed evidence
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          .venv/bin/python ../qualifier/qualification/clean_machine_acceptance.py \
+            --root . \
+            --output ../qualifier/evidence/clean-machine-eb4aca3/clean-machine-standalone.json \
+            --reopen-report ../qualifier/evidence/clean-machine-eb4aca3/relaunch-reopen.json
+          cp artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json \
+            ../qualifier/evidence/clean-machine-eb4aca3/release-train-5-full-acceptance.json
+          cp artifacts/acceptance/release-train-5-standalone/release-train-5-app-bundle-acceptance.json \
+            ../qualifier/evidence/clean-machine-eb4aca3/release-train-5-app-bundle-acceptance.json
+          cp artifacts/acceptance/release-train-5-sidecar/release-train-5-sidecar-acceptance.json \
+            ../qualifier/evidence/clean-machine-eb4aca3/release-train-5-sidecar-acceptance.json
+
+      - name: Upload immutable clean-machine evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-machine-eb4aca3
+          path: qualifier/evidence/clean-machine-eb4aca3
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish evidence to qualification branch
+        working-directory: qualifier
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add evidence/clean-machine-eb4aca3
+          git commit -m "Record clean-machine evidence for eb4aca3"
+          git push origin HEAD:qualification/clean-machine-eb4aca3
