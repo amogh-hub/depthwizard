@@ -1,0 +1,49 @@
+{
+  "application_sha256": "3ecde61aabc13d46f9c9e4da3bc41724e16aa44bd5cca419f20134a47f5ac63c",
+  "bundled_model_payload_verified": true,
+  "end_to_end_reconstruction": true,
+  "evidence": [
+    {
+      "name": "RT5 full packaged acceptance",
+      "sha256": "7b1027def055ebb0b55fb989247975cd906d513cbd24856d083f4f8cd4b6addf"
+    },
+    {
+      "name": "real Tauri lifecycle",
+      "sha256": "ee4518076dd77a434a5bc609cff6dcc6f1369212b8e41372dc7ac21382a4aa1b"
+    },
+    {
+      "name": "packaged sidecar security",
+      "sha256": "ef25f59da55001d5fe69aeb4b68e2692c196be504a651d5d3892736dbb3a0712"
+    },
+    {
+      "name": "relaunch/reopen",
+      "sha256": "e46ae58442317065336b430e4d0b62a7a82bfc515d1c49f734a4e8e2e9114474"
+    },
+    {
+      "name": "GitHub Actions run",
+      "url": "https://github.com/amogh-hub/depthwizard/actions/runs/34510001418"
+    }
+  ],
+  "export_and_reopen": true,
+  "git_head": "eb4aca36b05745931b7ea4dd4797569e176d98f9",
+  "metric_calibration": true,
+  "no_user_visible_terminal": true,
+  "offline_first_reconstruction": true,
+  "owned_sidecar_boot": true,
+  "packaged_app_launch": true,
+  "qualification_boundary": "Fresh GitHub-hosted macos-15 ARM64 VM. It built exact release eb4aca3, ran packaged offline DA3 process-to-DSM, validation, mesh, and export, then relaunched the same app and reopened the project, validation, metric GLB, previews, and export.",
+  "runner": {
+    "image": "macos15",
+    "image_version": "20260829.0321.1",
+    "machine": "arm64",
+    "platform": "macOS-15.7.9-arm64-arm-64bit",
+    "provider": "GitHub-hosted fresh virtual machine",
+    "run_attempt": "1",
+    "run_url": "https://github.com/amogh-hub/depthwizard/actions/runs/34510001418",
+    "runner_arch": "ARM64",
+    "runner_name": "GitHub Actions 1000003582"
+  },
+  "schema_version": 1,
+  "status": "PASS_CLEAN_MACHINE_STANDALONE",
+  "terrain_3d": true
+}

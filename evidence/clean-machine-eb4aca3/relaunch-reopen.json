@@ -1,0 +1,35 @@
+{
+  "application_sha256": "3ecde61aabc13d46f9c9e4da3bc41724e16aa44bd5cca419f20134a47f5ac63c",
+  "boot": {
+    "build_git_sha": "eb4aca36b05745931b7ea4dd4797569e176d98f9",
+    "offline_core": true,
+    "status": "PASS_TAURI_SIDECAR_BOOT",
+    "strict_egress_guard": true
+  },
+  "elapsed_seconds": 3.73,
+  "git_head": "eb4aca36b05745931b7ea4dd4797569e176d98f9",
+  "lifecycle": {
+    "app_exit_code": 0,
+    "sidecar_terminated_with_app": true
+  },
+  "project": {
+    "export_bytes": 19267906,
+    "export_sha256": "646d1e1523343d3ff5490a5b4cc2c3ea642a9271bc29ec0778cfb51751e48fad",
+    "mesh_lod_0_bytes": 5047868,
+    "mesh_lod_0_sha256": "e8d323e0f802f3c2481037efd1876bcb7c1df42f9b4fa633e3778daf588eeeba",
+    "mesh_lod_count": 3,
+    "metric_validation": {
+      "mae_m": 2.1452398714461904,
+      "pearson_r": 0.8764521739611308,
+      "rmse_m": 3.5492071409677477
+    },
+    "preview_png_bytes": {
+      "dsm": 47519,
+      "optical": 133674
+    },
+    "project_id": "5e06f744617349d8babac3290a36c642",
+    "status": "complete"
+  },
+  "schema_version": 1,
+  "status": "PASS_CLEAN_MACHINE_RELAUNCH_REOPEN"
+}
