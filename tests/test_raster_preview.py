@@ -85,3 +85,25 @@ def test_project_preview_rejects_missing_scientific_layer(tmp_path: Path) -> Non
 
     with pytest.raises(FileNotFoundError, match="residual"):
         render_project_layer_preview(project, "residual")
+
+
+def test_hillshade_preview_rejects_all_nodata_surface(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    project = tmp_path / "project"
+    dsm = project / "products" / "dsm.tif"
+    _write_rgb(source)
+    _write_scalar(dsm)
+    with rasterio.open(dsm, "r+") as dataset:
+        dataset.write(np.full((64, 64), -9999.0, dtype=np.float32), 1)
+
+    manifest = ProjectManifest.create_or_load(project, source)
+    manifest.register_artifact(
+        "dsm",
+        dsm,
+        semantics="absolute_digital_surface_model",
+        units="m",
+        sha256=sha256_file(dsm),
+    )
+
+    with pytest.raises(ValueError, match="no valid surface pixels"):
+        render_project_layer_preview(project, "hillshade", max_side=256)

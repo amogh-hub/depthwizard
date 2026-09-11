@@ -158,6 +158,8 @@ def _hillshade_rgb(path: Path, *, max_side: int, relative_surface: bool = False)
     values, valid = _read_scalar_values(path, max_side=max_side)
     if values.shape[0] < 2 or values.shape[1] < 2:
         raise ValueError("hillshade preview requires at least a 2x2 surface")
+    if not np.any(valid):
+        raise ValueError("hillshade preview contains no valid surface pixels")
     fill_value = float(np.nanmedian(values[valid]))
     fill = np.where(valid, values, fill_value).astype(np.float64)
     if relative_surface:
