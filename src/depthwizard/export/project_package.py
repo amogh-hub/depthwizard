@@ -206,7 +206,10 @@ def build_project_export(request: ProjectExportRequest) -> ProjectExportReport:
         members=members,
     )
     export_manifest_text = json.dumps(export_manifest, indent=2, sort_keys=True) + "\n"
-    export_manifest_path.write_text(export_manifest_text, encoding="utf-8")
+    # ``Path.write_text`` uses the platform newline policy. Writing the canonical UTF-8 bytes
+    # directly keeps the on-disk manifest identical to the ZIP member on Windows, macOS and Linux.
+    export_manifest_bytes = export_manifest_text.encode("utf-8")
+    export_manifest_path.write_bytes(export_manifest_bytes)
 
     temporary = bundle_path.with_suffix(".zip.tmp")
     with zipfile.ZipFile(
@@ -216,7 +219,7 @@ def build_project_export(request: ProjectExportRequest) -> ProjectExportReport:
         compresslevel=6,
         allowZip64=True,
     ) as archive:
-        archive.writestr(_zip_info("export-manifest.json"), export_manifest_text.encode("utf-8"))
+        archive.writestr(_zip_info("export-manifest.json"), export_manifest_bytes)
         archive.writestr(_zip_info("project-manifest.json"), manifest_path.read_bytes())
         for member in members:
             _write_member(archive, member)

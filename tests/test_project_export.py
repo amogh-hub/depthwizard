@@ -132,6 +132,8 @@ def test_project_export_is_deterministic_and_hash_audited(tmp_path: Path) -> Non
         export_manifest = json.loads(archive.read("export-manifest.json"))
         assert export_manifest["project_id"] == first.project_id
         assert export_manifest["scientific_boundary"].startswith("Export packaging copies")
+        assert archive.read("export-manifest.json") == first.export_manifest_path.read_bytes()
+        assert b"\r\n" not in first.export_manifest_path.read_bytes()
 
     assert load_project_export(project_dir).bundle_sha256 == first.bundle_sha256
 
