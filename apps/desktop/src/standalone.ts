@@ -8,6 +8,7 @@ export type StandaloneRuntimeConfig = {
   sessionToken: string;
   sidecarPid: number;
   offlineCore: boolean;
+  buildGitSha: string;
 };
 
 function isTauriRuntime(): boolean {
@@ -31,6 +32,9 @@ function validateRuntimeConfig(config: StandaloneRuntimeConfig): StandaloneRunti
   }
   if (!config.offlineCore) {
     throw new Error("DepthWizard packaged core must run in offline-after-install mode.");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(config.buildGitSha)) {
+    throw new Error("DepthWizard standalone shell returned an invalid source commit identity.");
   }
   return config;
 }
@@ -85,11 +89,16 @@ export async function bootstrapStandaloneRuntime(): Promise<StandaloneRuntimeCon
     await invoke<StandaloneRuntimeConfig>("runtime_config"),
   );
   const runtimeWindow = window as typeof window & {
-    __DEPTHWIZARD_RUNTIME__?: { apiBase?: string; sessionToken?: string };
+    __DEPTHWIZARD_RUNTIME__?: {
+      apiBase?: string;
+      sessionToken?: string;
+      buildGitSha?: string;
+    };
   };
   runtimeWindow.__DEPTHWIZARD_RUNTIME__ = {
     apiBase: config.apiBase,
     sessionToken: config.sessionToken,
+    buildGitSha: config.buildGitSha,
   };
   await assertWorkstationApiContract(config);
   return config;

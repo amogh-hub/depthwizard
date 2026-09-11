@@ -7,7 +7,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
@@ -61,11 +61,34 @@ class ProjectJobState(BaseModel):
     submitted_at_utc: str
     updated_at_utc: str
     error: str | None = None
+    failure_kind: Literal["resource_exhausted", "processing_error"] | None = None
     cancellation_requested: bool = False
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _actionable_job_failure(exc: Exception) -> tuple[str, str]:
+    message = str(exc).strip() or type(exc).__name__
+    lowered = message.casefold()
+    memory_markers = (
+        "out of memory",
+        "cannot allocate memory",
+        "memory allocation",
+        "mps backend out of memory",
+        "cuda error: out of memory",
+    )
+    if isinstance(exc, MemoryError) or any(marker in lowered for marker in memory_markers):
+        return (
+            "resource_exhausted",
+            (
+                "Insufficient memory for this reconstruction. Close other large applications, "
+                "reduce the inference tile size, or process a smaller crop; the source file was "
+                "not modified."
+            ),
+        )
+    return "processing_error", message
 
 
 def _session_guard(x_depthwizard_token: Annotated[str | None, Header()] = None) -> None:
@@ -189,7 +212,13 @@ def _run_project_job(job_id: str, request: ProcessingRequest) -> None:
         # stage-specific failure in the durable manifest; the worker must additionally convert any
         # ordinary unhandled exception into a terminal job state instead of leaving the UI polling
         # a job that can never complete. BaseException subclasses are deliberately not intercepted.
-        _set_job(job_id, status=ProjectRunStatus.FAILED, error=str(exc))
+        failure_kind, error = _actionable_job_failure(exc)
+        _set_job(
+            job_id,
+            status=ProjectRunStatus.FAILED,
+            error=error,
+            failure_kind=failure_kind,
+        )
         return
     _set_job(job_id, status=result.status, error=None)
 
@@ -333,7 +362,9 @@ def project_manifest(project_dir: Path) -> dict[str, object]:
     try:
         manifest = ProjectManifest.load(project_dir)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"unable to read project manifest: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"unable to read project manifest: {exc}"
+        ) from exc
     # Reading the persisted JSON rather than re-serializing the dataclass guarantees the desktop
     # sees the exact durable state that would survive a sidecar restart.
     payload = json.loads(manifest.path.read_text(encoding="utf-8"))
@@ -375,7 +406,9 @@ def validation_report(project_dir: Path) -> ReferenceValidationReport:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return ReferenceValidationReport.model_validate(payload)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"unable to read validation metrics: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"unable to read validation metrics: {exc}"
+        ) from exc
 
 
 @app.post(
@@ -565,7 +598,9 @@ def project_preview(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"unable to render project layer: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"unable to render project layer: {exc}"
+        ) from exc
     return Response(
         content=payload,
         media_type="image/png",
@@ -595,4 +630,6 @@ def project_preview_legend(project_dir: Path, layer: str) -> dict[str, object]:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"unable to derive project layer legend: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"unable to derive project layer legend: {exc}"
+        ) from exc

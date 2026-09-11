@@ -7,6 +7,13 @@
 **Theme:** Disaster Management  
 **Engineering mode:** final system from day one; no MVP/prototype/demo-only architecture.
 
+**Production truth boundary (10 Sep 2026):** calibrated DA3MONO-LARGE is the selected production
+estimator. Learned remote-sensing refiners and native uncertainty heads remain research components
+unless independently promoted. A capability described below as a target or research contract is not
+an implemented production claim. Exact release status is governed by
+`docs/elite-finalization-status.md` and the exact-candidate evidence stored on the matching
+`qualification/evidence-<candidate-SHA>` branch under `evidence/submission/`.
+
 ## 1. Mission
 
 Build a unified standalone software suite that converts a single RGB remote-sensing image into a high-fidelity elevation product and an interactive analytical 3D environment. Non-georeferenced PNG/JPG imagery produces an rDSM. Georeferenced GeoTIFF imagery with defensible calibration evidence produces a metric DSM while preserving geospatial integrity; it is called datum-resolved absolute elevation only when the vertical CRS/datum and orthometric, ellipsoidal, or declared-local reference are explicit. Every official requirement is mapped to implementation and verification evidence.
@@ -43,20 +50,17 @@ Primary foundation prior: **Depth Anything 3 Monocular Large (DA3MONO-LARGE)**. 
 
 Required baselines include Depth Anything V2 and Metric3D v2 where technically reproducible. The baseline harness must run each method on identical tiles/splits and record runtime, memory, RMSE, MAE and correlation.
 
-### 3.3 Remote-sensing height network
+### 3.3 Production estimator and learned-research boundary
 
-The final estimator is a dual-evidence model with these permanent branches:
+The production estimator is the pinned DA3MONO-LARGE relative geometry prior followed by
+geospatially truthful tiling and evidence calibration. It may consume a native confidence field only
+when the model actually emits one. The current production path does not fabricate pixel uncertainty,
+semantic classes, normals or metric height directly from RGB.
 
-- **Foundation geometry branch:** relative depth/geometry prior from the pretrained monocular model.
-- **Remote-sensing appearance branch:** multi-scale RGB feature encoder optimized for overhead imagery, texture, shadows, roof/terrain morphology and vegetation patterns.
-- **Metadata/context embedding:** GSD and available acquisition/geospatial metadata encoded as conditioning features; missing metadata is represented explicitly rather than guessed.
-- **Cross-scale fusion:** bidirectional attention/gated fusion between geometry and remote-sensing appearance at multiple resolutions.
-- **Semantic-structure auxiliary head:** predicts ground/building/vegetation/water/other structure probabilities when supervision exists; masked multi-task learning permits datasets without every label.
-- **Height-distribution head:** combines continuous regression with height-range classification/ordinal structure to reduce long-tail underestimation of rare tall objects.
-- **Boundary/normal head:** preserves roof edges, ridgelines, cliffs and surface gradients.
-- **Uncertainty head:** predicts pixelwise aleatoric uncertainty used both in user-facing confidence and metric calibration weighting.
-
-The network outputs a remote-sensing relative surface-height field, semantic probabilities, surface-gradient/normal cues and uncertainty. Absolute geodetic elevation is produced only by the metric-evidence calibration subsystem.
+The repository contains research adapters and training code for remote-sensing appearance,
+geometry/GSD fusion, structural targets and uncertainty-aware refinement. Those components do not
+replace calibrated DA3 unless a frozen, geographically disjoint, same-input evaluation passes the
+promotion policy. A failed or missing promotion remains visible in provenance.
 
 ### 3.4 Evidence-calibrated metric elevation
 
@@ -65,7 +69,9 @@ For georeferenced imagery, relative height is transformed into an absolute DSM u
 1. Reproject/co-register SRTM or another low-resolution DEM to the image footprint when supplied.
 2. Infer ground-confidence regions from semantic and structural evidence.
 3. Build reliable DEM anchors preferentially from ground/low-structure cells to avoid double-counting buildings/canopy.
-4. Require at least four spatially distributed, non-collinear GCP elevation anchors when supplied; validate convex-hull coverage and leave-one-out error.
+4. Require six spatially distributed, non-collinear GCP elevation anchors by default; validate
+   convex-hull coverage and leave-one-out error. Explicit four/five-point expert overrides remain
+   low-confidence evidence.
 5. Fit a robust positive global scale and vertical offset using confidence-weighted Huber/IRLS estimation.
 6. Fit only a smooth low-frequency terrain bias field whose default support is derived from physical DEM/GSD support rather than a fixed image-pixel radius; high-frequency object structure remains controlled by the image-derived height network.
 7. Reject/downweight anchors with high residual, low semantic-ground probability, NoData, severe slope mismatch or high model uncertainty.
@@ -97,9 +103,9 @@ Large rasters are processed window-by-window with overlap. Required controls:
 - resumable job manifest so an interrupted long scene does not restart from zero;
 - global metadata/provenance retained after mosaicking.
 
-### 3.7 Training losses
+### 3.7 Learned-refiner research losses
 
-Final objective is a weighted multi-task loss containing:
+The research objective may be a weighted multi-task loss containing:
 
 - robust height regression loss (Huber/Smooth-L1);
 - scale/shift-aware relative-geometry loss for structural consistency;
@@ -111,11 +117,13 @@ Final objective is a weighted multi-task loss containing:
 - overlap/seam consistency loss for tiled scenes;
 - metric-anchor consistency loss on georeferenced supervised samples.
 
-Loss weights are selected using a predeclared validation objective dominated by the official SIH metrics, not by visual preference.
+Any production promotion requires loss weights selected using a predeclared validation objective
+dominated by the official SIH metrics, not visual preference.
 
 ## 4. Data program
 
-Development must use geographically disjoint and sensor-diverse data. Planned dataset registry:
+Development and final evaluation use geographically disjoint and sensor-diverse registries. Candidate
+datasets include:
 
 - DFC2019 / WorldView-3 scenes with LiDAR/nDSM reference.
 - DFC2023 building-height/DSM data where licensing and access are confirmed.
@@ -123,7 +131,9 @@ Development must use geographically disjoint and sensor-diverse data. Planned da
 - GBH for multi-city/global building-height diversity.
 - PHDataset/PhiSat-2 for recent cross-continent optical-satellite generalization, treated as secondary supervision because its labels are compiled from multiple public sources.
 - Additional public RGB + LiDAR/DSM scenes only after license and georegistration quality checks.
-- Official ISRO reference repository monitored continuously; as of 25 Aug 2026 its public repository contains only a README and no released dataset files.
+- Official ISRO/GAMUS material only where files, labels and licensing are actually available and
+  applicable; availability must be recorded at qualification time rather than frozen as an outdated
+  statement in this specification.
 
 ### Split policy
 
@@ -246,7 +256,8 @@ Every stage writes a provenance record with input hashes, model checkpoint ID, c
 For a georeferenced project:
 
 - `dsm.tif` — float32 metric DSM preserving CRS/geotransform, NoData and explicit vertical-reference status.
-- `confidence.tif` — float32 confidence/uncertainty layer.
+- `confidence.tif` — float32 confidence layer only when the selected estimator emits a defined native
+  confidence quantity; otherwise the artifact is explicitly unavailable.
 - `slope.tif` — derived slope raster.
 - `residual.tif` — if reference is available.
 - `metrics.json` — official and diagnostic metrics.
@@ -258,7 +269,7 @@ For a georeferenced project:
 For non-georeferenced projects:
 
 - `rdsm.tif` or equivalent numeric raster with no false CRS.
-- confidence layer.
+- native confidence layer when available; otherwise an explicit unavailable state.
 - mesh/texture assets.
 - provenance and processing report.
 
@@ -354,7 +365,7 @@ UI quality is an official scoring axis, not post-processing polish. The permanen
 
 Every screen must pass the acceptance questions: professional scientific-software credibility, hierarchy understandable in ~3 seconds, only necessary controls visible, scientific data receives visual emphasis, and the result remains credible as an ISRO-grade workstation.
 
-## 17. Implementation ledger — 25 Aug 2026
+## 17. Implementation ledger — 10 Sep 2026
 
 The permanent repository has moved from specification into implementation. Current verified foundations:
 
@@ -377,5 +388,20 @@ The permanent repository has moved from specification into implementation. Curre
 - loopback-only local FastAPI core with optional session token and constrained CORS;
 - Tauri/React/Three.js application shell, design tokens, inspector, workflow status, camera controls and real GLB loader path;
 - Python CI/testing infrastructure and architecture-decision records.
+- six-GCP production default with explicit, persisted low-confidence classification for four/five-point
+  expert overrides;
+- conservative bounded source-quality diagnostics for saturation, texture, bright/low-chroma,
+  deep-shadow and metadata-declared off-nadir risk;
+- actionable resource-exhaustion failures, frontend vendor chunking, cross-platform geospatial CI and
+  deterministic CycloneDX/dependency-license inventory generation;
+- tag-triggered release automation that fails closed unless authoritative `main`, exact-commit
+  submission evidence, source/language verification, model identity and standalone packaging all
+  pass.
 
-The current Python suite passes all implemented unit/integration tests. Heavy-model runtime verification and final frontend/Tauri compilation are environment-dependent gates and must be completed on the designated development/finale machines before any deployment-performance claim is made.
+The release-candidate source, frontend and Rust checks have passed in CI, and an earlier exact
+candidate completed packaged offline reconstruction, clean-machine macOS ARM64 qualification,
+operator workflow, sustained rendering and two-hour soak. Source changes invalidate automatic
+inheritance of those exact-commit reports. Final publication still requires regenerated durable
+science/baseline/ablation/operator/performance/soak/clean-machine evidence for the final SHA, merge to
+protected `main`, a final tag and successful guarded GitHub Release. This ledger must not be used as a
+substitute for those artifacts.

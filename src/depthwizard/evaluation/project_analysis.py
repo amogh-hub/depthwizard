@@ -159,7 +159,9 @@ def _artifact_series(
 ) -> list[RasterSample]:
     payload = manifest.artifacts.get(name)
     if not payload:
-        return [RasterSample(available=False, semantics=f"unavailable_{name}_artifact") for _ in points]
+        return [
+            RasterSample(available=False, semantics=f"unavailable_{name}_artifact") for _ in points
+        ]
     raw_path = payload.get("path")
     if not isinstance(raw_path, str):
         raise TypeError(f"{name} artifact path is malformed in project manifest")
@@ -260,13 +262,15 @@ def _cumulative_map_distance_m(
 def _profile_distances(
     surface_path: Path,
     points: list[NormalizedPoint],
-) -> tuple[list[float], list[float | None]]:
+    analyst_scale_m_per_pixel: float | None,
+) -> tuple[
+    list[float],
+    list[float | None],
+    Literal["georeferenced_ground", "analyst_scale", "pixels_only"],
+]:
     metric_gsd = ground_sample_distance_m(surface_path)
     with rasterio.open(surface_path) as src:
-        pixels = [
-            _floating_pixel(point, width=src.width, height=src.height)
-            for point in points
-        ]
+        pixels = [_floating_pixel(point, width=src.width, height=src.height) for point in points]
         pixel_distance = [0.0]
         for (previous_col, previous_row), (col, row) in pairwise(pixels):
             pixel_distance.append(
@@ -274,7 +278,19 @@ def _profile_distances(
             )
 
         if src.transform.is_identity or metric_gsd is None:
-            return pixel_distance, [None for _ in points]
+            if analyst_scale_m_per_pixel is None:
+                return pixel_distance, [None for _ in points], "pixels_only"
+            return (
+                pixel_distance,
+                [distance * analyst_scale_m_per_pixel for distance in pixel_distance],
+                "analyst_scale",
+            )
+
+        if analyst_scale_m_per_pixel is not None:
+            raise ValueError(
+                "analyst horizontal scale is accepted only when trustworthy georeferenced ground "
+                "spacing is unavailable"
+            )
 
         map_coordinates: list[tuple[float, float]] = []
         for col, row in pixels:
@@ -282,16 +298,20 @@ def _profile_distances(
             map_coordinates.append((float(x), float(y)))
 
         if ortholoc_metric_affine_override_enabled():
-            return pixel_distance, _cumulative_map_distance_m(map_coordinates)
+            return (
+                pixel_distance,
+                _cumulative_map_distance_m(map_coordinates),
+                "georeferenced_ground",
+            )
 
         if src.crs is None:
-            return pixel_distance, [None for _ in points]
+            return pixel_distance, [None for _ in points], "pixels_only"
 
         geographic: list[tuple[float, float]] = []
         for x, y in map_coordinates:
             longitude, latitude = _safe_geographic_coordinates(src.crs, x, y)
             if longitude is None or latitude is None:
-                return pixel_distance, [None for _ in points]
+                return pixel_distance, [None for _ in points], "pixels_only"
             geographic.append((longitude, latitude))
 
     metric_distance: list[float | None] = [0.0]
@@ -299,13 +319,15 @@ def _profile_distances(
     for (lon0, lat0), (lon1, lat1) in pairwise(geographic):
         _, _, segment = _GEOD.inv(lon0, lat0, lon1, lat1)
         if not np.isfinite(segment):
-            return pixel_distance, [None for _ in points]
+            return pixel_distance, [None for _ in points], "pixels_only"
         cumulative += float(abs(segment))
         metric_distance.append(cumulative)
-    return pixel_distance, metric_distance
+    return pixel_distance, metric_distance, "georeferenced_ground"
 
 
-def _surface_statistics(samples: list[ProfileSample]) -> tuple[
+def _surface_statistics(
+    samples: list[ProfileSample],
+) -> tuple[
     float | None,
     float | None,
     float | None,
@@ -349,7 +371,11 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
         )
         for fraction in fractions
     ]
-    pixel_distances, metric_distances = _profile_distances(surface_path, points)
+    pixel_distances, metric_distances, distance_source = _profile_distances(
+        surface_path,
+        points,
+        request.horizontal_scale_m_per_pixel,
+    )
 
     surfaces = _artifact_series(manifest, surface_name, points)
     slopes = _artifact_series(manifest, "slope", points)
@@ -383,6 +409,10 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
         sample_count=len(samples),
         horizontal_distance_pixels=pixel_distances[-1],
         horizontal_distance_m=horizontal_distance_m,
+        horizontal_distance_source=distance_source,
+        analyst_horizontal_scale_m_per_pixel=(
+            request.horizontal_scale_m_per_pixel if distance_source == "analyst_scale" else None
+        ),
         vertical_delta=vertical_delta,
         vertical_units=samples[0].surface.units if samples else None,
         minimum_surface=minimum,
@@ -396,6 +426,8 @@ def sample_project_profile(request: ProjectProfileRequest) -> ProjectProfileResu
             "automatically a building-height classification. Standard georeferenced rasters use "
             "WGS84 geodesic ground distance so projected-coordinate distortion is not reported as "
             "physical length. Metric horizontal distance is omitted when the spatial contract is "
-            "not trustworthy; the explicit OrthoLoC local-metric affine contract remains separate."
+            "not trustworthy unless the analyst explicitly declares metres per pixel; an analyst "
+            "scale affects horizontal distance only and never changes relative vertical units. The "
+            "explicit OrthoLoC local-metric affine contract remains separate."
         ),
     )

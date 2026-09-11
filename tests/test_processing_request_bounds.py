@@ -44,3 +44,25 @@ def test_processing_request_accepts_supported_operational_bounds() -> None:
     )
     assert request.tile_size == 4096
     assert request.overlap == 1024
+
+
+def test_gcp_default_requires_six_but_explicit_expert_override_allows_four() -> None:
+    points = [
+        GroundControlPoint(x=float(index), y=float(index % 2), elevation_m=100.0 + index)
+        for index in range(4)
+    ]
+
+    with pytest.raises(ValidationError, match="at least 6 points"):
+        ProcessingRequest(
+            source=Path("scene.tif"),
+            output_dir=Path("project"),
+            gcps=points,
+        )
+
+    request = ProcessingRequest(
+        source=Path("scene.tif"),
+        output_dir=Path("project"),
+        gcps=points,
+        min_gcp_count=4,
+    )
+    assert request.min_gcp_count == 4

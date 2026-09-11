@@ -160,6 +160,13 @@ export function Inspector({
             <div className="dw-property"><dt>Ground GSD X</dt><dd>{metadata?.ground_sample_distance_x == null ? "—" : `${metadata.ground_sample_distance_x.toFixed(3)} m`}</dd></div>
             <div className="dw-property"><dt>Ground GSD Y</dt><dd>{metadata?.ground_sample_distance_y == null ? "—" : `${metadata.ground_sample_distance_y.toFixed(3)} m`}</dd></div>
             <div className="dw-property"><dt>Elevation mode</dt><dd>{elevationMode ?? "Not reconstructed"}</dd></div>
+            <div className="dw-property"><dt>Source quality</dt><dd>{metadata?.quality.status ?? "—"}</dd></div>
+            {metadata?.quality.flags.length ? (
+              <div className="dw-property"><dt>Quality flags</dt><dd>{metadata.quality.flags.join(" · ")}</dd></div>
+            ) : null}
+            {metadata?.quality.off_nadir_degrees != null && (
+              <div className="dw-property"><dt>Off-nadir angle</dt><dd>{metadata.quality.off_nadir_degrees.toFixed(1)}°</dd></div>
+            )}
             {modelId && <div className="dw-property"><dt>Geometry prior</dt><dd>{modelId}</dd></div>}
             {tileCount !== undefined && <div className="dw-property"><dt>Inference tiles</dt><dd>{tileCount}</dd></div>}
             {harmonizedTiles !== undefined && <div className="dw-property"><dt>Harmonized tiles</dt><dd>{harmonizedTiles}</dd></div>}

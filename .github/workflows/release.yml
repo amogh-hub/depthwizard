@@ -1,0 +1,175 @@
+name: depthwizard-release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: depthwizard-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualify-and-publish-macos:
+    name: qualify and publish macOS ARM64 release
+    runs-on: macos-15
+    timeout-minutes: 240
+    env:
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+      PIP_NO_CACHE_DIR: "1"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require the tag to identify authoritative main exactly
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          test -z "$(git status --porcelain)"
+
+      - name: Fetch the separately versioned exact-commit evidence pack
+        run: |
+          set -euo pipefail
+          EVIDENCE_REF="refs/heads/qualification/evidence-${GITHUB_SHA}"
+          EVIDENCE_ROOT="${RUNNER_TEMP}/depthwizard-qualification-evidence"
+          git fetch --no-tags origin "$EVIDENCE_REF"
+          EVIDENCE_COMMIT="$(git rev-parse FETCH_HEAD)"
+          mkdir -p "$EVIDENCE_ROOT"
+          git archive "$EVIDENCE_COMMIT" evidence/submission | tar -x -C "$EVIDENCE_ROOT"
+          printf 'DEPTHWIZARD_EVIDENCE_DIR=%s\n' \
+            "$EVIDENCE_ROOT/evidence/submission" >> "$GITHUB_ENV"
+          printf 'DEPTHWIZARD_QUALIFICATION_COMMIT=%s\n' \
+            "$EVIDENCE_COMMIT" >> "$GITHUB_ENV"
+          test -z "$(git status --porcelain)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Verify frozen source and all language gates
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
+          .venv/bin/python -m scripts.check_release_reproducibility --strict
+          .venv/bin/python scripts/verify.py
+          cd apps/desktop
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+          cd src-tauri
+          cargo fmt --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo test --locked --all-targets --all-features
+
+      - name: Require the exact-commit submission evidence pack
+        run: |
+          set -euo pipefail
+          EVIDENCE="$DEPTHWIZARD_EVIDENCE_DIR"
+          test -f "$EVIDENCE/release-train-5-full-acceptance.json"
+          test -f "$EVIDENCE/input-format-contract.json"
+          test -f "$EVIDENCE/domain_generalization_report.json"
+          test -f "$EVIDENCE/baseline-comparison.json"
+          test -f "$EVIDENCE/ablation-report.json"
+          test -f "$EVIDENCE/software_stability_report.json"
+          test -f "$EVIDENCE/operator-acceptance.json"
+          test -f "$EVIDENCE/rendering-performance.json"
+          test -f "$EVIDENCE/clean-machine-standalone.json"
+          .venv/bin/python -m scripts.check_sih26175_completion \
+            --strict \
+            --rt5 "$EVIDENCE/release-train-5-full-acceptance.json" \
+            --inputs "$EVIDENCE/input-format-contract.json" \
+            --science "$EVIDENCE/domain_generalization_report.json" \
+            --baselines "$EVIDENCE/baseline-comparison.json" \
+            --ablations "$EVIDENCE/ablation-report.json" \
+            --soak "$EVIDENCE/software_stability_report.json" \
+            --operator "$EVIDENCE/operator-acceptance.json" \
+            --performance "$EVIDENCE/rendering-performance.json" \
+            --clean-machine "$EVIDENCE/clean-machine-standalone.json" \
+            --output /tmp/depthwizard-problem-statement-completion.json
+
+      - name: Fetch and verify the pinned DA3 model payload
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from huggingface_hub import snapshot_download
+
+          revision = "f465978e618db8cc79c83b8bbf24964857db1875"
+          expected = "7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960"
+          snapshot = Path(snapshot_download(
+              repo_id="depth-anything/DA3MONO-LARGE",
+              revision=revision,
+              allow_patterns=[".gitattributes", "README.md", "config.json", "model.safetensors"],
+          ))
+          actual = hashlib.sha256((snapshot / "model.safetensors").read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"DA3 checkpoint mismatch: {actual}")
+          PY
+          bash scripts/setup_da3_macos.sh
+
+      - name: Build and qualify the standalone application
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m scripts.build_standalone_sidecar
+          .venv/bin/python -m scripts.release_train_5_sidecar_smoke
+          cd apps/desktop
+          npm run tauri -- build
+          cd ../..
+          .venv/bin/python -m scripts.release_train_5_app_bundle_smoke
+          .venv/bin/python -m scripts.release_train_5_full_acceptance
+
+      - name: Assemble release evidence, manifests and checksums
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="artifacts/release/${GITHUB_REF_NAME}"
+          mkdir -p "$RELEASE_DIR"
+          .venv/bin/python -m scripts.generate_supply_chain_reports --output-dir "$RELEASE_DIR/supply-chain"
+          cp model-manifests/da3mono-large.yaml "$RELEASE_DIR/"
+          cp /tmp/depthwizard-problem-statement-completion.json "$RELEASE_DIR/"
+          cp -R "$DEPTHWIZARD_EVIDENCE_DIR" "$RELEASE_DIR/evidence"
+          printf '%s\n' "$DEPTHWIZARD_QUALIFICATION_COMMIT" \
+            > "$RELEASE_DIR/evidence/QUALIFICATION_COMMIT"
+          find apps/desktop/src-tauri/target/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.zip' \) \
+            -exec cp {} "$RELEASE_DIR/" \;
+          test -n "$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          .venv/bin/python - "$RELEASE_DIR" <<'PY'
+          import hashlib
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          lines = []
+          for path in sorted(item for item in root.rglob("*") if item.is_file() and item.name != "SHA256SUMS"):
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              lines.append(f"{digest}  {path.relative_to(root)}")
+          (root / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          tar -czf "artifacts/release/${GITHUB_REF_NAME}-evidence-and-manifests.tar.gz" \
+            -C "$RELEASE_DIR" evidence supply-chain da3mono-large.yaml \
+            problem-statement-completion.json SHA256SUMS
+
+      - name: Publish checksum-verifiable GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/release/${{ github.ref_name }}/*.dmg
+            artifacts/release/${{ github.ref_name }}/SHA256SUMS
+            artifacts/release/${{ github.ref_name }}-evidence-and-manifests.tar.gz

@@ -13,6 +13,16 @@ export type RasterMetadata = {
   vertical_crs: string | null;
   vertical_datum: string | null;
   elevation_reference: "orthometric" | "ellipsoidal" | "local" | "unknown";
+  quality: {
+    status: "pass" | "warning" | "not_assessed";
+    flags: string[];
+    saturation_fraction: number | null;
+    deep_shadow_candidate_fraction: number | null;
+    bright_low_chroma_candidate_fraction: number | null;
+    texture_gradient_score: number | null;
+    off_nadir_degrees: number | null;
+    assessment_limitations: string[];
+  };
 };
 
 export type ProjectRunStatus =
@@ -79,6 +89,7 @@ export type ProjectJobState = {
   submitted_at_utc: string;
   updated_at_utc: string;
   error: string | null;
+  failure_kind: "resource_exhausted" | "processing_error" | null;
   cancellation_requested: boolean;
 };
 
@@ -260,6 +271,8 @@ export type ProjectProfileResult = {
   sample_count: number;
   horizontal_distance_pixels: number;
   horizontal_distance_m: number | null;
+  horizontal_distance_source: "georeferenced_ground" | "analyst_scale" | "pixels_only";
+  analyst_horizontal_scale_m_per_pixel: number | null;
   vertical_delta: number | null;
   vertical_units: string | null;
   minimum_surface: number | null;
@@ -354,6 +367,7 @@ export type ProjectLayerLegend = {
 type RuntimeConfig = {
   apiBase?: string;
   sessionToken?: string;
+  buildGitSha?: string;
 };
 
 declare global {
@@ -462,10 +476,17 @@ export function sampleProjectProfile(
   start: NormalizedPoint,
   end: NormalizedPoint,
   samples = 160,
+  horizontalScaleMPerPixel?: number,
 ): Promise<ProjectProfileResult> {
   return coreFetch<ProjectProfileResult>("/v1/projects/profile", {
     method: "POST",
-    body: JSON.stringify({ project_dir: projectDir, start, end, samples }),
+    body: JSON.stringify({
+      project_dir: projectDir,
+      start,
+      end,
+      samples,
+      horizontal_scale_m_per_pixel: horizontalScaleMPerPixel ?? null,
+    }),
   });
 }
 

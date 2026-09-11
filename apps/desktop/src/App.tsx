@@ -53,6 +53,7 @@ import {
   type TerrainOverlayState,
   type TerrainPerformance,
   type TerrainRenderState,
+  type TerrainScreenshot,
 } from "./workspace/TerrainViewport";
 import {
   lodPressureDelta,
@@ -178,6 +179,10 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
+function safeFileStem(value: string): string {
+  return value.replace(/\.[^.]+$/, "").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "project";
+}
+
 function readRecentProjects(): string[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(recentProjectStorageKey) ?? "[]") as unknown;
@@ -203,6 +208,7 @@ function reopenedJobState(manifest: ProjectManifest, projectDir: string): Projec
     submitted_at_utc: manifest.created_at_utc,
     updated_at_utc: manifest.updated_at_utc,
     error: manifest.status === "failed" ? manifest.errors.at(-1)?.message ?? "Project requires recovery" : null,
+    failure_kind: manifest.status === "failed" ? "processing_error" : null,
     cancellation_requested: manifest.status === "cancelled",
   };
 }
@@ -262,12 +268,19 @@ export function App() {
   const [terrainLegend, setTerrainLegend] = useState<ProjectLayerLegend | null>(null);
   const [autoFlythrough, setAutoFlythrough] = useState(false);
   const [cameraResetToken, setCameraResetToken] = useState(0);
+  const [terrainScreenshotRequest, setTerrainScreenshotRequest] = useState(0);
+  const [capturingTerrainScreenshot, setCapturingTerrainScreenshot] = useState(false);
+  const [relativeHorizontalScaleInput, setRelativeHorizontalScaleInput] = useState("");
   const [projectExport, setProjectExport] = useState<ProjectExportReport | null>(null);
   const [exporting, setExporting] = useState(false);
   const [rasterViewState, setRasterViewState] = useState<RasterViewState>(DEFAULT_RASTER_VIEW_STATE);
   const [recentProjects, setRecentProjects] = useState<string[]>(readRecentProjects);
   const lodPressureRef = useRef(0);
   const meshUrl: string | undefined = demoMode ? "/demo/terrain.glb" : projectMeshUrl ?? undefined;
+
+  useEffect(() => {
+    setRelativeHorizontalScaleInput("");
+  }, [metadata?.path]);
 
   const persistRecentProjects = (paths: string[]) => {
     setRecentProjects(paths);
@@ -362,6 +375,16 @@ export function App() {
           vertical_crs: null,
           vertical_datum: null,
           elevation_reference: "unknown",
+          quality: {
+            status: "not_assessed",
+            flags: [],
+            saturation_fraction: null,
+            deep_shadow_candidate_fraction: null,
+            bright_low_chroma_candidate_fraction: null,
+            texture_gradient_score: null,
+            off_nadir_degrees: null,
+            assessment_limitations: ["Legacy static demo metadata has no source-quality report"],
+          },
         });
         setActiveView("3D Terrain");
         const preferred = benchmark.results.find((item) => item.anchor_count === 64) ?? benchmark.results.at(-1);
@@ -715,6 +738,10 @@ export function App() {
   const projectName = useMemo(() => (
     demoMode ? "Joshimath absolute DSM" : metadata?.path ? fileName(metadata.path) : "Untitled reconstruction"
   ), [demoMode, metadata]);
+  const analystHorizontalScaleMPerPixel = (() => {
+    const value = Number(relativeHorizontalScaleInput);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  })();
 
   const loadExistingProject = async (selectedDir: string) => {
     setImportError(null);
@@ -1041,6 +1068,20 @@ export function App() {
     }
   };
 
+  const terrainScreenshotReady = (capture: TerrainScreenshot) => {
+    const buildGitSha = window.__DEPTHWIZARD_RUNTIME__?.buildGitSha ?? "development";
+    const url = URL.createObjectURL(capture.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `depthwizard-${safeFileStem(projectName)}-${buildGitSha}-terrain.png`;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    setCapturingTerrainScreenshot(false);
+  };
+
   const analyzePoint = async (point: NormalizedPoint) => {
     if (!projectDir || !geometryReady) return;
     setImportError(null);
@@ -1081,7 +1122,13 @@ export function App() {
     try {
       const [nextProbe, transect] = await Promise.all([
         probeProject(projectDir, point),
-        sampleProjectProfile(projectDir, lineStart, point, activeTool === "Profiles" ? 160 : 2),
+        sampleProjectProfile(
+          projectDir,
+          lineStart,
+          point,
+          activeTool === "Profiles" ? 160 : 2,
+          metadata?.crs ? undefined : analystHorizontalScaleMPerPixel,
+        ),
       ]);
       setProbe(nextProbe);
       if (activeTool === "Profiles") {
@@ -1400,6 +1447,17 @@ export function App() {
                 }}
               >Fit</button>
             )}
+            {activeView === "3D Terrain" && (
+              <button
+                className="dw-chip"
+                disabled={!rendererControlsReady || capturingTerrainScreenshot}
+                onClick={() => {
+                  setCapturingTerrainScreenshot(true);
+                  setTerrainScreenshotRequest((current) => current + 1);
+                }}
+                title="Export the rendered terrain with source-build and display-state provenance"
+              >{capturingTerrainScreenshot ? "Capturing…" : "Screenshot"}</button>
+            )}
             {activeView === "3D Terrain" && projectMesh && (
               <select
                 className="dw-compact-select"
@@ -1438,6 +1496,28 @@ export function App() {
               <span className="dw-render-metric" title="Measured WebGL renderer frame rate">
                 {terrainPerformance.fps.toFixed(0)} fps
               </span>
+            )}
+
+            {(activeTool === "Measure" || activeTool === "Profiles") && geometryReady && !metadata?.crs && (
+              <input
+                className="dw-compact-select dw-horizontal-scale-input"
+                type="number"
+                min="0.000001"
+                max="1000000"
+                step="any"
+                inputMode="decimal"
+                aria-label="Optional analyst horizontal scale in metres per pixel"
+                placeholder="m/px optional"
+                value={relativeHorizontalScaleInput}
+                onChange={(event) => {
+                  setRelativeHorizontalScaleInput(event.target.value);
+                  setMeasurement(null);
+                  setProfile(null);
+                  setLineStart(null);
+                  setLineEnd(null);
+                }}
+                title="Optional analyst-declared horizontal scale. Vertical rDSM values remain relative."
+              />
             )}
 
             {activeTool === "Structures" && calibrationReady && (
@@ -1480,6 +1560,8 @@ export function App() {
               overlayUrl={terrainOverlayUrl}
               autoFlythrough={autoFlythrough}
               resetToken={cameraResetToken}
+              screenshotRequest={terrainScreenshotRequest}
+              screenshotCaption={`${projectName} · ${calibrationReady ? "Metric DSM" : "Relative rDSM"} · ${activeLayer} · Z ${verticalExaggeration}×\nBuild ${window.__DEPTHWIZARD_RUNTIME__?.buildGitSha ?? "development-unversioned"}`}
               onSelectPoint={terrainToolInteractive ? analyzeRasterPoint : undefined}
               onPerformance={setTerrainPerformance}
               onRenderState={(state) => {
@@ -1487,6 +1569,11 @@ export function App() {
                 if (state.phase !== "ready") setTerrainPerformance(null);
               }}
               onOverlayState={setTerrainOverlayRenderState}
+              onScreenshot={terrainScreenshotReady}
+              onScreenshotError={(message) => {
+                setCapturingTerrainScreenshot(false);
+                setImportError(message);
+              }}
             />
           )}
 
@@ -1646,9 +1733,9 @@ export function App() {
                       : renderedPreviewLayer === "residual"
                         ? `MAE ${projectValidation?.elevation.mae_m.toFixed(3) ?? "—"} m · P95 ${projectValidation?.elevation.p95_abs_error_m.toFixed(3) ?? "—"} m`
                         : activeTool === "Measure" && measurement
-                          ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : "m ground"} · signed Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
+                          ? `${measurement.horizontal_distance_m?.toFixed(2) ?? measurement.horizontal_distance_pixels.toFixed(2)} ${measurement.horizontal_distance_m === null ? "px" : measurement.horizontal_distance_source === "analyst_scale" ? "m analyst scale" : "m ground"} · signed Δz ${measurement.vertical_delta?.toFixed(2) ?? "—"} ${measurement.vertical_units ?? ""}`
                           : activeTool === "Profiles" && profile
-                            ? `${profile.sample_count} subpixel samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : "m ground"}`
+                            ? `${profile.sample_count} subpixel samples · ${profile.horizontal_distance_m?.toFixed(2) ?? profile.horizontal_distance_pixels.toFixed(2)} ${profile.horizontal_distance_m === null ? "px" : profile.horizontal_distance_source === "analyst_scale" ? "m analyst scale" : "m ground"}`
                             : renderedPreviewLayer === "optical"
                               ? calibrationReady ? "evidence-calibrated DSM available · RGB remains source imagery" : "source imagery · no elevation claim"
                               : calibrationReady ? "evidence-calibrated · metres" : geometryReady ? "dimensionless relative surface height" : "source imagery"}

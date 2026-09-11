@@ -28,6 +28,7 @@ struct RuntimeConfig {
     session_token: String,
     sidecar_pid: u32,
     offline_core: bool,
+    build_git_sha: &'static str,
 }
 
 #[derive(Serialize)]
@@ -485,6 +486,7 @@ pub fn run() {
                 session_token: token,
                 sidecar_pid,
                 offline_core: true,
+                build_git_sha: env!("DEPTHWIZARD_BUILD_GIT_SHA"),
             };
             if let Err(error) = write_acceptance_boot_report(&runtime) {
                 terminate_child(&mut child);

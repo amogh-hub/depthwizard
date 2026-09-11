@@ -48,6 +48,12 @@
   cursor: pointer;
 }
 
+.dw-horizontal-scale-input {
+  width: 104px;
+  padding-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
 .dw-chip[data-render-disabled="true"] {
   opacity: 0.42;
   cursor: default;

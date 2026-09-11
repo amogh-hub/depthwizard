@@ -161,9 +161,10 @@ def freeze_prediction_manifest(
                     f"prediction {scene_id!r} requires non-empty vertical field {key!r}"
                 )
             vertical_fields[key] = value.strip()
-        if vertical_fields["prediction_vertical_datum"].casefold() != vertical_fields[
-            "reference_vertical_datum"
-        ].casefold():
+        if (
+            vertical_fields["prediction_vertical_datum"].casefold()
+            != vertical_fields["reference_vertical_datum"].casefold()
+        ):
             raise PredictionFreezeError(
                 f"prediction {scene_id!r} vertical datum does not match its reference"
             )
@@ -175,9 +176,10 @@ def freeze_prediction_manifest(
             raise PredictionFreezeError(
                 f"prediction {scene_id!r} vertical datum must be explicit, not a placeholder"
             )
-        if vertical_fields["prediction_elevation_reference"] != vertical_fields[
-            "reference_elevation_reference"
-        ]:
+        if (
+            vertical_fields["prediction_elevation_reference"]
+            != vertical_fields["reference_elevation_reference"]
+        ):
             raise PredictionFreezeError(
                 f"prediction {scene_id!r} elevation-reference type does not match its reference"
             )
@@ -213,14 +215,15 @@ def freeze_prediction_manifest(
                 "prediction_path": str(prediction),
                 "prediction_sha256": prediction_sha,
                 "calibration_evidence": [
-                    {"path": str(path), "sha256": sha256_file(path)}
-                    for path in calibration_paths
+                    {"path": str(path), "sha256": sha256_file(path)} for path in calibration_paths
                 ],
             }
         )
 
+    git_head = _git_head()
     frozen = {
         "schema_version": 2,
+        "git_head": git_head,
         "model_id": model_id,
         "checkpoint_sha256": sha256_file(checkpoint),
         "predictions": frozen_entries,
@@ -232,7 +235,7 @@ def freeze_prediction_manifest(
     report = {
         "schema_version": 1,
         "status": "PASS_FINAL_SCIENCE_PREDICTION_FREEZE",
-        "git_head": _git_head(),
+        "git_head": git_head,
         "registry_path": str(registry_file),
         "registry_sha256": sha256_file(registry_file),
         "draft_path": str(draft_file),

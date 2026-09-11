@@ -45,6 +45,30 @@ jobs:
       - run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra ml
       - run: .venv/bin/python scripts/verify.py
 
+  portable-geospatial-contracts:
+    name: portable geospatial (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --python 3.12 --extra dev
+      - name: Verify portable raster, calibration, export and project contracts
+        run: >-
+          uv run --frozen pytest
+          tests/test_raster_io.py
+          tests/test_rdsm_export.py
+          tests/test_gcp_calibration.py
+          tests/test_project_export.py
+          tests/test_project_manifest_integrity.py
+          tests/test_problem_statement_inputs.py
+
   desktop-frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -82,3 +106,21 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
+
+  supply-chain-inventory:
+    name: SBOM and dependency license inventory
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate reports from frozen locks
+        run: python -m scripts.generate_supply_chain_reports
+      - name: Upload commit-bound inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: depthwizard-supply-chain-${{ github.sha }}
+          path: artifacts/release/supply-chain
+          if-no-files-found: error
+          retention-days: 90

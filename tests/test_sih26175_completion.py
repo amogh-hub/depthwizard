@@ -26,6 +26,34 @@ def _metric() -> dict[str, object]:
     }
 
 
+def _extended_metric() -> dict[str, object]:
+    return {
+        **_metric(),
+        "spearman_r": 0.88,
+        "median_abs_error_m": 1.2,
+        "nmad_m": 0.8,
+        "p90_abs_error_m": 2.8,
+        "p95_abs_error_m": 3.2,
+    }
+
+
+def _science_scene(terrain: str, split: str = "test") -> dict[str, object]:
+    return {
+        "terrain": terrain,
+        "split": split,
+        "metrics": _extended_metric(),
+        "slope_metrics": {
+            "valid_pixels": 512,
+            "mae_degrees": 1.0,
+            "rmse_degrees": 1.5,
+            "p95_abs_error_degrees": 2.5,
+        },
+        "height_range_performance": [
+            {"band": name, "metrics": _extended_metric()} for name in ("lower", "middle", "upper")
+        ],
+    }
+
+
 def _rt5() -> dict[str, object]:
     return {
         "status": "PASS_RT5_FULL_STANDALONE_ENGINEERING_ACCEPTANCE",
@@ -58,14 +86,27 @@ def _inputs() -> dict[str, object]:
 def _science() -> dict[str, object]:
     return {
         "protocol": "depthwizard_final_science_campaign_v2",
+        "git_head": HEAD,
+        "model": {"model_id": "DA3MONO-LARGE", "checkpoint_sha256": "1" * 64},
+        "registry": {"sha256": "2" * 64},
+        "prediction_manifest": {"sha256": "3" * 64},
         "requirements": {
             "geographic_split_integrity": "passed",
             "reference_independence": "passed",
             "vertical_reference_compatibility": "passed",
+            "checkpoint_identity_frozen": "passed",
+            "prediction_identity_freeze": "passed",
+            "cross_sensor_train_sensor_separation": "passed",
+            "cross_sensor_scene_count": 1,
             "test_terrain_coverage": list(completion.REQUIRED_TERRAINS),
         },
         "test_overall": _metric(),
+        "cross_sensor_overall": _metric(),
         "terrain": {name: _metric() for name in completion.REQUIRED_TERRAINS},
+        "scenes": [
+            *[_science_scene(name) for name in completion.REQUIRED_TERRAINS],
+            _science_scene("urban", "cross_sensor_test"),
+        ],
     }
 
 
@@ -74,6 +115,49 @@ def _soak() -> dict[str, object]:
         "status": "PASS_TWO_HOUR_PACKAGED_SOAK",
         "git_head": HEAD,
         "monitored_seconds": 7200.1,
+    }
+
+
+def _baselines() -> dict[str, object]:
+    identity = "c" * 64
+    mask = "d" * 64
+    return {
+        "status": "PASS_SAME_INPUT_BASELINES",
+        "git_head": HEAD,
+        "input_manifest_sha256": identity,
+        "evaluation_mask_manifest_sha256": mask,
+        "methods": {
+            name: {
+                "input_manifest_sha256": identity,
+                "evaluation_mask_manifest_sha256": mask,
+                "metrics": _metric(),
+            }
+            for name in completion.REQUIRED_BASELINES
+        },
+        "published_alternatives": [
+            {"name": "Metric3D", "status": "not_feasible", "reason": "fixture"}
+        ],
+    }
+
+
+def _ablations() -> dict[str, object]:
+    identity = "c" * 64
+    mask = "d" * 64
+    return {
+        "status": "PASS_REQUIRED_ABLATIONS",
+        "git_head": HEAD,
+        "input_manifest_sha256": identity,
+        "evaluation_mask_manifest_sha256": mask,
+        "experiments": {
+            name: {
+                "status": "measured",
+                "input_manifest_sha256": identity,
+                "evaluation_mask_manifest_sha256": mask,
+                "baseline": _metric(),
+                "ablated": _metric(),
+            }
+            for name in completion.REQUIRED_ABLATIONS
+        },
     }
 
 
@@ -124,6 +208,8 @@ def _paths(tmp_path: Path) -> dict[str, Path]:
         "rt5_path": _write(tmp_path / "rt5.json", _rt5()),
         "input_path": _write(tmp_path / "inputs.json", _inputs()),
         "science_path": _write(tmp_path / "science.json", _science()),
+        "baseline_path": _write(tmp_path / "baselines.json", _baselines()),
+        "ablation_path": _write(tmp_path / "ablations.json", _ablations()),
         "soak_path": _write(tmp_path / "soak.json", _soak()),
         "operator_path": _write(tmp_path / "operator.json", _operator()),
         "performance_path": _write(tmp_path / "performance.json", _performance()),
@@ -188,7 +274,49 @@ def test_completion_gate_rejects_unreported_correlation(tmp_path: Path) -> None:
     urban["pearson_r"] = None
 
     with pytest.raises(completion.CompletionEvidenceError, match="pearson_r must be numeric"):
-        completion.check_science(science)
+        completion.check_science(science, HEAD)
+
+
+def test_completion_gate_rejects_science_from_another_commit() -> None:
+    science = _science()
+    science["git_head"] = "b" * 40
+
+    with pytest.raises(completion.CompletionEvidenceError, match="current exact head"):
+        completion.check_science(science, HEAD)
+
+
+def test_completion_gate_rejects_baseline_mask_drift() -> None:
+    baselines = _baselines()
+    methods = baselines["methods"]
+    assert isinstance(methods, dict)
+    coarse = methods["coarse_dem"]
+    assert isinstance(coarse, dict)
+    coarse["evaluation_mask_manifest_sha256"] = "e" * 64
+
+    with pytest.raises(completion.CompletionEvidenceError, match="different mask"):
+        completion.check_baselines(baselines, HEAD)
+
+
+def test_completion_gate_requires_explanation_for_unavailable_ablation() -> None:
+    ablations = _ablations()
+    experiments = ablations["experiments"]
+    assert isinstance(experiments, dict)
+    experiments["confidence_weighting"] = {"status": "not_applicable", "reason": ""}
+
+    with pytest.raises(completion.CompletionEvidenceError, match="no not-applicable reason"):
+        completion.check_ablations(ablations, HEAD)
+
+
+def test_completion_gate_rejects_ablation_input_drift() -> None:
+    ablations = _ablations()
+    experiments = ablations["experiments"]
+    assert isinstance(experiments, dict)
+    experiment = experiments["dem_calibration"]
+    assert isinstance(experiment, dict)
+    experiment["input_manifest_sha256"] = "e" * 64
+
+    with pytest.raises(completion.CompletionEvidenceError, match="different inputs"):
+        completion.check_ablations(ablations, HEAD)
 
 
 def test_completion_gate_rejects_single_toolbar_fps_sample() -> None:

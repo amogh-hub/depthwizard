@@ -10,7 +10,7 @@ requires the affected gates to be rerun.
 
 ## 0. Freeze one exact source head
 
-- checkout `engineering/rt5-rt7-hardening-one-go`;
+- checkout `engineering/elite-finalization`;
 - `git pull --ff-only`;
 - record `git rev-parse HEAD`;
 - require an empty worktree before qualification;

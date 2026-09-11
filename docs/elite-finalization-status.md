@@ -1,49 +1,60 @@
 # Elite finalization status
 
-This record separates implemented source capability from evidence that must be produced on the
-exact release commit. It is intentionally fail-closed: an implementation check does not become a
-scientific, clean-machine, performance, or stability claim.
+This is a fail-closed status record, not a marketing claim. A capability can be implemented while
+its exact-release evidence is pending. Source changes invalidate older packaged, science, operator,
+performance, soak and clean-machine evidence unless the applicable protocol says otherwise.
 
-## Implemented in the elite-hardening integration
+## Implemented in the release candidate
 
-- calibration gates for correlation, independent support, spatial coverage, metric relief, anchor
-  RMSE, normalized RMSE, robust-fit convergence and conditioning;
-- GCP minimum count, duplicate/cluster/collinearity rejection, convex-hull coverage and leave-one-out
-  validation;
-- DEM + GCP fusion that retains DEM-established relief scale and limits GCP correction to one robust
-  global vertical-datum offset;
-- physical-support-derived low-frequency correction defaults with an explicit metres-to-pixels
-  override contract;
-- explicit vertical CRS/datum/elevation-reference metadata and a visible distinction between metric
-  calibrated elevation and datum-resolved absolute elevation;
-- source NoData propagation through tiled inference, confidence, DSM/rDSM and recorded valid fraction;
-- slope derived from the complete local pixel-to-ground Jacobian for rotated/sheared grids;
-- Spearman correlation and NMAD in elevation validation, plus final-campaign vertical-datum
-  compatibility enforcement;
-- exact DA3 checkpoint-byte verification before model load and inclusion of the verified snapshot in
-  the standalone resource tree for offline-first reconstruction;
-- bounded queue admission/history, duplicate-active-project protection, cooperative cancellation and
-  durable cancelled state across service, runtime and desktop;
-- disposal of late/stale Three.js GLTF resources during terrain replacement;
-- frozen Python/npm/Cargo CI consumption (`uv sync --frozen`, `npm ci`, locked Cargo) with no implicit
-  lock regeneration;
-- content/config identity checks for derived Potsdam RGB and DA3 geometry caches.
+- literal PNG/JPG/TIFF/GeoTIFF ingest and truthful relative-versus-metric output policy;
+- calibrated DA3 production selection with exact source/checkpoint identity and offline packaging;
+- DEM, GCP and DEM + GCP calibration with robust positive-scale fitting, polarity resolution,
+  correlation/coverage/relief/RMSE/conditioning/convergence gates and leave-one-out validation;
+- six-GCP production default; explicit four/five-point expert overrides persist a low-confidence
+  evidence classification and warning;
+- DEM-frequency matching and low-frequency terrain correction that preserves image-derived surface
+  structure;
+- explicit vertical CRS/datum/elevation-reference metadata and fail-closed datum semantics;
+- source masks/NoData through inference, output and metrics; full rotated/sheared ground Jacobian for
+  slope;
+- bounded sampled quality warnings for saturation, insufficient texture, bright/cloud-like,
+  deep-shadow and metadata-declared off-nadir building-lean risk;
+- persistent DSM/rDSM, previews, validation, residual, project export and textured GLB LOD assets;
+- Orbit, Fly, First Person, Top Down, flythrough, probe, measure, profile, structural-height and
+  registered reference/residual analysis;
+- explicitly labelled analyst metres-per-pixel horizontal scaling for relative-project distance
+  tools, without changing relative vertical semantics;
+- provenance-burned 3D screenshot export carrying the exact packaged source SHA and display state;
+- bounded queue/history, duplicate rejection, cooperative cancellation, crash recovery, actionable
+  memory exhaustion and Three.js resource disposal;
+- locked Python/npm/Cargo resolution, Linux source/desktop CI, portable macOS/Windows geospatial CI,
+  deterministic SBOM/license inventory and split frontend vendor chunks;
+- guarded tag workflow that can publish only from authoritative `main` after exact-commit completion
+  evidence passes.
 
-## Required before the words “final elite system complete” are used
+## Previously measured, but requiring regeneration for the final changed SHA
 
-1. Commit the integration and rerun all Python, frontend and Rust gates on that exact commit.
-2. Build the standalone sidecar and application with the real pinned DA3 snapshot; prove a fresh
-   offline reconstruction with no pre-populated model cache.
-3. Run the frozen final-science v2 campaign on geographically disjoint urban, sparse, hilly and
-   forested scenes plus a cross-sensor scene. Freeze prediction bytes before reference evaluation.
-4. Run same-input baselines and the declared ablations. Preserve negative results.
-5. Complete operator interaction evidence, projection QA, structural-height checks and real
-   screenshots from persisted project artifacts.
-6. Record finale-hardware FPS, peak memory/latency, the two-hour packaged soak and a clean-machine
-   install/reopen/export run.
-7. Run `scripts/check_sih26175_completion.py` on the exact release commit and require every gate to
-   pass before producing the final deck or making accuracy/superiority claims.
+An earlier release-candidate commit completed the packaged RT5 workflow, literal input contract,
+four-terrain/cross-sensor campaign, 27-item operator workflow, sustained >=30 FPS navigation, a full
+two-hour packaged soak and fresh macOS ARM64 offline build/reopen qualification. The clean-machine
+record remains immutable historical evidence on its qualification branch. Other transient evidence
+was not durably committed and must not be reconstructed from notes.
 
-The first item is ordinary repository verification. Items 2–6 require the real model payload,
-external datasets, designated hardware and/or human observation; they cannot be truthfully replaced
-by synthetic fixtures or source inspection.
+## Blocking the final tag
+
+1. Freeze the new release-candidate SHA and rerun all source/frontend/Rust checks.
+2. Regenerate packaged RT5 and literal input reports on that SHA.
+3. Regenerate and commit the independent urban/sparse/hilly/forested plus cross-sensor campaign.
+4. Produce the same-input baseline comparison and declared ablation report. Preserve negative results.
+5. Rerun and durably commit operator, projection, structural-height, sustained FPS and two-hour soak
+   evidence.
+6. Run the complete published-installer clean-machine rehearsal, including PNG, JPG, GeoTIFF,
+   DEM/GCP, navigation, measurement, repeated jobs, export and reopen.
+7. Place only authentic compact JSON/CSV/plots under `evidence/submission/` on the separate
+   `qualification/evidence-<candidate-SHA>` branch, then require
+   `scripts/check_sih26175_completion.py --strict` to pass from a clean candidate checkout.
+8. Protect `main`, merge without tree drift, tag the exact SHA and let the guarded release workflow
+   publish the installer, checksums, model manifest, evidence archive and supply-chain reports.
+
+No release, slide or verbal claim may turn a pending item into a pass. The detailed sequence is in
+`docs/release-playbook.md`; the reviewer-facing index is `docs/judge-evidence-pack.md`.

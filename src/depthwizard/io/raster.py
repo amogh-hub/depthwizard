@@ -12,9 +12,133 @@ from rasterio.enums import Resampling
 from rasterio.io import DatasetReader
 from rasterio.warp import reproject
 
-from depthwizard.contracts import RasterMetadata
+from depthwizard.contracts import RasterMetadata, RasterQualityAssessment
 
 ORTHOLOC_METRIC_AFFINE_ENV = "DEPTHWIZARD_ORTHOLOC_METRIC_AFFINE"
+
+_OFF_NADIR_TAGS = (
+    "OFF_NADIR",
+    "OFF_NADIR_ANGLE",
+    "VIEW_ANGLE",
+    "VIEW_ZENITH",
+    "VIEW_ZENITH_ANGLE",
+)
+
+
+def _tagged_off_nadir_degrees(src: DatasetReader) -> float | None:
+    tags = {str(key).upper(): str(value).strip() for key, value in src.tags().items()}
+    for name in _OFF_NADIR_TAGS:
+        raw = tags.get(name)
+        if not raw:
+            continue
+        try:
+            angle = abs(float(raw.removesuffix("°").strip()))
+        except ValueError:
+            continue
+        if np.isfinite(angle) and angle <= 90.0:
+            return angle
+    return None
+
+
+def _sampled_raster_quality(src: DatasetReader) -> RasterQualityAssessment:
+    """Return conservative diagnostics from a bounded RGB overview.
+
+    Bright/low-chroma and dark fractions are candidates, not semantic cloud/shadow masks. Their
+    ambiguity is recorded explicitly. Off-nadir risk is reported only from source metadata; view
+    angle is never guessed from image appearance.
+    """
+    if src.count < 3:
+        return RasterQualityAssessment(
+            status="not_assessed",
+            flags=["rgb_quality_not_assessed_fewer_than_three_bands"],
+            assessment_limitations=["RGB radiometric diagnostics require at least three bands"],
+        )
+
+    scale = min(1.0, 1024.0 / max(src.width, src.height))
+    out_h = max(1, round(src.height * scale))
+    out_w = max(1, round(src.width * scale))
+    sampled = src.read(
+        [1, 2, 3],
+        out_shape=(3, out_h, out_w),
+        masked=True,
+        resampling=Resampling.average,
+    ).astype(np.float64)
+    values = np.asarray(sampled.filled(np.nan), dtype=np.float64)
+    valid = ~np.any(np.ma.getmaskarray(sampled), axis=0)
+    valid &= np.all(np.isfinite(values), axis=0)
+    if not np.any(valid):
+        return RasterQualityAssessment(
+            status="warning",
+            flags=["no_valid_rgb_pixels_for_quality_assessment"],
+            assessment_limitations=["No valid sampled RGB support was available"],
+        )
+
+    dtype = np.dtype(src.dtypes[0])
+    saturation_fraction: float | None = None
+    if np.issubdtype(dtype, np.integer):
+        limits = np.iinfo(dtype)
+        saturated = np.any((values <= limits.min) | (values >= limits.max), axis=0)
+        saturation_fraction = float(np.mean(saturated[valid]))
+
+    # Use one robust range for all RGB channels. Normalizing each band independently would erase
+    # real channel differences and make the bright/low-chroma diagnostic overconfident.
+    radiometric_values = values[:, valid]
+    low, high = np.percentile(radiometric_values, (2.0, 98.0))
+    usable_radiometry = bool(
+        np.isfinite(low) and np.isfinite(high) and high - low > 1e-12
+    )
+    normalized = (
+        np.clip((values - low) / (high - low), 0.0, 1.0)
+        if usable_radiometry
+        else np.zeros_like(values, dtype=np.float64)
+    )
+
+    flags: list[str] = []
+    limitations = [
+        "Cloud and shadow fractions are radiometric candidates, not semantic masks",
+        "Building lean cannot be inferred reliably without sensor geometry or stereo evidence",
+    ]
+    if saturation_fraction is not None and saturation_fraction >= 0.20:
+        flags.append("high_saturation_fraction")
+
+    shadow_fraction: float | None = None
+    bright_fraction: float | None = None
+    texture_score: float | None = None
+    if usable_radiometry:
+        brightness = np.mean(normalized, axis=0)
+        chroma = np.max(normalized, axis=0) - np.min(normalized, axis=0)
+        shadow_fraction = float(np.mean(brightness[valid] <= 0.06))
+        bright_fraction = float(np.mean((brightness[valid] >= 0.94) & (chroma[valid] <= 0.08)))
+        grayscale = np.where(valid, brightness, np.nan)
+        horizontal = np.abs(np.diff(grayscale, axis=1))
+        vertical = np.abs(np.diff(grayscale, axis=0))
+        gradients = np.concatenate(
+            [horizontal[np.isfinite(horizontal)], vertical[np.isfinite(vertical)]]
+        )
+        texture_score = float(np.median(gradients)) if gradients.size else 0.0
+        if shadow_fraction >= 0.35:
+            flags.append("large_deep_shadow_candidate_fraction")
+        if bright_fraction >= 0.35:
+            flags.append("large_bright_low_chroma_candidate_fraction")
+        if texture_score <= 0.002:
+            flags.append("insufficient_texture_risk")
+    else:
+        flags.append("insufficient_dynamic_range_for_radiometric_quality_assessment")
+
+    off_nadir = _tagged_off_nadir_degrees(src)
+    if off_nadir is not None and off_nadir >= 20.0:
+        flags.append("off_nadir_building_lean_risk")
+
+    return RasterQualityAssessment(
+        status="warning" if flags else "pass",
+        flags=flags,
+        saturation_fraction=saturation_fraction,
+        deep_shadow_candidate_fraction=shadow_fraction,
+        bright_low_chroma_candidate_fraction=bright_fraction,
+        texture_gradient_score=texture_score,
+        off_nadir_degrees=off_nadir,
+        assessment_limitations=limitations,
+    )
 
 
 def ortholoc_metric_affine_override_enabled() -> bool:
@@ -132,10 +256,7 @@ def _projected_coordinate_within_area(
     left, bottom, right, top = bounds
     span = max(right - left, top - bottom, 1.0)
     tolerance = span * 1e-9
-    return (
-        left - tolerance <= x <= right + tolerance
-        and bottom - tolerance <= y <= top + tolerance
-    )
+    return left - tolerance <= x <= right + tolerance and bottom - tolerance <= y <= top + tolerance
 
 
 def ground_sample_distance_m(path: str | Path) -> tuple[float, float] | None:
@@ -233,12 +354,8 @@ def ground_pixel_jacobian_m(path: str | Path) -> np.ndarray | None:
             if point0 is None or point1 is None or point2 is None:
                 return None
             geod = Geod(ellps="WGS84")
-            azimuth_col, _, distance_col = geod.inv(
-                point0[0], point0[1], point1[0], point1[1]
-            )
-            azimuth_row, _, distance_row = geod.inv(
-                point0[0], point0[1], point2[0], point2[1]
-            )
+            azimuth_col, _, distance_col = geod.inv(point0[0], point0[1], point1[0], point1[1])
+            azimuth_row, _, distance_row = geod.inv(point0[0], point0[1], point2[0], point2[1])
 
             def components(azimuth_degrees: float, distance_m: float) -> tuple[float, float]:
                 radians = np.deg2rad(azimuth_degrees)
@@ -315,13 +432,17 @@ def inspect_raster(path: str | Path) -> RasterMetadata:
         transform = src.transform
         has_meaningful_transform = not transform.is_identity
         transform_tuple = (
-            transform.a,
-            transform.b,
-            transform.c,
-            transform.d,
-            transform.e,
-            transform.f,
-        ) if has_meaningful_transform else None
+            (
+                transform.a,
+                transform.b,
+                transform.c,
+                transform.d,
+                transform.e,
+                transform.f,
+            )
+            if has_meaningful_transform
+            else None
+        )
         crs = src.crs.to_string() if src.crs is not None else None
         gsd_x = metric_gsd[0] if metric_gsd is not None else None
         gsd_y = metric_gsd[1] if metric_gsd is not None else None
@@ -336,6 +457,7 @@ def inspect_raster(path: str | Path) -> RasterMetadata:
             resampling=Resampling.nearest,
         )
         valid_data_fraction = float(np.mean(np.all(sampled_masks > 0, axis=0)))
+        quality = _sampled_raster_quality(src)
         return RasterMetadata(
             path=p,
             width=src.width,
@@ -351,6 +473,7 @@ def inspect_raster(path: str | Path) -> RasterMetadata:
             vertical_crs=vertical_crs,
             vertical_datum=vertical_datum,
             elevation_reference=elevation_reference,
+            quality=quality,
         )
 
 

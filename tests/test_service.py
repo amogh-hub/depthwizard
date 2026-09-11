@@ -14,6 +14,16 @@ from depthwizard.provenance.manifest import sha256_file
 from depthwizard.service import app
 
 
+def test_out_of_memory_failure_is_actionable_and_classified() -> None:
+    kind, message = service_module._actionable_job_failure(
+        RuntimeError("MPS backend out of memory")
+    )
+
+    assert kind == "resource_exhausted"
+    assert "reduce the inference tile size" in message
+    assert "source file was not modified" in message
+
+
 def test_inspect_endpoint_reports_georeferenced_raster(tmp_path: Path) -> None:
     path = tmp_path / "rgb.tif"
     data = np.zeros((3, 16, 16), dtype=np.uint8)
@@ -43,9 +53,7 @@ def test_inspect_endpoint_reports_georeferenced_raster(tmp_path: Path) -> None:
 def test_gcp_inspect_endpoint_returns_typed_metric_evidence(tmp_path: Path) -> None:
     path = tmp_path / "gcps.csv"
     path.write_text(
-        "x,y,elevation_m,weight\n"
-        "500000,1400000,101,1\n"
-        "500010,1400010,109,2\n",
+        "x,y,elevation_m,weight\n500000,1400000,101,1\n500010,1400010,109,2\n",
         encoding="utf-8",
     )
     client = TestClient(app)

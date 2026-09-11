@@ -67,6 +67,7 @@ if __name__ == "__main__":
         "scripts/release_train_7_soak.py",
         "scripts/verify_problem_statement_inputs.py",
         "scripts/check_sih26175_completion.py",
+        "scripts/generate_supply_chain_reports.py",
         "scripts/benchmark_ortholoc_demo.py",
         "scripts/demo_india_absolute.py",
         "scripts/smoke_da3.py",

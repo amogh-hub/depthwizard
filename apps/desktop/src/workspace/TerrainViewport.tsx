@@ -28,6 +28,12 @@ export type TerrainOverlayState = {
   message: string;
 };
 
+export type TerrainScreenshot = {
+  blob: Blob;
+  width: number;
+  height: number;
+};
+
 type TerrainViewportProps = {
   meshUrl?: string;
   cameraMode: CameraMode;
@@ -38,10 +44,14 @@ type TerrainViewportProps = {
   overlayUrl?: string | null;
   autoFlythrough?: boolean;
   resetToken?: number;
+  screenshotRequest?: number;
+  screenshotCaption?: string;
   onSelectPoint?: (point: NormalizedPoint) => void;
   onPerformance?: (metrics: TerrainPerformance) => void;
   onRenderState?: (state: TerrainRenderState) => void;
   onOverlayState?: (state: TerrainOverlayState) => void;
+  onScreenshot?: (capture: TerrainScreenshot) => void;
+  onScreenshotError?: (message: string) => void;
 };
 
 const EMPTY_RENDER_STATE: TerrainRenderState = {
@@ -97,10 +107,14 @@ export function TerrainViewport({
   overlayUrl,
   autoFlythrough = false,
   resetToken = 0,
+  screenshotRequest = 0,
+  screenshotCaption = "DepthWizard terrain",
   onSelectPoint,
   onPerformance,
   onRenderState,
   onOverlayState,
+  onScreenshot,
+  onScreenshotError,
 }: TerrainViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modeRef = useRef(cameraMode);
@@ -110,10 +124,14 @@ export function TerrainViewport({
   const overlayRef = useRef<string | null | undefined>(overlayUrl);
   const autoFlythroughRef = useRef(autoFlythrough);
   const resetRef = useRef(resetToken);
+  const screenshotRequestRef = useRef(screenshotRequest);
+  const screenshotCaptionRef = useRef(screenshotCaption);
   const selectRef = useRef(onSelectPoint);
   const performanceRef = useRef(onPerformance);
   const renderStateRef = useRef(onRenderState);
   const overlayStateRef = useRef(onOverlayState);
+  const screenshotRef = useRef(onScreenshot);
+  const screenshotErrorRef = useRef(onScreenshotError);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [overlayRetryGeneration, setOverlayRetryGeneration] = useState(0);
   const [renderState, setRenderState] = useState<TerrainRenderState>(EMPTY_RENDER_STATE);
@@ -126,10 +144,14 @@ export function TerrainViewport({
   overlayRef.current = overlayUrl;
   autoFlythroughRef.current = autoFlythrough;
   resetRef.current = resetToken;
+  screenshotRequestRef.current = screenshotRequest;
+  screenshotCaptionRef.current = screenshotCaption;
   selectRef.current = onSelectPoint;
   performanceRef.current = onPerformance;
   renderStateRef.current = onRenderState;
   overlayStateRef.current = onOverlayState;
+  screenshotRef.current = onScreenshot;
+  screenshotErrorRef.current = onScreenshotError;
 
   const publishState = (state: TerrainRenderState) => {
     setRenderState(state);
@@ -255,6 +277,7 @@ export function TerrainViewport({
     let pendingOverlayStartedAt = 0;
     let modelLoadedAt = 0;
     let rendererReady = false;
+    let previousScreenshotRequest = screenshotRequestRef.current;
     let shiftBoost = false;
     let flyBaseSpeed = 80;
     let firstPersonBaseSpeed = 35;
@@ -745,6 +768,50 @@ export function TerrainViewport({
         if (mode === "firstPerson") constrainFirstPerson();
       }
       renderer.render(scene, camera);
+
+      if (screenshotRequestRef.current !== previousScreenshotRequest) {
+        previousScreenshotRequest = screenshotRequestRef.current;
+        try {
+          const source = renderer.domElement;
+          const output = document.createElement("canvas");
+          output.width = source.width;
+          output.height = source.height;
+          const context = output.getContext("2d");
+          if (!context) throw new Error("2D export canvas is unavailable");
+          context.drawImage(source, 0, 0);
+
+          const lines = screenshotCaptionRef.current.split("\n").slice(0, 2);
+          const fontSize = Math.max(15, Math.round(output.height * 0.022));
+          const padding = Math.max(12, Math.round(fontSize * 0.8));
+          const lineHeight = Math.round(fontSize * 1.35);
+          const bannerHeight = padding * 2 + lineHeight * lines.length;
+          context.fillStyle = "rgba(9, 18, 31, 0.86)";
+          context.fillRect(0, output.height - bannerHeight, output.width, bannerHeight);
+          context.fillStyle = "#ffffff";
+          context.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
+          context.textBaseline = "top";
+          lines.forEach((line, index) => {
+            context.fillText(
+              line,
+              padding,
+              output.height - bannerHeight + padding + index * lineHeight,
+              output.width - padding * 2,
+            );
+          });
+          output.toBlob((blob) => {
+            if (disposed) return;
+            if (!blob) {
+              screenshotErrorRef.current?.("The terrain frame could not be encoded as PNG.");
+              return;
+            }
+            screenshotRef.current?.({ blob, width: output.width, height: output.height });
+          }, "image/png");
+        } catch (error) {
+          screenshotErrorRef.current?.(
+            `Unable to capture the terrain frame: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
 
       const triangles = renderer.info.render.triangles;
       const drawCalls = renderer.info.render.calls;

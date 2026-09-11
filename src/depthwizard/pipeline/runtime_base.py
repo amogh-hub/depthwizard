@@ -14,6 +14,7 @@ from depthwizard.calibration.evidence import (
     calibrate_relative_height_with_dem,
 )
 from depthwizard.calibration.gcp import (
+    RECOMMENDED_GCP_COUNT,
     calibrate_relative_height_with_gcps,
     validate_metric_dsm_with_gcps,
 )
@@ -134,6 +135,22 @@ def _mean_gsd(gsd: tuple[float, float] | None) -> float | None:
 
 def _request_config(request: ProcessingRequest) -> dict[str, object]:
     return request.model_dump(mode="json")
+
+
+def _gcp_confidence_payload(request: ProcessingRequest) -> dict[str, object]:
+    supplied = len(request.gcps)
+    low_confidence = supplied < RECOMMENDED_GCP_COUNT
+    return {
+        "classification": "low_confidence" if low_confidence else "standard",
+        "points_supplied": supplied,
+        "recommended_minimum": RECOMMENDED_GCP_COUNT,
+        "explicit_minimum_requested": request.min_gcp_count,
+        "reason": (
+            "fewer_than_recommended_six_gcps"
+            if low_confidence
+            else "recommended_gcp_count_satisfied"
+        ),
+    }
 
 
 def _geometry_config(
@@ -290,9 +307,12 @@ def _vertical_reference_payload(request: ProcessingRequest) -> dict[str, object]
     vertical_crs = request.vertical_crs
     vertical_datum = request.vertical_datum
     elevation_reference = request.elevation_reference
-    source = "processing_request" if any(
-        value is not None for value in (vertical_crs, vertical_datum)
-    ) or elevation_reference != "unknown" else "unspecified"
+    source = (
+        "processing_request"
+        if any(value is not None for value in (vertical_crs, vertical_datum))
+        or elevation_reference != "unknown"
+        else "unspecified"
+    )
 
     dem_path = request.metric_dem_path
     if dem_path is not None and dem_path.is_file():
@@ -602,6 +622,12 @@ class ProductionElevationRuntime:
         dem_path = request.metric_dem_path
         gcps = request.gcps
         gcp_source_evidence = _gcp_source_evidence_payload(request) if gcps else None
+        gcp_confidence = _gcp_confidence_payload(request) if gcps else None
+        if gcps and len(gcps) < RECOMMENDED_GCP_COUNT:
+            manifest.add_warning(
+                "GCP calibration is using fewer than the recommended six spatially distributed "
+                "points under an explicit expert override; evidence confidence is low"
+            )
         with rasterio.open(request.source) as source:
             if source.crs is None or source.transform.is_identity:
                 raise ValueError("metric calibration requires a georeferenced source raster")
@@ -641,22 +667,15 @@ class ProductionElevationRuntime:
                     "dem": dem_payload,
                     "gcp_validation": {
                         "source_evidence": gcp_source_evidence,
+                        "evidence_confidence": gcp_confidence,
                         "gcp_count_supplied": len(gcps),
                         "offset_applied_m": gcp_validation.offset_applied_m,
                         "rmse_before_m": gcp_validation.rmse_before_m,
                         "rmse_after_m": gcp_validation.rmse_after_m,
-                        "cross_validation_rmse_m": (
-                            gcp_validation.cross_validation_rmse_m
-                        ),
-                        "gcp_residuals_before_m": (
-                            gcp_validation.gcp_residuals_before_m.tolist()
-                        ),
-                        "gcp_residuals_after_m": (
-                            gcp_validation.gcp_residuals_after_m.tolist()
-                        ),
-                        "spatial_coverage_fraction": (
-                            gcp_validation.spatial_coverage_fraction
-                        ),
+                        "cross_validation_rmse_m": (gcp_validation.cross_validation_rmse_m),
+                        "gcp_residuals_before_m": (gcp_validation.gcp_residuals_before_m.tolist()),
+                        "gcp_residuals_after_m": (gcp_validation.gcp_residuals_after_m.tolist()),
+                        "spatial_coverage_fraction": (gcp_validation.spatial_coverage_fraction),
                         "spatial_rank_ratio": gcp_validation.spatial_rank_ratio,
                         "semantics": "validation_and_global_vertical_datum_offset_only",
                     },
@@ -681,6 +700,7 @@ class ProductionElevationRuntime:
             evidence={
                 "gcp": {
                     "source_evidence": gcp_source_evidence,
+                    "evidence_confidence": gcp_confidence,
                     "calibration": gcp_result.calibration.model_dump(),
                     "gcp_count_supplied": len(gcps),
                     "gcp_residuals_m": gcp_result.gcp_residuals_m.tolist(),
@@ -718,9 +738,7 @@ class ProductionElevationRuntime:
                 "selected_model_id": geometry.model_id,
                 "selected_path": self.estimator_decision.selected_path.value,
                 "promotion_reason": self.estimator_decision.reason,
-                "promotion_evidence": [
-                    asdict(item) for item in self.estimator_decision.evidence
-                ],
+                "promotion_evidence": [asdict(item) for item in self.estimator_decision.evidence],
             },
             warnings=manifest.warnings,
         )
@@ -760,7 +778,9 @@ class ProductionElevationRuntime:
         )
         current_rdsm = manifest.artifact_path("rdsm")
         if current_rdsm is None or not current_rdsm.is_file():
-            raise RuntimeError("relative project completed geometry without a durable rDSM artifact")
+            raise RuntimeError(
+                "relative project completed geometry without a durable rDSM artifact"
+            )
         provenance = self._write_provenance(
             manifest,
             request,
@@ -836,6 +856,8 @@ class ProductionElevationRuntime:
             manifest.mark_status(ProjectRunStatus.RUNNING, job_id=job_id)
             metadata = inspect_raster(request.source)
             georeferenced = metadata.input_kind is InputKind.GEOREFERENCED
+            for quality_flag in metadata.quality.flags:
+                manifest.add_warning(f"source quality diagnostic: {quality_flag}")
             manifest.set_identity(
                 source_sha256=source_hash,
                 input_kind=metadata.input_kind.value,
@@ -854,7 +876,10 @@ class ProductionElevationRuntime:
             manifest.record_stage(
                 ProcessingStage.INGEST,
                 status="completed",
-                details={"raster": metadata.model_dump(mode="json")},
+                details={
+                    "raster": metadata.model_dump(mode="json"),
+                    "quality_assessment": metadata.quality.model_dump(mode="json"),
+                },
             )
             raise_if_cancelled(cancellation_probe)
 
@@ -946,7 +971,9 @@ class ProductionElevationRuntime:
                     ),
                     "ELEVATION_UNITS": "metres",
                     "ABSOLUTE_ELEVATION_STATUS": (
-                        "datum_resolved" if absolute_elevation_claim else "vertical_datum_unspecified"
+                        "datum_resolved"
+                        if absolute_elevation_claim
+                        else "vertical_datum_unspecified"
                     ),
                     "VERTICAL_CRS": vertical_crs_tag,
                     "VERTICAL_DATUM": vertical_datum_tag,

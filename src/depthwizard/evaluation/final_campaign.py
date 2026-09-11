@@ -14,8 +14,12 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from depthwizard.data.registry import DatasetRegistry, DatasetScene, load_registry
-from depthwizard.evaluation.metrics import compute_elevation_metrics
-from depthwizard.io.raster import reproject_to_match
+from depthwizard.evaluation.metrics import compute_elevation_metrics, compute_slope_metrics
+from depthwizard.io.raster import (
+    ground_pixel_jacobian_m,
+    ground_sample_distance_m,
+    reproject_to_match,
+)
 from depthwizard.provenance.manifest import sha256_file
 
 REQUIRED_TERRAINS = ("urban", "sparse", "hilly", "forested")
@@ -55,6 +59,7 @@ class CampaignPrediction(BaseModel):
 
 class CampaignManifest(BaseModel):
     schema_version: Literal[2] = 2
+    git_head: str = Field(pattern=r"^[0-9a-f]{40}$")
     model_id: str = Field(min_length=1)
     checkpoint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     predictions: list[CampaignPrediction] = Field(min_length=1)
@@ -238,11 +243,18 @@ def _scene_csv(scenes: list[dict[str, Any]]) -> str:
         "spearman_r",
         "mean_bias_m",
         "nmad_m",
+        "median_abs_error_m",
+        "p90_abs_error_m",
+        "p95_abs_error_m",
+        "slope_mae_degrees",
+        "slope_rmse_degrees",
+        "slope_p95_abs_error_degrees",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
     writer.writeheader()
     for scene in sorted(scenes, key=lambda item: item["scene_id"]):
         metrics = scene["metrics"]
+        slope = scene["slope_metrics"]
         row: dict[str, Any] = {
             "scene_id": scene["scene_id"],
             "dataset": scene["dataset"],
@@ -258,6 +270,12 @@ def _scene_csv(scenes: list[dict[str, Any]]) -> str:
             "spearman_r": metrics["spearman_r"],
             "mean_bias_m": metrics["mean_bias_m"],
             "nmad_m": metrics["nmad_m"],
+            "median_abs_error_m": metrics["median_abs_error_m"],
+            "p90_abs_error_m": metrics["p90_abs_error_m"],
+            "p95_abs_error_m": metrics["p95_abs_error_m"],
+            "slope_mae_degrees": slope["mae_degrees"],
+            "slope_rmse_degrees": slope["rmse_degrees"],
+            "slope_p95_abs_error_degrees": slope["p95_abs_error_degrees"],
         }
         writer.writerow(
             {
@@ -269,6 +287,41 @@ def _scene_csv(scenes: list[dict[str, Any]]) -> str:
             }
         )
     return output.getvalue()
+
+
+def _height_range_metrics(
+    prediction: np.ndarray,
+    reference: np.ndarray,
+    valid: np.ndarray,
+) -> list[dict[str, Any]]:
+    """Return deterministic lower/middle/upper reference-elevation performance bands."""
+    reference_values = reference[valid]
+    lower_cut, upper_cut = np.quantile(reference_values, (1 / 3, 2 / 3))
+    definitions = (
+        ("lower", valid & (reference <= lower_cut), None, float(lower_cut)),
+        (
+            "middle",
+            valid & (reference > lower_cut) & (reference <= upper_cut),
+            float(lower_cut),
+            float(upper_cut),
+        ),
+        ("upper", valid & (reference > upper_cut), float(upper_cut), None),
+    )
+    reports: list[dict[str, Any]] = []
+    for name, mask, minimum, maximum in definitions:
+        valid_pixels = int(np.count_nonzero(mask))
+        if valid_pixels < 1:
+            continue
+        metrics = compute_elevation_metrics(prediction, reference, valid_mask=mask)
+        reports.append(
+            {
+                "band": name,
+                "reference_min_exclusive_m": minimum,
+                "reference_max_inclusive_m": maximum,
+                "metrics": metrics.model_dump(mode="json"),
+            }
+        )
+    return reports
 
 
 def _required_evaluation_scenes(registry: DatasetRegistry) -> list[DatasetScene]:
@@ -409,6 +462,21 @@ def evaluate_final_science_campaign(
             )
 
         metrics = compute_elevation_metrics(prediction, aligned_reference, valid_mask=valid)
+        ground_gsd = ground_sample_distance_m(prediction_path)
+        ground_jacobian = ground_pixel_jacobian_m(prediction_path)
+        if ground_gsd is None or ground_jacobian is None:
+            raise ValueError(
+                f"scene {scene.scene_id} has no trustworthy physical ground geometry for the "
+                "required slope-error evaluation"
+            )
+        slope_metrics = compute_slope_metrics(
+            prediction,
+            aligned_reference,
+            gsd_x=ground_gsd[0],
+            gsd_y=ground_gsd[1],
+            ground_jacobian_m=ground_jacobian,
+            valid_mask=valid,
+        )
         p = prediction[valid]
         r = aligned_reference[valid]
         if scene.split == "test":
@@ -458,6 +526,12 @@ def evaluate_final_science_campaign(
                 "valid_pixels": valid_pixels,
                 "coverage_fraction": valid_pixels / prediction.size,
                 "metrics": metrics.model_dump(mode="json"),
+                "slope_metrics": slope_metrics.model_dump(mode="json"),
+                "height_range_performance": _height_range_metrics(
+                    prediction,
+                    aligned_reference,
+                    valid,
+                ),
                 "notes": prediction_entry.notes,
             }
         )
@@ -479,6 +553,7 @@ def evaluate_final_science_campaign(
     report: dict[str, Any] = {
         "schema_version": 2,
         "protocol": "depthwizard_final_science_campaign_v2",
+        "git_head": campaign.git_head,
         "claim_boundary": (
             "Independent evaluation only. Production checkpoint identity and prediction bytes are "
             "frozen before reference evaluation. Reference rasters are prohibited from matching "
@@ -516,8 +591,7 @@ def evaluate_final_science_campaign(
         "cross_sensor_overall": cross_sensor_overall.summary(),
         "terrain": {terrain: terrain_groups[terrain].summary() for terrain in REQUIRED_TERRAINS},
         "sensor": {
-            sensor: accumulator.summary()
-            for sensor, accumulator in sorted(sensor_groups.items())
+            sensor: accumulator.summary() for sensor, accumulator in sorted(sensor_groups.items())
         },
         "scenes": scene_reports,
         "artifacts": {

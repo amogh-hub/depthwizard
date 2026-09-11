@@ -138,6 +138,7 @@ def test_freeze_hashes_predictions_without_opening_reference_rasters(
     assert report["reference_rasters_opened_or_hashed"] is False
     assert report["evaluation_scene_count"] == 5
     frozen = yaml.safe_load(output.read_text(encoding="utf-8"))
+    assert frozen["git_head"] == "a" * 40
     assert len(frozen["checkpoint_sha256"]) == 64
     assert {entry["scene_id"] for entry in frozen["predictions"]} == set(scene_ids)
     assert all(len(entry["prediction_sha256"]) == 64 for entry in frozen["predictions"])

@@ -80,10 +80,7 @@ def test_final_qualification_target_is_lock_enforcing_and_fail_closed() -> None:
     assert "git ls-files --error-unmatch uv.lock" in target
     assert 'test -z "$$(git status --porcelain)"' in target
     assert "uv lock --check" in target
-    assert (
-        "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
-        in target
-    )
+    assert "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone" in target
     assert "verify_da3_runtime_dependencies" in target
     assert "DA3 runtime dependency imports PASS:" in target
     assert "import torch, torchvision; from torch import nn" in target
@@ -144,18 +141,15 @@ def test_all_scientific_sidecar_build_targets_install_ml_extra() -> None:
     root = Path(__file__).resolve().parents[1]
     makefile = (root / "Makefile").read_text(encoding="utf-8")
 
-    sidecar = makefile.split("sidecar-build:\n", 1)[1].split(
-        "\nrelease-train-5-sidecar-smoke:", 1
-    )[0]
+    sidecar = makefile.split("sidecar-build:\n", 1)[1].split("\nrelease-train-5-sidecar-smoke:", 1)[
+        0
+    ]
     workstation = makefile.split("release-train-5-workstation-build:\n", 1)[1].split(
         "\n# Final qualification", 1
     )[0]
 
     assert "uv sync --frozen --python 3.12 --extra ml --extra standalone" in sidecar
-    assert (
-        "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone"
-        in workstation
-    )
+    assert "uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone" in workstation
 
 
 def test_pyinstaller_build_enforces_offline_hook_subprocesses() -> None:
@@ -167,3 +161,17 @@ def test_pyinstaller_build_enforces_offline_hook_subprocesses() -> None:
     assert '"HF_HUB_DISABLE_TELEMETRY": "1"' in source
     assert "strict_non_loopback_egress_guard_during_packaging" in source
     assert "install_strict_offline_network_guard()" in bootstrap.read_text(encoding="utf-8")
+
+
+def test_tag_release_uses_separate_exact_candidate_evidence_ref() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert 'EVIDENCE_REF="refs/heads/qualification/evidence-${GITHUB_SHA}"' in workflow
+    assert 'git archive "$EVIDENCE_COMMIT" evidence/submission' in workflow
+    assert 'EVIDENCE="$DEPTHWIZARD_EVIDENCE_DIR"' in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in workflow
+    assert "domain_generalization_report.json" in workflow
+    assert "software_stability_report.json" in workflow
+    assert "domain-generalization-report.json" not in workflow
+    assert "software-stability-report.json" not in workflow

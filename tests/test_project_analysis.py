@@ -118,6 +118,23 @@ def test_profile_reports_metric_distance_and_surface_delta(tmp_path: Path) -> No
     assert result.samples[-1].reference.value == pytest.approx(119.0)
 
 
+def test_profile_rejects_analyst_scale_when_georeferencing_is_trustworthy(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project_with_analytical_products(tmp_path)
+
+    with pytest.raises(ValueError, match="accepted only when trustworthy georeferenced"):
+        sample_project_profile(
+            ProjectProfileRequest(
+                project_dir=project,
+                start=NormalizedPoint(x=0.0, y=0.5),
+                end=NormalizedPoint(x=1.0, y=0.5),
+                samples=11,
+                horizontal_scale_m_per_pixel=25.0,
+            )
+        )
+
+
 def test_profile_uses_subpixel_bilinear_samples(tmp_path: Path) -> None:
     project, _ = _project_with_analytical_products(tmp_path)
     result = sample_project_profile(
@@ -314,5 +331,21 @@ def test_relative_project_never_invents_metric_distance(tmp_path: Path) -> None:
     )
 
     assert result.horizontal_distance_m is None
+    assert result.horizontal_distance_source == "pixels_only"
     assert result.vertical_units == "relative"
     assert result.horizontal_distance_pixels > 0
+
+    scaled = sample_project_profile(
+        ProjectProfileRequest(
+            project_dir=project,
+            start=NormalizedPoint(x=0.0, y=0.0),
+            end=NormalizedPoint(x=1.0, y=1.0),
+            samples=5,
+            horizontal_scale_m_per_pixel=2.5,
+        )
+    )
+
+    assert scaled.horizontal_distance_source == "analyst_scale"
+    assert scaled.horizontal_distance_m == pytest.approx(scaled.horizontal_distance_pixels * 2.5)
+    assert scaled.analyst_horizontal_scale_m_per_pixel == 2.5
+    assert scaled.vertical_units == "relative"

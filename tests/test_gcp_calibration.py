@@ -17,7 +17,7 @@ def _gcps_for_field(
     offset: float,
 ) -> list[GroundControlPoint]:
     points: list[GroundControlPoint] = []
-    for row, col in ((2, 2), (5, 12), (15, 4), (17, 17)):
+    for row, col in ((2, 2), (3, 15), (5, 12), (12, 6), (15, 4), (17, 17)):
         px, py = transform * (col + 0.5, row + 0.5)
         points.append(
             GroundControlPoint(
@@ -69,8 +69,16 @@ def test_gcp_calibration_requires_independent_quality_evidence() -> None:
     transform = from_origin(1000, 2000, 2.0, 2.0)
     gcps = _gcps_for_field(relative, transform, scale=4.0, offset=50.0)
 
-    with pytest.raises(ValueError, match="at least 4 GCPs"):
-        calibrate_relative_height_with_gcps(relative, transform=transform, gcps=gcps[:3])
+    with pytest.raises(ValueError, match="at least 6 GCPs"):
+        calibrate_relative_height_with_gcps(relative, transform=transform, gcps=gcps[:4])
+
+    result = calibrate_relative_height_with_gcps(
+        relative,
+        transform=transform,
+        gcps=gcps[:4],
+        min_gcps=4,
+    )
+    assert result.calibration.anchors_used == 4
 
 
 def test_gcp_calibration_rejects_clustered_control() -> None:
@@ -78,7 +86,7 @@ def test_gcp_calibration_rejects_clustered_control() -> None:
     relative = (x + 0.5 * y).astype(np.float32)
     transform = from_origin(1000, 2000, 2.0, 2.0)
     gcps: list[GroundControlPoint] = []
-    for row, col in ((1, 1), (1, 2), (2, 1), (2, 2)):
+    for row, col in ((1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3)):
         px, py = transform * (col + 0.5, row + 0.5)
         gcps.append(
             GroundControlPoint(
@@ -97,7 +105,7 @@ def test_dem_plus_gcp_applies_only_global_vertical_datum_offset() -> None:
     metric_dsm = (100.0 + 0.8 * x + 0.3 * y).astype(np.float32)
     transform = from_origin(1000, 2000, 2.0, 2.0)
     gcps: list[GroundControlPoint] = []
-    for row, col in ((2, 2), (5, 12), (15, 4), (17, 17)):
+    for row, col in ((2, 2), (3, 15), (5, 12), (12, 6), (15, 4), (17, 17)):
         px, py = transform * (col + 0.5, row + 0.5)
         gcps.append(
             GroundControlPoint(

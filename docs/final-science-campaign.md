@@ -35,6 +35,7 @@ For example:
 
 ```yaml
 schema_version: 2
+git_head: 0123456789abcdef0123456789abcdef01234567
 model_id: calibrated-da3-production
 checkpoint_sha256: 7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960
 predictions:
@@ -188,7 +189,8 @@ official urban/sparse/hilly/forested result is not diluted by cross-sensor exper
 - pooled cross-sensor RMSE, MAE, Pearson correlation and mean bias;
 - per-terrain pooled metrics;
 - per-sensor pooled metrics;
-- every scene's full DepthWizard elevation metrics;
+- every scene's full DepthWizard elevation metrics, full-affine slope errors and
+  lower/middle/upper reference-elevation-band performance;
 - valid-pixel coverage;
 - RGB/prediction/reference/calibration-evidence SHA identities;
 - registry and prediction-manifest SHA identities;

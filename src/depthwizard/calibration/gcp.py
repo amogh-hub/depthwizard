@@ -10,6 +10,9 @@ from scipy.spatial import ConvexHull, QhullError
 from depthwizard.calibration.robust import robust_affine_calibration
 from depthwizard.contracts import CalibrationResult, GroundControlPoint
 
+MINIMUM_GCP_COUNT = 4
+RECOMMENDED_GCP_COUNT = 6
+
 
 @dataclass(frozen=True)
 class GCPCalibrationOutput:
@@ -179,7 +182,7 @@ def calibrate_relative_height_with_gcps(
     gcps: list[GroundControlPoint],
     low_frequency_sigma_px: float | None = None,
     resolve_orientation: bool = True,
-    min_gcps: int = 4,
+    min_gcps: int = RECOMMENDED_GCP_COUNT,
     min_abs_anchor_correlation: float = 0.35,
     max_anchor_rmse_m: float | None = 10.0,
     max_cross_validation_rmse_m: float | None = 15.0,
@@ -190,9 +193,11 @@ def calibrate_relative_height_with_gcps(
 ) -> GCPCalibrationOutput:
     """Calibrate relative height with sparse metric Ground Control Points.
 
-    GCP coordinates are interpreted in the same CRS as the source raster. Four or more reliable,
-    spatially distributed points are required so scale/offset fitting retains independent quality
-    evidence; two points merely determine the two affine parameters. When
+    GCP coordinates are interpreted in the same CRS as the source raster. Six or more reliable,
+    spatially distributed points are required by default so scale/offset fitting retains independent
+    quality evidence; four- or five-point fits require an explicit lower ``min_gcps`` override and
+    must be reported as low-confidence by the caller. Two points merely determine the two affine
+    parameters. When
     ``resolve_orientation`` is enabled, a negative GCP/relative-height correlation is recorded and
     the relative-height polarity is inverted before the physically constrained positive-scale fit.
     This mirrors the DEM calibration contract and prevents domain-shift polarity from being hidden
@@ -201,8 +206,10 @@ def calibrate_relative_height_with_gcps(
     rel = np.asarray(relative_height, dtype=np.float64)
     if rel.ndim != 2:
         raise ValueError("relative_height must be a 2D raster")
-    if min_gcps < 4:
-        raise ValueError("min_gcps must be >= 4 to preserve independent quality evidence")
+    if min_gcps < MINIMUM_GCP_COUNT:
+        raise ValueError(
+            f"min_gcps must be >= {MINIMUM_GCP_COUNT} to preserve independent quality evidence"
+        )
     if len(gcps) < min_gcps:
         raise ValueError(f"at least {min_gcps} GCPs are required for metric calibration")
     if low_frequency_sigma_px is not None and low_frequency_sigma_px < 0:
@@ -237,7 +244,9 @@ def calibrate_relative_height_with_gcps(
             "relative height is too weakly correlated with GCP elevations for defensible metric "
             f"calibration (|r|={abs(correlation_before):.3f} < {min_abs_anchor_correlation:.3f})"
         )
-    orientation_flipped = bool(resolve_orientation and np.isfinite(correlation_before) and correlation_before < 0)
+    orientation_flipped = bool(
+        resolve_orientation and np.isfinite(correlation_before) and correlation_before < 0
+    )
     if not resolve_orientation and np.isfinite(correlation_before) and correlation_before < 0:
         raise ValueError(
             "GCP evidence implies inverted height orientation while orientation resolution is disabled"
@@ -322,7 +331,7 @@ def validate_metric_dsm_with_gcps(
     *,
     transform: Affine,
     gcps: list[GroundControlPoint],
-    min_gcps: int = 4,
+    min_gcps: int = RECOMMENDED_GCP_COUNT,
     max_rmse_m: float | None = 10.0,
     max_cross_validation_rmse_m: float | None = 15.0,
     max_abs_offset_correction_m: float = 50.0,

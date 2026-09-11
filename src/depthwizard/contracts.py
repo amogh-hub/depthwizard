@@ -29,6 +29,19 @@ class ProjectRunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class RasterQualityAssessment(BaseModel):
+    """Conservative, sampled image-quality diagnostics used to warn rather than fabricate data."""
+
+    status: Literal["pass", "warning", "not_assessed"] = "not_assessed"
+    flags: list[str] = Field(default_factory=list)
+    saturation_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    deep_shadow_candidate_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    bright_low_chroma_candidate_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    texture_gradient_score: float | None = Field(default=None, ge=0.0)
+    off_nadir_degrees: float | None = Field(default=None, ge=0.0, le=90.0)
+    assessment_limitations: list[str] = Field(default_factory=list)
+
+
 class RasterMetadata(BaseModel):
     path: Path
     width: int = Field(gt=0)
@@ -44,10 +57,13 @@ class RasterMetadata(BaseModel):
     vertical_crs: str | None = None
     vertical_datum: str | None = None
     elevation_reference: Literal["orthometric", "ellipsoidal", "local", "unknown"] = "unknown"
+    quality: RasterQualityAssessment = Field(default_factory=RasterQualityAssessment)
 
     @property
     def input_kind(self) -> InputKind:
-        return InputKind.GEOREFERENCED if self.crs and self.transform else InputKind.NON_GEOREFERENCED
+        return (
+            InputKind.GEOREFERENCED if self.crs and self.transform else InputKind.NON_GEOREFERENCED
+        )
 
 
 class GroundControlPoint(BaseModel):
@@ -226,6 +242,15 @@ class ProjectProfileRequest(BaseModel):
     start: NormalizedPoint
     end: NormalizedPoint
     samples: int = Field(default=128, ge=2, le=512)
+    horizontal_scale_m_per_pixel: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1_000_000.0,
+        description=(
+            "Optional analyst-declared scale for non-georeferenced imagery. It affects horizontal "
+            "distance only and never converts relative elevation into metres."
+        ),
+    )
 
 
 class ProfileSample(BaseModel):
@@ -248,6 +273,8 @@ class ProjectProfileResult(BaseModel):
     sample_count: int = Field(ge=2)
     horizontal_distance_pixels: float = Field(ge=0.0)
     horizontal_distance_m: float | None = Field(default=None, ge=0.0)
+    horizontal_distance_source: Literal["georeferenced_ground", "analyst_scale", "pixels_only"]
+    analyst_horizontal_scale_m_per_pixel: float | None = Field(default=None, gt=0.0)
     vertical_delta: float | None = None
     vertical_units: str | None = None
     minimum_surface: float | None = None
@@ -375,7 +402,9 @@ class ProcessingRequest(BaseModel):
     min_dem_anchor_correlation: float = Field(default=0.25, ge=0.0, le=1.0)
     max_dem_anchor_rmse_m: float | None = Field(default=15.0, gt=0.0)
     max_dem_normalized_rmse: float = Field(default=0.35, gt=0.0, le=1.0)
-    min_gcp_count: int = Field(default=4, ge=4, le=10_000)
+    # Six points are the production default. Expert/API callers may explicitly lower this to four
+    # or five; the runtime then records the result as low-confidence GCP evidence.
+    min_gcp_count: int = Field(default=6, ge=4, le=10_000)
     max_gcp_anchor_rmse_m: float | None = Field(default=10.0, gt=0.0)
     max_gcp_cross_validation_rmse_m: float | None = Field(default=15.0, gt=0.0)
     vertical_crs: str | None = Field(default=None, max_length=512)
@@ -410,8 +439,8 @@ class ProcessingRequest(BaseModel):
         if self.gcps and len(self.gcps) < self.min_gcp_count:
             raise ValueError(
                 f"GCP metric calibration requires at least {self.min_gcp_count} points; "
-                "two points only determine an affine transform and do not provide independent "
-                "quality evidence"
+                "six spatially distributed points are the production default; four- or five-point "
+                "fits require an explicit min_gcp_count override and are reported as low-confidence"
             )
         if self.low_frequency_sigma_px is not None and self.low_frequency_sigma_m is not None:
             raise ValueError(

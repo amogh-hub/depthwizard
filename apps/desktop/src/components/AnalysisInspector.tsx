@@ -11,11 +11,17 @@ function sampleLabel(available: boolean, value: number | null, units: string | n
 
 function distanceLabel(profile: ProjectProfileResult): string {
   if (profile.horizontal_distance_m !== null) {
-    return profile.horizontal_distance_m >= 1000
+    const value = profile.horizontal_distance_m >= 1000
       ? `${(profile.horizontal_distance_m / 1000).toFixed(3)} km`
       : `${profile.horizontal_distance_m.toFixed(2)} m`;
+    return profile.horizontal_distance_source === "analyst_scale" ? `${value} · analyst scale` : value;
   }
   return `${profile.horizontal_distance_pixels.toFixed(2)} px`;
+}
+
+function distanceTitle(profile: ProjectProfileResult, metricLabel: string): string {
+  if (profile.horizontal_distance_source === "analyst_scale") return "Analyst-scaled distance";
+  return profile.horizontal_distance_m !== null ? metricLabel : "Pixel distance";
 }
 
 function fractionalDistanceLabel(profile: ProjectProfileResult, fraction: number): string {
@@ -138,14 +144,14 @@ export function AnalysisInspector({
         <section className="dw-section">
           <div className="dw-section-title">Two-point measurement</div>
           <dl className="dw-property-list">
-            <div className="dw-property"><dt>{measurement.horizontal_distance_m !== null ? "Ground distance" : "Pixel distance"}</dt><dd>{distanceLabel(measurement)}</dd></div>
+            <div className="dw-property"><dt>{distanceTitle(measurement, "Ground distance")}</dt><dd>{distanceLabel(measurement)}</dd></div>
             <div className="dw-property"><dt>Endpoint A</dt><dd>{sampleLabel(measurement.samples[0]?.surface.available ?? false, measurement.samples[0]?.surface.value ?? null, measurement.vertical_units)}</dd></div>
             <div className="dw-property"><dt>Endpoint B</dt><dd>{sampleLabel(measurement.samples.at(-1)?.surface.available ?? false, measurement.samples.at(-1)?.surface.value ?? null, measurement.vertical_units)}</dd></div>
             <div className="dw-property"><dt>Signed Δz (B − A)</dt><dd>{valueLabel(measurement.vertical_delta, measurement.vertical_units)}</dd></div>
           </dl>
           <div className="dw-validation-empty dw-analysis-note">
             <strong>Surface-to-surface measurement</strong>
-            <p>Δz is endpoint B surface elevation minus endpoint A surface elevation. It is not automatically a building height; use Structures for a footprint-versus-local-ground estimate.</p>
+            <p>Δz is endpoint B surface elevation minus endpoint A surface elevation. It is not automatically a building height; use Structures for a footprint-versus-local-ground estimate. An analyst horizontal scale never converts relative Δz into metres.</p>
           </div>
         </section>
       )}
@@ -155,7 +161,7 @@ export function AnalysisInspector({
           <div className="dw-section-title">Elevation transect</div>
           <ProfileChart profile={profile} />
           <dl className="dw-property-list dw-profile-properties">
-            <div className="dw-property"><dt>{profile.horizontal_distance_m !== null ? "Ground length" : "Pixel length"}</dt><dd>{distanceLabel(profile)}</dd></div>
+            <div className="dw-property"><dt>{distanceTitle(profile, "Ground length")}</dt><dd>{distanceLabel(profile)}</dd></div>
             <div className="dw-property"><dt>Endpoint Δz</dt><dd>{valueLabel(profile.vertical_delta, profile.vertical_units)}</dd></div>
             <div className="dw-property"><dt>Cumulative gain</dt><dd>{valueLabel(profile.elevation_gain, profile.vertical_units)}</dd></div>
             <div className="dw-property"><dt>Cumulative loss</dt><dd>{valueLabel(profile.elevation_loss, profile.vertical_units)}</dd></div>

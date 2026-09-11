@@ -10,7 +10,7 @@ DepthWizard is a unified scientific geospatial workstation that converts one opt
 - non-georeferenced **dimensionless rDSM** output with no fabricated metres or CRS;
 - georeferenced **metric DSM** calibration from low-resolution DEM, spatially defensible sparse GCPs, or DEM + GCP fusion, with absolute/datum-resolved claims only when vertical metadata is explicit;
 - DA3MONO-LARGE relative-geometry prior with exact upstream source commit, Hugging Face revision and checkpoint SHA identity verified against the bytes before model load;
-- robust polarity diagnosis, conditioned Huber/IRLS scale-offset fitting, correlation/coverage/relief/RMSE gates, coarse-DEM frequency matching, independent-support anchor sampling and physical-scale-aware terrain-bias correction;
+- robust polarity diagnosis, conditioned Huber/IRLS scale-offset fitting, a six-GCP production default with explicitly low-confidence four/five-point expert overrides, correlation/coverage/relief/RMSE gates, coarse-DEM frequency matching, independent-support anchor sampling and physical-scale-aware terrain-bias correction;
 - DEM + GCP fusion that preserves DEM-established relief and permits only robust global vertical-datum offset correction from GCPs;
 - DEM calibration fails closed when trustworthy physical ground support cannot be derived for both the optical target and DEM, rather than treating resampled pixels as independent evidence;
 - conservative model-native confidence weighting for DEM calibration when usable, explicitly **not probability calibrated**, with truthful DEM-only weighting fallback when confidence is missing/degenerate;
@@ -19,12 +19,18 @@ DepthWizard is a unified scientific geospatial workstation that converts one opt
 - overlap-aware tiled inference/harmonization plus an objective seam-to-interior discontinuity evaluator for final large-scene evidence;
 - RMSE, MAE, Pearson/Spearman correlation, NMAD, bias, percentile errors, slope metrics, aligned reference DSM and residual products;
 - analyst probe, signed two-point surface Δz, subpixel elevation transects, cumulative profile gain/loss and synchronized reference/residual inspection;
+- optional analyst-declared metres-per-pixel horizontal distance for non-georeferenced projects,
+  explicitly labelled and never used to relabel relative vertical values as metres;
 - explicit-footprint structural-height estimation using a robust surrounding local-ground plane rather than mislabelling arbitrary endpoint Δz as building height;
 - textured terrain GLB + persistent LOD pyramid with corrected upward-facing geometry, analytical overlays, Orbit/Fly/First Person/Top Down navigation and deterministic flythrough;
 - evidence-native 3D analyst interaction: registered surface probing, Measure, Profiles and Structures remain tied to authoritative raster coordinates;
+- provenance-burned 3D PNG screenshots whose pixels and filename record the packaged source commit
+  and current relative/metric display state;
 - immutable project/product SHA identities, source/evidence provenance, fail-closed artifact reuse and hash-audited export bundles;
 - packaged Tauri + React + Three.js workstation with PyInstaller ONEDIR scientific sidecar, a bundled hash-verified DA3 snapshot, loopback-only authenticated IPC, owned lifecycle and offline-first operation;
 - bounded one-worker scientific queue, duplicate-project admission protection, cooperative cancellation, bounded job history and leak-safe replacement of late Three.js mesh loads;
+- bounded sampled source-quality diagnostics for saturation, insufficient texture, deep-shadow/bright-low-chroma candidates and metadata-declared off-nadir building-lean risk;
+- actionable `resource_exhausted` job failures for CPU/CUDA/MPS memory pressure and split React/Tauri/Three.js production chunks;
 - Tauri startup binds readiness to the exact spawned sidecar with an independent 256-bit per-process boot nonce before the API session token is exposed to React;
 - standalone recovery/error paths, malformed-input rejection and no-terminal packaged processing acceptance;
 - exact problem-statement traceability in `docs/requirements-traceability.yaml`.
@@ -51,6 +57,7 @@ Release dependency reproducibility is independently audited:
 
 ```bash
 python -m scripts.check_release_reproducibility --strict
+python -m scripts.generate_supply_chain_reports
 ```
 
 That gate requires exact top-level npm versions and committed resolver locks for npm (`apps/desktop/package-lock.json`), Cargo (`apps/desktop/src-tauri/Cargo.lock`) and Python (`uv.lock`). Passing the lock audit is necessary but does not replace clean-machine RT7 qualification.
@@ -94,3 +101,6 @@ Every feature and scientific claim must trace to an official SIH/ISRO requiremen
 
 The exact boundary between implemented hardening and still-required exact-head/external evidence is
 maintained in `docs/elite-finalization-status.md`.
+
+The compact reviewer index is `docs/judge-evidence-pack.md`; the only authorized merge/tag/publish
+sequence is `docs/release-playbook.md`.

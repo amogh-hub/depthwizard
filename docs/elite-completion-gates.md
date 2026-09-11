@@ -22,7 +22,10 @@ Evidence: estimator policy/manifest, `height_model_manifest.json`, training repo
 - Urban, sparse, hilly and forested results are reported separately.
 - Cross-sensor holdout is reported.
 - DA3-only and published reproducible baselines are run on identical evaluation inputs.
-- Required ablations are reported: refinement off, uncertainty weighting off, harmonization off, evidence calibration off and backbone substitution where feasible.
+- Required production-path ablations are reported: DEM calibration, GCP calibration, confidence
+  weighting, low-frequency bias correction, global versus per-tile normalization, semantic priors,
+  seam harmonization, learned refinement and backbone substitution. Unsupported/non-production
+  variants are explicitly `not_applicable` with a technical reason instead of invented measurements.
 - Error-confidence reliability and tile-seam diagnostics are included when the selected estimator emits a defined confidence quantity; absence of native confidence is reported explicitly and is never replaced with fabricated values.
 - Negative results remain in the evidence record and cannot be rewritten as promotions.
 
@@ -34,7 +37,8 @@ Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablatio
 - GCP-only calibration is operational.
 - DEM + GCP fusion is operational with GCPs receiving higher reliability.
 - DEM + GCP fusion preserves DEM-established relief scale; sparse GCPs may validate and correct only a robust global vertical-datum offset.
-- GCP calibration requires at least four spatially distributed, non-collinear points and passes leave-one-out error gates.
+- GCP calibration requires six spatially distributed, non-collinear points by default and passes
+  leave-one-out error gates. An explicit expert four/five-point override is marked low-confidence.
 - Analyst-supplied GCP file identity is hash-audited from inspection through calibration; post-inspection byte changes cause an explicit abort.
 - Weak/underdetermined evidence causes an explicit abort instead of fabricated metric elevation.
 - Calibration residual diagnostics and evidence provenance are emitted. Confidence/uncertainty is consumed or emitted only when its semantics are explicitly defined; undefined confidence is never fabricated.
@@ -93,6 +97,9 @@ The final app has working, non-placeholder controls for:
 - confidence/error interpretation when native confidence exists, otherwise an explicit unavailable state
 - metadata/provenance inspection
 - export
+- PNG screenshot export with the exact source commit and display state burned into the image
+- optional analyst-declared horizontal scale for relative-project distance/profile tools, while
+  relative elevations remain dimensionless
 
 Evidence: interaction acceptance checklist and screenshots captured from real project artifacts.
 
@@ -115,6 +122,7 @@ Evidence: `standalone_acceptance_report.md`, `software_stability_report.json`, `
 - Calibration semantics and limitations are documented.
 - Training and evaluation commands are reproducible.
 - Dataset licenses/provenance are recorded.
+- A commit-bound CycloneDX SBOM and dependency-license inventory are generated from all three locks.
 - Every presentation claim is traceable to an evidence artifact.
 
 Evidence: reproducibility dry run and final documentation audit.

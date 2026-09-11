@@ -103,6 +103,33 @@ def test_ground_sample_distance_is_metric_for_projected_crs(tmp_path: Path) -> N
     assert abs(metadata.ground_sample_distance_x - 10.0) < 0.05
 
 
+def test_raster_quality_flags_saturation_low_texture_and_off_nadir(tmp_path: Path) -> None:
+    path = tmp_path / "flat_off_nadir.tif"
+    data = np.zeros((3, 32, 32), dtype=np.uint8)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=32,
+        width=32,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:32643",
+        transform=from_origin(500000, 1500000, 1, 1),
+    ) as dst:
+        dst.write(data)
+        dst.update_tags(OFF_NADIR_ANGLE="27.5")
+
+    quality = inspect_raster(path).quality
+
+    assert quality.status == "warning"
+    assert quality.saturation_fraction == 1.0
+    assert quality.off_nadir_degrees == 27.5
+    assert "high_saturation_fraction" in quality.flags
+    assert "insufficient_dynamic_range_for_radiometric_quality_assessment" in quality.flags
+    assert "off_nadir_building_lean_risk" in quality.flags
+
+
 def test_web_mercator_gsd_is_true_ground_spacing_not_map_metres(tmp_path: Path) -> None:
     path = tmp_path / "joshimath_webmercator.tif"
     to_map = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)

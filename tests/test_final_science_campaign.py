@@ -152,6 +152,7 @@ def _setup_campaign(
         yaml.safe_dump(
             {
                 "schema_version": 2,
+                "git_head": "a" * 40,
                 "model_id": "DA3MONO-LARGE",
                 "checkpoint_sha256": "a" * 64,
                 "predictions": predictions,
@@ -189,6 +190,11 @@ def test_campaign_emits_required_four_terrain_and_cross_sensor_evidence(
     assert report["terrain"]["forested"]["mae_m"] == pytest.approx(4.0, abs=1e-5)
     assert report["test_overall"]["rmse_m"] == pytest.approx(np.sqrt(7.5), abs=1e-5)
     assert report["cross_sensor_overall"]["rmse_m"] == pytest.approx(0.5, abs=1e-5)
+    assert all("slope_metrics" in scene for scene in report["scenes"])
+    assert all(
+        {item["band"] for item in scene["height_range_performance"]} == {"lower", "middle", "upper"}
+        for scene in report["scenes"]
+    )
 
     rows = list(csv.DictReader((output_dir / "terrain_breakdown.csv").open()))
     assert [row["terrain"] for row in rows] == ["urban", "sparse", "hilly", "forested"]
@@ -196,6 +202,7 @@ def test_campaign_emits_required_four_terrain_and_cross_sensor_evidence(
         (output_dir / "domain_generalization_report.json").read_text(encoding="utf-8")
     )
     assert persisted["protocol"] == "depthwizard_final_science_campaign_v2"
+    assert persisted["git_head"] == "a" * 40
 
 
 def test_campaign_requires_all_four_test_terrains(tmp_path: Path) -> None:

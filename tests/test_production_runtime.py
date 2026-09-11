@@ -106,7 +106,14 @@ def _metric_gcps() -> list[GroundControlPoint]:
             elevation_m=75.0 + 20.0 * float(relative[row, col]),
         )
 
-    return [gcp(2, 2), gcp(4, 25), gcp(18, 8), gcp(27, 28)]
+    return [
+        gcp(2, 2),
+        gcp(4, 25),
+        gcp(10, 16),
+        gcp(18, 8),
+        gcp(24, 20),
+        gcp(27, 28),
+    ]
 
 
 def test_current_production_policy_keeps_external_safe_da3() -> None:
@@ -221,6 +228,30 @@ def test_gcp_only_metric_project_recovers_absolute_height(tmp_path: Path) -> Non
         "sha256": None,
         "source": None,
     }
+    assert calibration["evidence"]["gcp"]["evidence_confidence"]["classification"] == "standard"
+
+
+def test_explicit_small_gcp_override_is_persisted_as_low_confidence(tmp_path: Path) -> None:
+    source = tmp_path / "rgb.tif"
+    project = tmp_path / "project"
+    _write_rgb(source, georeferenced=True)
+
+    result = ProductionElevationRuntime(prior=FakePrior()).run(
+        ProcessingRequest(
+            source=source,
+            output_dir=project,
+            gcps=_metric_gcps()[:4],
+            min_gcp_count=4,
+            requested_output="dsm",
+        )
+    )
+
+    calibration = json.loads(Path(result.artifacts["calibration"]).read_text(encoding="utf-8"))
+    confidence = calibration["evidence"]["gcp"]["evidence_confidence"]
+    assert confidence["classification"] == "low_confidence"
+    assert confidence["recommended_minimum"] == 6
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert any("evidence confidence is low" in warning for warning in manifest["warnings"])
 
 
 def test_declared_vertical_reference_produces_datum_resolved_absolute_dsm(
