@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from scripts.release_train_7_soak import (
     QUALIFYING_DURATION_SECONDS,
+    _resolved_output_dir,
     _sample_memory,
     qualification_status,
 )
@@ -26,3 +29,10 @@ def test_soak_memory_summary_uses_first_last_and_peak() -> None:
         "end_kib": 120,
         "peak_kib": 150,
     }
+
+
+def test_soak_resolves_relative_output_before_desktop_launch(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    resolved = _resolved_output_dir(Path("relative-evidence"))
+    assert resolved.is_absolute()
+    assert resolved == tmp_path / "relative-evidence"

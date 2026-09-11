@@ -136,6 +136,11 @@ def _sample_float(sample: dict[str, object], key: str) -> float:
     return float(value)
 
 
+def _resolved_output_dir(output_dir: Path) -> Path:
+    """Return a stable absolute directory for paths consumed by the app subprocess."""
+    return output_dir.resolve(strict=False)
+
+
 def run_soak(
     *,
     duration_seconds: float,
@@ -150,6 +155,10 @@ def run_soak(
         raise ValueError("interval_seconds must be positive")
 
     git_head = _git_head()
+    # The desktop process starts with the executable's directory as its working directory. Resolve
+    # operator-supplied relative output paths before exporting control/report locations so the
+    # child never interprets them relative to the application bundle.
+    output_dir = _resolved_output_dir(output_dir)
     bundle, executable, sidecar, runtime_manifest = _macos_bundle()
     output_dir.mkdir(parents=True, exist_ok=True)
     control_path = output_dir / ".soak-control.json"
