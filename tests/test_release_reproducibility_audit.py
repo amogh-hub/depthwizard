@@ -1,4 +1,5 @@
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -175,3 +176,18 @@ def test_tag_release_uses_separate_exact_candidate_evidence_ref() -> None:
     assert "software_stability_report.json" in workflow
     assert "domain-generalization-report.json" not in workflow
     assert "software-stability-report.json" not in workflow
+
+
+def test_all_remote_github_actions_are_pinned_to_immutable_commits() -> None:
+    root = Path(__file__).resolve().parents[1]
+    uses_pattern = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)")
+
+    for workflow_path in sorted((root / ".github" / "workflows").glob("*.yml")):
+        for line_number, line in enumerate(workflow_path.read_text(encoding="utf-8").splitlines(), 1):
+            match = uses_pattern.match(line)
+            if match is None or match.group(1).startswith("./"):
+                continue
+            action = match.group(1)
+            assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action), (
+                f"{workflow_path.name}:{line_number} must pin {action!r} to a full commit SHA"
+            )
