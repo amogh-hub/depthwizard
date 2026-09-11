@@ -20,6 +20,7 @@ apps/desktop/src-tauri/resources/depthwizard-core-runtime/
 .env.*
 !.env.example
 /workspace/
+/data/acceptance/
 artifacts/
 checkpoints/
 *.ckpt
