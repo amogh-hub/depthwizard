@@ -1,0 +1,161 @@
+name: publish-qualified-depthwizard-012301b
+
+on:
+  push:
+    branches: [qualification/release-finalization-012301b]
+    paths:
+      - .github/workflows/release-finalization-012301b.yml
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-qualified-depthwizard-012301b
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    name: verify exact evidence and publish exact qualified DMG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TARGET_SHA: 012301b9c1910ef4ccde5b3da5d4e4d94da60ce6
+      EVIDENCE_SHA: 30aa3e053d853df1d20214dd68c25fbd8866c5a9
+      CLEAN_RUN_ID: "34702827804"
+      EXPECTED_DMG_SHA256: 8983ea3a624e677670cf5ebf919e860b253cf2b07c0e8ccc9c169a92c1dd1a15
+      RELEASE_TAG: v0.2.0-sih-final
+
+    steps:
+      - name: Checkout finalization controller
+        uses: actions/checkout@v4
+        with:
+          path: controller
+
+      - name: Checkout exact frozen release source
+        uses: actions/checkout@v4
+        with:
+          ref: 012301b9c1910ef4ccde5b3da5d4e4d94da60ce6
+          fetch-depth: 0
+          path: qualified
+
+      - name: Checkout immutable exact-head evidence
+        uses: actions/checkout@v4
+        with:
+          ref: qualification/evidence-012301b9c1910ef4ccde5b3da5d4e4d94da60ce6
+          fetch-depth: 1
+          path: evidence-ref
+
+      - name: Download the DMG qualified by the fresh ARM64 run
+        uses: actions/download-artifact@v4
+        with:
+          name: depthwizard-qualified-dmg-012301b
+          path: qualified-artifact
+          github-token: ${{ github.token }}
+          repository: amogh-hub/depthwizard
+          run-id: ${{ env.CLEAN_RUN_ID }}
+
+      - name: Fail closed on source, tag, main, evidence or package drift
+        run: |
+          set -euo pipefail
+          SOURCE="$GITHUB_WORKSPACE/qualified"
+          EVIDENCE="$GITHUB_WORKSPACE/evidence-ref/evidence/submission"
+          test "$(git -C "$SOURCE" rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git -C "$SOURCE" rev-list -n 1 "$RELEASE_TAG")" = "$TARGET_SHA"
+          git -C "$SOURCE" fetch --no-tags origin main
+          test "$(git -C "$SOURCE" rev-parse origin/main)" = "$TARGET_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/evidence-ref" rev-parse HEAD)" = "$EVIDENCE_SHA"
+          test -z "$(git -C "$SOURCE" status --porcelain)"
+          cd "$EVIDENCE"
+          sha256sum --check SHA256SUMS
+          DMG="$(find "$GITHUB_WORKSPACE/qualified-artifact" -type f -name 'DepthWizard_0.2.0_aarch64.dmg' -print -quit)"
+          test -n "$DMG"
+          test "$(sha256sum "$DMG" | awk '{print $1}')" = "$EXPECTED_DMG_SHA256"
+          test "$(find "$GITHUB_WORKSPACE/qualified-artifact" -type f -name '*.dmg' | wc -l | tr -d ' ')" = "1"
+
+      - name: Require all eleven SIH26175 completion gates
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          EVIDENCE="$GITHUB_WORKSPACE/evidence-ref/evidence/submission"
+          python3 scripts/check_sih26175_completion.py \
+            --strict \
+            --rt5 "$EVIDENCE/release-train-5-full-acceptance.json" \
+            --inputs "$EVIDENCE/input-format-contract.json" \
+            --science "$EVIDENCE/domain_generalization_report.json" \
+            --baselines "$EVIDENCE/baseline-comparison.json" \
+            --ablations "$EVIDENCE/ablation-report.json" \
+            --soak "$EVIDENCE/software_stability_report.json" \
+            --operator "$EVIDENCE/operator-acceptance.json" \
+            --performance "$EVIDENCE/rendering-performance.json" \
+            --clean-machine "$EVIDENCE/clean-machine-standalone.json" \
+            --output "$RUNNER_TEMP/problem-statement-completion.json"
+          python3 - "$RUNNER_TEMP/problem-statement-completion.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert report["status"] == "PASS_SIH26175_PROBLEM_STATEMENT_COMPLETE"
+          assert report["blocking_gates"] == []
+          assert report["git_head"] == "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6"
+          PY
+
+      - name: Assemble checksummed release assets
+        run: |
+          set -euo pipefail
+          SOURCE="$GITHUB_WORKSPACE/qualified"
+          EVIDENCE="$GITHUB_WORKSPACE/evidence-ref/evidence/submission"
+          RELEASE_DIR="$GITHUB_WORKSPACE/release"
+          DMG="$(find "$GITHUB_WORKSPACE/qualified-artifact" -type f -name 'DepthWizard_0.2.0_aarch64.dmg' -print -quit)"
+          mkdir -p "$RELEASE_DIR/evidence/submission"
+          cp "$DMG" "$RELEASE_DIR/DepthWizard_0.2.0_aarch64.dmg"
+          cp -R "$EVIDENCE/." "$RELEASE_DIR/evidence/submission/"
+          printf '%s\n' "$EVIDENCE_SHA" > "$RELEASE_DIR/evidence/QUALIFICATION_COMMIT"
+          cp "$RUNNER_TEMP/problem-statement-completion.json" "$RELEASE_DIR/problem-statement-completion.json"
+          cp "$SOURCE/model-manifests/da3mono-large.yaml" "$RELEASE_DIR/da3mono-large.yaml"
+          python3 "$SOURCE/scripts/generate_supply_chain_reports.py" \
+            --output-dir "$RELEASE_DIR/supply-chain"
+          tar -C "$RELEASE_DIR" -czf \
+            "$RELEASE_DIR/${RELEASE_TAG}-evidence-and-manifests.tar.gz" \
+            evidence supply-chain da3mono-large.yaml problem-statement-completion.json
+          cd "$RELEASE_DIR"
+          sha256sum \
+            DepthWizard_0.2.0_aarch64.dmg \
+            "${RELEASE_TAG}-evidence-and-manifests.tar.gz" \
+            > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          test "$(awk '/DepthWizard_0.2.0_aarch64.dmg/{print $1}' SHA256SUMS)" = \
+            "$EXPECTED_DMG_SHA256"
+
+      - name: Publish the authoritative checksum-verifiable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to replace published assets." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            "$GITHUB_WORKSPACE/release/DepthWizard_0.2.0_aarch64.dmg" \
+            "$GITHUB_WORKSPACE/release/SHA256SUMS" \
+            "$GITHUB_WORKSPACE/release/${RELEASE_TAG}-evidence-and-manifests.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "DepthWizard v0.2.0 — SIH26175 Qualified Release" \
+            --notes "Exact qualified source: $TARGET_SHA. All eleven SIH26175 completion gates passed with an empty blocking-gate list. The attached DMG is the exact artifact qualified offline on a fresh GitHub-hosted macOS 15 ARM64 VM in run $CLEAN_RUN_ID. The application is ad-hoc signed and is not Apple Developer-ID notarized; this limitation is disclosed intentionally. Verify SHA256SUMS before installation."
+
+      - name: Re-download release checksums and verify published asset identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-verification"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/release-verification"
+          cd "$RUNNER_TEMP/release-verification"
+          sha256sum --check SHA256SUMS
+          test "$(sha256sum DepthWizard_0.2.0_aarch64.dmg | awk '{print $1}')" = \
+            "$EXPECTED_DMG_SHA256"
