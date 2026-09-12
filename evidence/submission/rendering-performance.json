@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "status": "PASS_SUSTAINED_3D_PERFORMANCE",
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "duration_seconds": 78.293,
+  "sample_count": 65,
+  "valid_sample_count": 65,
+  "mean_fps": 30.015384615384615,
+  "p05_fps": 30.0,
+  "min_fps": 30.0,
+  "max_fps": 31.0,
+  "navigation_exercised": true,
+  "camera_positions": ["aerial", "low"],
+  "rendering_modes": ["texture", "analytical_overlay"],
+  "project": "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/release-train-5-full/project",
+  "bundle": "/private/tmp/depthwizard-release-eb4aca3/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app",
+  "measurement_surface": "Accessibility-observed live renderer telemetry in the exact-head packaged app during the authenticated two-hour soak",
+  "actions": [
+    {"sample": 4, "action": "orbit_drag", "renderer_ready": true},
+    {"sample": 11, "action": "fly_mode", "renderer_ready": true},
+    {"sample": 15, "action": "fly_forward", "renderer_ready": true},
+    {"sample": 21, "action": "first_person", "renderer_ready": true},
+    {"sample": 25, "action": "first_person_forward", "renderer_ready": true},
+    {"sample": 31, "action": "top_down", "renderer_ready": true},
+    {"sample": 37, "action": "slope_overlay", "renderer_ready": true},
+    {"sample": 44, "action": "hillshade_overlay", "renderer_ready": true, "analytical_frame_validated": true},
+    {"sample": 51, "action": "texture", "renderer_ready": true},
+    {"sample": 57, "action": "deterministic_flythrough", "renderer_ready": true}
+  ],
+  "fps_samples": [
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 31, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+    30, 30, 30, 30, 30
+  ],
+  "claim_boundary": "Measured on this finale Mac and exact packaged SHA. It does not imply identical FPS on different GPUs, displays or power states."
+}

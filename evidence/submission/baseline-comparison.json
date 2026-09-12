@@ -1,0 +1,73 @@
+{
+  "claim_boundary": "All four implemented baselines use the same five frozen inputs and one common finite evaluation mask per scene. No claim of superiority over an unmeasured published model.",
+  "evaluation_mask_manifest": "/private/tmp/depthwizard-final-science-012301/campaign/evidence/evaluation-mask-manifest.json",
+  "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "input_manifest": "/private/tmp/depthwizard-final-science-012301/campaign/evidence/input-manifest.json",
+  "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+  "method_definitions": {
+    "coarse_dem": "independent calibration DEM reprojected to the identical target grid",
+    "depthwizard_complete": "frozen production prediction with robust affine initialization and resolution-limited low-frequency bias correction",
+    "raw_monocular": "orientation-resolved DA3 relative output interpreted directly with no metric scale or datum fit; metric errors intentionally expose the absolute-scale gap",
+    "simple_affine": "robust DEM-frequency-matched global scale and offset without low-frequency terrain-bias correction"
+  },
+  "methods": {
+    "coarse_dem": {
+      "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+      "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+      "metrics": {
+        "mae_m": 5.148450631217039,
+        "mean_bias_m": -3.6476073640751325,
+        "pearson_r": 0.9999816685386972,
+        "rmse_m": 9.26523149302564,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      }
+    },
+    "depthwizard_complete": {
+      "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+      "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+      "metrics": {
+        "mae_m": 5.214358796163236,
+        "mean_bias_m": -3.6440187169916656,
+        "pearson_r": 0.9999821324832131,
+        "rmse_m": 9.172348901662266,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      }
+    },
+    "raw_monocular": {
+      "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+      "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+      "metrics": {
+        "mae_m": 1474.2473505522275,
+        "mean_bias_m": -1474.2473505522275,
+        "pearson_r": 0.198268630185925,
+        "rmse_m": 1992.1720839995182,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      }
+    },
+    "simple_affine": {
+      "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+      "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+      "metrics": {
+        "mae_m": 15.94086717117145,
+        "mean_bias_m": -3.8544903054608914,
+        "pearson_r": 0.9998245753795034,
+        "rmse_m": 25.554851145406502,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      }
+    }
+  },
+  "published_alternatives": [
+    {
+      "name": "RDAH-Net",
+      "reason": "The released checkpoint predicts nDSM-like structural height from an RGB + Depth Anything V2 prior and has no independently datum-calibrated checkpoint for this five-scene absolute-DSM campaign. Applying reference-derived scale would violate the freeze and independence protocol.",
+      "status": "not_feasible"
+    }
+  ],
+  "schema_version": 1,
+  "status": "PASS_SAME_INPUT_BASELINES"
+}

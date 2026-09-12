@@ -1,0 +1,1722 @@
+{
+  "artifacts": {
+    "boot_report": "/private/tmp/depthwizard-soak-012301/tauri-boot-report.json",
+    "stderr_log": "/private/tmp/depthwizard-soak-012301/depthwizard-app.stderr.log",
+    "stdout_log": "/private/tmp/depthwizard-soak-012301/depthwizard-app.stdout.log"
+  },
+  "boot_identity_bound": true,
+  "bundle": "/private/tmp/depthwizard-release-eb4aca3/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app",
+  "claim_boundary": "This soak proves packaged desktop/owned-sidecar liveness, authenticated raster inspection, process ownership and clean shutdown for the measured duration. It does not replace GPU/FPS or visual operator acceptance.",
+  "desktop_executable": "/private/tmp/depthwizard-release-eb4aca3/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app/Contents/MacOS/depthwizard-desktop",
+  "desktop_executable_sha256": "d24cc0b08d552be2470630d2fd2ffccfe789ceb940b37481a590727c4356d506",
+  "desktop_memory": {
+    "end_kib": 113776,
+    "peak_kib": 115920,
+    "start_kib": 99776
+  },
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "interval_seconds": 30.0,
+  "iterations": 240,
+  "monitored_seconds": 7200.075109792,
+  "process_elapsed_seconds": 7203.987315791004,
+  "process_started_at_utc": "2026-09-12T11:10:38.427896+00:00",
+  "request_cycle_seconds": {
+    "max": 0.4752042500040261,
+    "mean": 0.017120384899923617
+  },
+  "required_qualifying_seconds": 7200,
+  "runtime_manifest_status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
+  "samples": [
+    {
+      "desktop_rss_kib": 99776,
+      "elapsed_seconds": 0.38991633399564307,
+      "iteration": 1,
+      "request_cycle_seconds": 0.3898866250019637,
+      "sidecar_rss_kib": 182688
+    },
+    {
+      "desktop_rss_kib": 99760,
+      "elapsed_seconds": 30.48834129199531,
+      "iteration": 2,
+      "request_cycle_seconds": 0.012351624995062593,
+      "sidecar_rss_kib": 182816
+    },
+    {
+      "desktop_rss_kib": 99744,
+      "elapsed_seconds": 60.59070462499949,
+      "iteration": 3,
+      "request_cycle_seconds": 0.011657541996100917,
+      "sidecar_rss_kib": 182816
+    },
+    {
+      "desktop_rss_kib": 105312,
+      "elapsed_seconds": 90.65896683399478,
+      "iteration": 4,
+      "request_cycle_seconds": 0.009376875001180451,
+      "sidecar_rss_kib": 465376
+    },
+    {
+      "desktop_rss_kib": 105360,
+      "elapsed_seconds": 120.75937245899695,
+      "iteration": 5,
+      "request_cycle_seconds": 0.017705041995213833,
+      "sidecar_rss_kib": 416192
+    },
+    {
+      "desktop_rss_kib": 105520,
+      "elapsed_seconds": 150.8466557089996,
+      "iteration": 6,
+      "request_cycle_seconds": 0.014042084003449418,
+      "sidecar_rss_kib": 310720
+    },
+    {
+      "desktop_rss_kib": 109344,
+      "elapsed_seconds": 180.94817616699584,
+      "iteration": 7,
+      "request_cycle_seconds": 0.013447624995023943,
+      "sidecar_rss_kib": 290432
+    },
+    {
+      "desktop_rss_kib": 109392,
+      "elapsed_seconds": 211.05425404199923,
+      "iteration": 8,
+      "request_cycle_seconds": 0.013650957997015212,
+      "sidecar_rss_kib": 356144
+    },
+    {
+      "desktop_rss_kib": 109296,
+      "elapsed_seconds": 241.09831295899494,
+      "iteration": 9,
+      "request_cycle_seconds": 0.01946729100018274,
+      "sidecar_rss_kib": 270128
+    },
+    {
+      "desktop_rss_kib": 109328,
+      "elapsed_seconds": 271.2059820419963,
+      "iteration": 10,
+      "request_cycle_seconds": 0.015592249998007901,
+      "sidecar_rss_kib": 209696
+    },
+    {
+      "desktop_rss_kib": 115472,
+      "elapsed_seconds": 301.24729112500063,
+      "iteration": 11,
+      "request_cycle_seconds": 0.012822374999814201,
+      "sidecar_rss_kib": 209664
+    },
+    {
+      "desktop_rss_kib": 115488,
+      "elapsed_seconds": 331.3541986249984,
+      "iteration": 12,
+      "request_cycle_seconds": 0.01495216599869309,
+      "sidecar_rss_kib": 209664
+    },
+    {
+      "desktop_rss_kib": 115552,
+      "elapsed_seconds": 361.39157787499425,
+      "iteration": 13,
+      "request_cycle_seconds": 0.013911875001213048,
+      "sidecar_rss_kib": 290624
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 391.49047008399793,
+      "iteration": 14,
+      "request_cycle_seconds": 0.01336437500140164,
+      "sidecar_rss_kib": 327520
+    },
+    {
+      "desktop_rss_kib": 115504,
+      "elapsed_seconds": 421.58067504199425,
+      "iteration": 15,
+      "request_cycle_seconds": 0.01288745899364585,
+      "sidecar_rss_kib": 294672
+    },
+    {
+      "desktop_rss_kib": 115552,
+      "elapsed_seconds": 451.6969305839957,
+      "iteration": 16,
+      "request_cycle_seconds": 0.02382575000228826,
+      "sidecar_rss_kib": 286672
+    },
+    {
+      "desktop_rss_kib": 115696,
+      "elapsed_seconds": 481.7628066670004,
+      "iteration": 17,
+      "request_cycle_seconds": 0.012630541998078115,
+      "sidecar_rss_kib": 258128
+    },
+    {
+      "desktop_rss_kib": 115712,
+      "elapsed_seconds": 512.4945533749997,
+      "iteration": 18,
+      "request_cycle_seconds": 0.4752042500040261,
+      "sidecar_rss_kib": 259312
+    },
+    {
+      "desktop_rss_kib": 115712,
+      "elapsed_seconds": 542.5780786249961,
+      "iteration": 19,
+      "request_cycle_seconds": 0.013450833001115825,
+      "sidecar_rss_kib": 259264
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 572.6830331249948,
+      "iteration": 20,
+      "request_cycle_seconds": 0.013021083002968226,
+      "sidecar_rss_kib": 259264
+    },
+    {
+      "desktop_rss_kib": 115200,
+      "elapsed_seconds": 602.7878041250005,
+      "iteration": 21,
+      "request_cycle_seconds": 0.015506250005273614,
+      "sidecar_rss_kib": 214192
+    },
+    {
+      "desktop_rss_kib": 115200,
+      "elapsed_seconds": 632.8943002089945,
+      "iteration": 22,
+      "request_cycle_seconds": 0.014064666000194848,
+      "sidecar_rss_kib": 214192
+    },
+    {
+      "desktop_rss_kib": 115200,
+      "elapsed_seconds": 662.9352864589964,
+      "iteration": 23,
+      "request_cycle_seconds": 0.01568516700353939,
+      "sidecar_rss_kib": 214192
+    },
+    {
+      "desktop_rss_kib": 115264,
+      "elapsed_seconds": 693.0109621250012,
+      "iteration": 24,
+      "request_cycle_seconds": 0.014366082999913488,
+      "sidecar_rss_kib": 214240
+    },
+    {
+      "desktop_rss_kib": 115248,
+      "elapsed_seconds": 723.0397048339946,
+      "iteration": 25,
+      "request_cycle_seconds": 0.01213429200288374,
+      "sidecar_rss_kib": 214240
+    },
+    {
+      "desktop_rss_kib": 115248,
+      "elapsed_seconds": 753.0983958750003,
+      "iteration": 26,
+      "request_cycle_seconds": 0.011331583002174739,
+      "sidecar_rss_kib": 214240
+    },
+    {
+      "desktop_rss_kib": 115328,
+      "elapsed_seconds": 783.1651299169971,
+      "iteration": 27,
+      "request_cycle_seconds": 0.019100457997410558,
+      "sidecar_rss_kib": 294848
+    },
+    {
+      "desktop_rss_kib": 115408,
+      "elapsed_seconds": 813.2026350419983,
+      "iteration": 28,
+      "request_cycle_seconds": 0.014527667000947986,
+      "sidecar_rss_kib": 294848
+    },
+    {
+      "desktop_rss_kib": 115328,
+      "elapsed_seconds": 843.2334663750007,
+      "iteration": 29,
+      "request_cycle_seconds": 0.012204541999381036,
+      "sidecar_rss_kib": 294800
+    },
+    {
+      "desktop_rss_kib": 115424,
+      "elapsed_seconds": 873.3180185839956,
+      "iteration": 30,
+      "request_cycle_seconds": 0.013467124997987412,
+      "sidecar_rss_kib": 257936
+    },
+    {
+      "desktop_rss_kib": 115328,
+      "elapsed_seconds": 903.3780256669997,
+      "iteration": 31,
+      "request_cycle_seconds": 0.02360029199917335,
+      "sidecar_rss_kib": 258016
+    },
+    {
+      "desktop_rss_kib": 115328,
+      "elapsed_seconds": 933.4795912499976,
+      "iteration": 32,
+      "request_cycle_seconds": 0.013332540998817421,
+      "sidecar_rss_kib": 221136
+    },
+    {
+      "desktop_rss_kib": 115328,
+      "elapsed_seconds": 963.5843413339971,
+      "iteration": 33,
+      "request_cycle_seconds": 0.0123756670000148,
+      "sidecar_rss_kib": 221136
+    },
+    {
+      "desktop_rss_kib": 115328,
+      "elapsed_seconds": 993.6916569999958,
+      "iteration": 34,
+      "request_cycle_seconds": 0.014392459001101088,
+      "sidecar_rss_kib": 221136
+    },
+    {
+      "desktop_rss_kib": 115344,
+      "elapsed_seconds": 1023.7965047920006,
+      "iteration": 35,
+      "request_cycle_seconds": 0.012547999998787418,
+      "sidecar_rss_kib": 294832
+    },
+    {
+      "desktop_rss_kib": 115344,
+      "elapsed_seconds": 1053.8344993749997,
+      "iteration": 36,
+      "request_cycle_seconds": 0.014387833994987886,
+      "sidecar_rss_kib": 245680
+    },
+    {
+      "desktop_rss_kib": 115344,
+      "elapsed_seconds": 1083.9415274999992,
+      "iteration": 37,
+      "request_cycle_seconds": 0.014854249995551072,
+      "sidecar_rss_kib": 245680
+    },
+    {
+      "desktop_rss_kib": 115344,
+      "elapsed_seconds": 1114.0215637919973,
+      "iteration": 38,
+      "request_cycle_seconds": 0.01395004200458061,
+      "sidecar_rss_kib": 245680
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1144.0764552499968,
+      "iteration": 39,
+      "request_cycle_seconds": 0.012830500003474299,
+      "sidecar_rss_kib": 245680
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 1174.1524419589987,
+      "iteration": 40,
+      "request_cycle_seconds": 0.01589666699874215,
+      "sidecar_rss_kib": 902016
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 1204.2006953749951,
+      "iteration": 41,
+      "request_cycle_seconds": 0.009890000001178123,
+      "sidecar_rss_kib": 1024304
+    },
+    {
+      "desktop_rss_kib": 115808,
+      "elapsed_seconds": 1234.3053341669947,
+      "iteration": 42,
+      "request_cycle_seconds": 0.013587916997494176,
+      "sidecar_rss_kib": 963056
+    },
+    {
+      "desktop_rss_kib": 115840,
+      "elapsed_seconds": 1264.4250685839943,
+      "iteration": 43,
+      "request_cycle_seconds": 0.02747304199874634,
+      "sidecar_rss_kib": 979776
+    },
+    {
+      "desktop_rss_kib": 115856,
+      "elapsed_seconds": 1294.5290457919982,
+      "iteration": 44,
+      "request_cycle_seconds": 0.018122249995940365,
+      "sidecar_rss_kib": 958384
+    },
+    {
+      "desktop_rss_kib": 115824,
+      "elapsed_seconds": 1324.6392439589981,
+      "iteration": 45,
+      "request_cycle_seconds": 0.019151624997903127,
+      "sidecar_rss_kib": 796976
+    },
+    {
+      "desktop_rss_kib": 115920,
+      "elapsed_seconds": 1354.6715889589977,
+      "iteration": 46,
+      "request_cycle_seconds": 0.014022583003679756,
+      "sidecar_rss_kib": 796976
+    },
+    {
+      "desktop_rss_kib": 115792,
+      "elapsed_seconds": 1384.7800096669962,
+      "iteration": 47,
+      "request_cycle_seconds": 0.015058958000736311,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1414.8826949169961,
+      "iteration": 48,
+      "request_cycle_seconds": 0.012716208002530038,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1444.9877628339964,
+      "iteration": 49,
+      "request_cycle_seconds": 0.013252165997982956,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1475.092315834001,
+      "iteration": 50,
+      "request_cycle_seconds": 0.012446207998436876,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1505.1964887089998,
+      "iteration": 51,
+      "request_cycle_seconds": 0.013342541999008972,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1535.3002259589994,
+      "iteration": 52,
+      "request_cycle_seconds": 0.013707209000131115,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1565.4044359170002,
+      "iteration": 53,
+      "request_cycle_seconds": 0.012577207999129314,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1595.5117409589948,
+      "iteration": 54,
+      "request_cycle_seconds": 0.015262542001437396,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1625.6147906670012,
+      "iteration": 55,
+      "request_cycle_seconds": 0.012919959001010284,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1655.7201699590005,
+      "iteration": 56,
+      "request_cycle_seconds": 0.013518041996576358,
+      "sidecar_rss_kib": 797408
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 1685.8250746249978,
+      "iteration": 57,
+      "request_cycle_seconds": 0.013655082999321166,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 1715.9285704590002,
+      "iteration": 58,
+      "request_cycle_seconds": 0.011881750004249625,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1746.031061208996,
+      "iteration": 59,
+      "request_cycle_seconds": 0.013014249998377636,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115888,
+      "elapsed_seconds": 1776.135280124996,
+      "iteration": 60,
+      "request_cycle_seconds": 0.01305716600472806,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 1806.2182859169989,
+      "iteration": 61,
+      "request_cycle_seconds": 0.012614166997082066,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115792,
+      "elapsed_seconds": 1836.2770952919964,
+      "iteration": 62,
+      "request_cycle_seconds": 0.012843124997743871,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 1866.3187849589958,
+      "iteration": 63,
+      "request_cycle_seconds": 0.013064667000435293,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 1896.424195959,
+      "iteration": 64,
+      "request_cycle_seconds": 0.014270667001255788,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 1926.487769374995,
+      "iteration": 65,
+      "request_cycle_seconds": 0.012482083002396394,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115792,
+      "elapsed_seconds": 1956.5897879589975,
+      "iteration": 66,
+      "request_cycle_seconds": 0.013522250003006775,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 1986.6562933339956,
+      "iteration": 67,
+      "request_cycle_seconds": 0.013568667003710289,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2016.7607134169957,
+      "iteration": 68,
+      "request_cycle_seconds": 0.012163500003225636,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2046.7901384169963,
+      "iteration": 69,
+      "request_cycle_seconds": 0.012693291995674372,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2076.8935496669947,
+      "iteration": 70,
+      "request_cycle_seconds": 0.012949207994097378,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2106.994830208998,
+      "iteration": 71,
+      "request_cycle_seconds": 0.011999874994216952,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2137.100798959,
+      "iteration": 72,
+      "request_cycle_seconds": 0.014197040996805299,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2167.2069888339975,
+      "iteration": 73,
+      "request_cycle_seconds": 0.01329091600200627,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2197.237541041999,
+      "iteration": 74,
+      "request_cycle_seconds": 0.012195750001410488,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2227.283713459001,
+      "iteration": 75,
+      "request_cycle_seconds": 0.012510207998275291,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2257.3232671250007,
+      "iteration": 76,
+      "request_cycle_seconds": 0.013208374999521766,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115776,
+      "elapsed_seconds": 2287.428864166999,
+      "iteration": 77,
+      "request_cycle_seconds": 0.013819667001371272,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115808,
+      "elapsed_seconds": 2317.5320708340005,
+      "iteration": 78,
+      "request_cycle_seconds": 0.011554040996998083,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2347.639082583999,
+      "iteration": 79,
+      "request_cycle_seconds": 0.01510033399972599,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2377.742955124995,
+      "iteration": 80,
+      "request_cycle_seconds": 0.011452166996605229,
+      "sidecar_rss_kib": 797376
+    },
+    {
+      "desktop_rss_kib": 115712,
+      "elapsed_seconds": 2407.847445708998,
+      "iteration": 81,
+      "request_cycle_seconds": 0.013052375004917849,
+      "sidecar_rss_kib": 797344
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2437.9520934169996,
+      "iteration": 82,
+      "request_cycle_seconds": 0.01285624999582069,
+      "sidecar_rss_kib": 797344
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 2468.0115519999963,
+      "iteration": 83,
+      "request_cycle_seconds": 0.01065054199716542,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2498.111018208998,
+      "iteration": 84,
+      "request_cycle_seconds": 0.012640708999242634,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 2528.2200217919963,
+      "iteration": 85,
+      "request_cycle_seconds": 0.014020291993801948,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2558.2850739999994,
+      "iteration": 86,
+      "request_cycle_seconds": 0.011148165998747572,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 2588.388102500001,
+      "iteration": 87,
+      "request_cycle_seconds": 0.014341666996187996,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 2618.467554791998,
+      "iteration": 88,
+      "request_cycle_seconds": 0.014095332997385412,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 2648.5694858339994,
+      "iteration": 89,
+      "request_cycle_seconds": 0.011831499999971129,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2678.6726050840007,
+      "iteration": 90,
+      "request_cycle_seconds": 0.014258708004490472,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2708.7668044169986,
+      "iteration": 91,
+      "request_cycle_seconds": 0.015563416003715247,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2738.8725644590013,
+      "iteration": 92,
+      "request_cycle_seconds": 0.014327541000966448,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2768.941127041995,
+      "iteration": 93,
+      "request_cycle_seconds": 0.0137105839967262,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2799.047136166999,
+      "iteration": 94,
+      "request_cycle_seconds": 0.013896083997678943,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 2829.1538187499973,
+      "iteration": 95,
+      "request_cycle_seconds": 0.014683917004731484,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115792,
+      "elapsed_seconds": 2859.2628347499995,
+      "iteration": 96,
+      "request_cycle_seconds": 0.016666583003825508,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115792,
+      "elapsed_seconds": 2889.442625459,
+      "iteration": 97,
+      "request_cycle_seconds": 0.013545165995310526,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115792,
+      "elapsed_seconds": 2919.623454624998,
+      "iteration": 98,
+      "request_cycle_seconds": 0.01362916699872585,
+      "sidecar_rss_kib": 796864
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2949.723538792001,
+      "iteration": 99,
+      "request_cycle_seconds": 0.015103082994755823,
+      "sidecar_rss_kib": 796560
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 2979.8337817499996,
+      "iteration": 100,
+      "request_cycle_seconds": 0.01578183300443925,
+      "sidecar_rss_kib": 796560
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 3010.0146083340005,
+      "iteration": 101,
+      "request_cycle_seconds": 0.014216584000678267,
+      "sidecar_rss_kib": 796560
+    },
+    {
+      "desktop_rss_kib": 115760,
+      "elapsed_seconds": 3040.1955652089964,
+      "iteration": 102,
+      "request_cycle_seconds": 0.01374420800129883,
+      "sidecar_rss_kib": 796560
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3070.378208916998,
+      "iteration": 103,
+      "request_cycle_seconds": 0.014919542001734953,
+      "sidecar_rss_kib": 796560
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3100.5590100420013,
+      "iteration": 104,
+      "request_cycle_seconds": 0.014231125001970213,
+      "sidecar_rss_kib": 796528
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3130.7391654169987,
+      "iteration": 105,
+      "request_cycle_seconds": 0.013506666000466794,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3160.9175553339956,
+      "iteration": 106,
+      "request_cycle_seconds": 0.011676665999402758,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3191.0971303749975,
+      "iteration": 107,
+      "request_cycle_seconds": 0.014163959000143223,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3221.2320725839963,
+      "iteration": 108,
+      "request_cycle_seconds": 0.010739250006736256,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3251.4127450419983,
+      "iteration": 109,
+      "request_cycle_seconds": 0.01839862499764422,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3281.5926606249996,
+      "iteration": 110,
+      "request_cycle_seconds": 0.014254292000259738,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3311.775675375,
+      "iteration": 111,
+      "request_cycle_seconds": 0.016843666999193374,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3341.951844833995,
+      "iteration": 112,
+      "request_cycle_seconds": 0.010593583996524103,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3372.129573291997,
+      "iteration": 113,
+      "request_cycle_seconds": 0.0164874170004623,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3402.301071666996,
+      "iteration": 114,
+      "request_cycle_seconds": 0.011886375003086869,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3432.480243083999,
+      "iteration": 115,
+      "request_cycle_seconds": 0.012872999999672174,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3462.660755541998,
+      "iteration": 116,
+      "request_cycle_seconds": 0.014505334002024028,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3492.8411194590008,
+      "iteration": 117,
+      "request_cycle_seconds": 0.013502917005098425,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115824,
+      "elapsed_seconds": 3522.8791290839945,
+      "iteration": 118,
+      "request_cycle_seconds": 0.015296249999664724,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3552.976599208996,
+      "iteration": 119,
+      "request_cycle_seconds": 0.015003125001385342,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115744,
+      "elapsed_seconds": 3583.081147083998,
+      "iteration": 120,
+      "request_cycle_seconds": 0.01299529099924257,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3613.1864367499948,
+      "iteration": 121,
+      "request_cycle_seconds": 0.014304374999483116,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3643.2930269589997,
+      "iteration": 122,
+      "request_cycle_seconds": 0.01382141700014472,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3673.397837833996,
+      "iteration": 123,
+      "request_cycle_seconds": 0.012624875002074987,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3703.501113583996,
+      "iteration": 124,
+      "request_cycle_seconds": 0.012487957996199839,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3733.6047749589998,
+      "iteration": 125,
+      "request_cycle_seconds": 0.011762249996536411,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3763.711073624996,
+      "iteration": 126,
+      "request_cycle_seconds": 0.014004374999785796,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3793.8144482089992,
+      "iteration": 127,
+      "request_cycle_seconds": 0.012091832999431062,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3823.9192888339967,
+      "iteration": 128,
+      "request_cycle_seconds": 0.012853542000812013,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3854.023353833996,
+      "iteration": 129,
+      "request_cycle_seconds": 0.012267749996681232,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3884.126957749999,
+      "iteration": 130,
+      "request_cycle_seconds": 0.01189949999388773,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3914.229487124998,
+      "iteration": 131,
+      "request_cycle_seconds": 0.01220029199612327,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3944.3325493749944,
+      "iteration": 132,
+      "request_cycle_seconds": 0.011793042001954746,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 3974.4347671669966,
+      "iteration": 133,
+      "request_cycle_seconds": 0.012784957994881552,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 4004.5386207919946,
+      "iteration": 134,
+      "request_cycle_seconds": 0.012086750000889879,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115728,
+      "elapsed_seconds": 4034.5902575,
+      "iteration": 135,
+      "request_cycle_seconds": 0.012699457998678554,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4064.693593374999,
+      "iteration": 136,
+      "request_cycle_seconds": 0.01268158300081268,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4094.7987708750006,
+      "iteration": 137,
+      "request_cycle_seconds": 0.012912291000247933,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 4124.905316749995,
+      "iteration": 138,
+      "request_cycle_seconds": 0.014773292001336813,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4155.012022333998,
+      "iteration": 139,
+      "request_cycle_seconds": 0.013595707998319995,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4185.1161322499975,
+      "iteration": 140,
+      "request_cycle_seconds": 0.012292833001993131,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4215.220848208999,
+      "iteration": 141,
+      "request_cycle_seconds": 0.014124250003078487,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4245.326745541999,
+      "iteration": 142,
+      "request_cycle_seconds": 0.013455750005959999,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4275.430254999999,
+      "iteration": 143,
+      "request_cycle_seconds": 0.01282720800372772,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4305.534211541999,
+      "iteration": 144,
+      "request_cycle_seconds": 0.01289845800056355,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4335.637315125001,
+      "iteration": 145,
+      "request_cycle_seconds": 0.01169470800232375,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4365.743369291995,
+      "iteration": 146,
+      "request_cycle_seconds": 0.013940958000603132,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4395.849173208997,
+      "iteration": 147,
+      "request_cycle_seconds": 0.013514209000277333,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4425.953173834001,
+      "iteration": 148,
+      "request_cycle_seconds": 0.01278183300019009,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4456.058742458998,
+      "iteration": 149,
+      "request_cycle_seconds": 0.012876375003543217,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4486.162420708999,
+      "iteration": 150,
+      "request_cycle_seconds": 0.01321950000419747,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4516.265818583997,
+      "iteration": 151,
+      "request_cycle_seconds": 0.013010000002395827,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4546.371058291996,
+      "iteration": 152,
+      "request_cycle_seconds": 0.013574874996265862,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4576.478934041996,
+      "iteration": 153,
+      "request_cycle_seconds": 0.016882957999769133,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4606.656126333997,
+      "iteration": 154,
+      "request_cycle_seconds": 0.012894958003016654,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4636.835468083998,
+      "iteration": 155,
+      "request_cycle_seconds": 0.013283583000884391,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4667.015787958997,
+      "iteration": 156,
+      "request_cycle_seconds": 0.013295291995746084,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4697.194492791998,
+      "iteration": 157,
+      "request_cycle_seconds": 0.013025792002736125,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 4727.372672209,
+      "iteration": 158,
+      "request_cycle_seconds": 0.012716791999991983,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4757.551016583995,
+      "iteration": 159,
+      "request_cycle_seconds": 0.011895791998540517,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 4787.731973624999,
+      "iteration": 160,
+      "request_cycle_seconds": 0.01406170799600659,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4817.9122035420005,
+      "iteration": 161,
+      "request_cycle_seconds": 0.012570209000841714,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4847.959575834,
+      "iteration": 162,
+      "request_cycle_seconds": 0.012643750000279397,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115600,
+      "elapsed_seconds": 4878.018352041996,
+      "iteration": 163,
+      "request_cycle_seconds": 0.01239345799695002,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 4908.082465583997,
+      "iteration": 164,
+      "request_cycle_seconds": 0.01103825000609504,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 4938.158694958998,
+      "iteration": 165,
+      "request_cycle_seconds": 0.012137666999478824,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 4968.263384291997,
+      "iteration": 166,
+      "request_cycle_seconds": 0.013482249996741302,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 4998.324041125001,
+      "iteration": 167,
+      "request_cycle_seconds": 0.014139792001515161,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5028.4277466669955,
+      "iteration": 168,
+      "request_cycle_seconds": 0.011731166996469256,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 5058.531786583997,
+      "iteration": 169,
+      "request_cycle_seconds": 0.012206667001009919,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5088.625624125001,
+      "iteration": 170,
+      "request_cycle_seconds": 0.01207220800279174,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5118.730309916995,
+      "iteration": 171,
+      "request_cycle_seconds": 0.012708915994153358,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5148.834498416996,
+      "iteration": 172,
+      "request_cycle_seconds": 0.012339166998572182,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5178.939025874999,
+      "iteration": 173,
+      "request_cycle_seconds": 0.012774916998750996,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5209.042312458994,
+      "iteration": 174,
+      "request_cycle_seconds": 0.012045915995258838,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5239.144899209001,
+      "iteration": 175,
+      "request_cycle_seconds": 0.013052457994490396,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5269.248366667001,
+      "iteration": 176,
+      "request_cycle_seconds": 0.012050917001033667,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5299.351768333996,
+      "iteration": 177,
+      "request_cycle_seconds": 0.012162208004156128,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5329.457081374996,
+      "iteration": 178,
+      "request_cycle_seconds": 0.013718375004827976,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5359.635100374995,
+      "iteration": 179,
+      "request_cycle_seconds": 0.011883249993843492,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5389.814257166996,
+      "iteration": 180,
+      "request_cycle_seconds": 0.013443667005049065,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5419.993910541998,
+      "iteration": 181,
+      "request_cycle_seconds": 0.012877957997261547,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 5450.100952208995,
+      "iteration": 182,
+      "request_cycle_seconds": 0.012662332999752834,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 5480.1368140419945,
+      "iteration": 183,
+      "request_cycle_seconds": 0.012143042004026938,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5510.240470749995,
+      "iteration": 184,
+      "request_cycle_seconds": 0.012444666994269937,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5540.2757262089945,
+      "iteration": 185,
+      "request_cycle_seconds": 0.012218125004437752,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5570.381187125,
+      "iteration": 186,
+      "request_cycle_seconds": 0.012730834001558833,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115648,
+      "elapsed_seconds": 5600.490195916995,
+      "iteration": 187,
+      "request_cycle_seconds": 0.016645458999846596,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5630.595950791998,
+      "iteration": 188,
+      "request_cycle_seconds": 0.016548792002140544,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5660.6991629589975,
+      "iteration": 189,
+      "request_cycle_seconds": 0.01404624999850057,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5690.800033916996,
+      "iteration": 190,
+      "request_cycle_seconds": 0.012198707998322789,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5720.904808833999,
+      "iteration": 191,
+      "request_cycle_seconds": 0.012731208000332117,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 5750.980561999997,
+      "iteration": 192,
+      "request_cycle_seconds": 0.012825541001802776,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115648,
+      "elapsed_seconds": 5781.083930499997,
+      "iteration": 193,
+      "request_cycle_seconds": 0.01308679100475274,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5811.188040541994,
+      "iteration": 194,
+      "request_cycle_seconds": 0.013926457999332342,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115648,
+      "elapsed_seconds": 5841.233215166998,
+      "iteration": 195,
+      "request_cycle_seconds": 0.012370707998343278,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5871.318089,
+      "iteration": 196,
+      "request_cycle_seconds": 0.012368208001134917,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 5901.399613041998,
+      "iteration": 197,
+      "request_cycle_seconds": 0.009714292005810421,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5931.504280708999,
+      "iteration": 198,
+      "request_cycle_seconds": 0.01434562500071479,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 5961.5504509589955,
+      "iteration": 199,
+      "request_cycle_seconds": 0.013586708999355324,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 5991.585811416997,
+      "iteration": 200,
+      "request_cycle_seconds": 0.0161080839970964,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115616,
+      "elapsed_seconds": 6021.692074499995,
+      "iteration": 201,
+      "request_cycle_seconds": 0.0149370840008487,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115840,
+      "elapsed_seconds": 6051.799277833998,
+      "iteration": 202,
+      "request_cycle_seconds": 0.016378332999011036,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 6081.904662708999,
+      "iteration": 203,
+      "request_cycle_seconds": 0.013002583000343293,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115664,
+      "elapsed_seconds": 6112.009132209001,
+      "iteration": 204,
+      "request_cycle_seconds": 0.013152166997315362,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115648,
+      "elapsed_seconds": 6142.113981666997,
+      "iteration": 205,
+      "request_cycle_seconds": 0.01307841700327117,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115696,
+      "elapsed_seconds": 6172.225024542,
+      "iteration": 206,
+      "request_cycle_seconds": 0.019633459000033326,
+      "sidecar_rss_kib": 796096
+    },
+    {
+      "desktop_rss_kib": 115680,
+      "elapsed_seconds": 6202.287011291999,
+      "iteration": 207,
+      "request_cycle_seconds": 0.014471082999079954,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115632,
+      "elapsed_seconds": 6232.319379125001,
+      "iteration": 208,
+      "request_cycle_seconds": 0.01334508400032064,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115552,
+      "elapsed_seconds": 6262.385294542,
+      "iteration": 209,
+      "request_cycle_seconds": 0.013924042003054637,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 6292.437692250001,
+      "iteration": 210,
+      "request_cycle_seconds": 0.012448665998817887,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 6322.482483624997,
+      "iteration": 211,
+      "request_cycle_seconds": 0.010516832997382153,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 6352.534835749997,
+      "iteration": 212,
+      "request_cycle_seconds": 0.012829792001866736,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 6382.635054458995,
+      "iteration": 213,
+      "request_cycle_seconds": 0.011763874994358048,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 6412.740597042,
+      "iteration": 214,
+      "request_cycle_seconds": 0.01284062500053551,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115584,
+      "elapsed_seconds": 6442.8451365,
+      "iteration": 215,
+      "request_cycle_seconds": 0.01332133300456917,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115568,
+      "elapsed_seconds": 6472.943060708996,
+      "iteration": 216,
+      "request_cycle_seconds": 0.011663625002256595,
+      "sidecar_rss_kib": 345856
+    },
+    {
+      "desktop_rss_kib": 115536,
+      "elapsed_seconds": 6503.048286500001,
+      "iteration": 217,
+      "request_cycle_seconds": 0.01458154200372519,
+      "sidecar_rss_kib": 342768
+    },
+    {
+      "desktop_rss_kib": 115536,
+      "elapsed_seconds": 6533.155995249996,
+      "iteration": 218,
+      "request_cycle_seconds": 0.017200665999553166,
+      "sidecar_rss_kib": 342768
+    },
+    {
+      "desktop_rss_kib": 115504,
+      "elapsed_seconds": 6563.2612134589945,
+      "iteration": 219,
+      "request_cycle_seconds": 0.014894124993588775,
+      "sidecar_rss_kib": 294816
+    },
+    {
+      "desktop_rss_kib": 115488,
+      "elapsed_seconds": 6593.366355334001,
+      "iteration": 220,
+      "request_cycle_seconds": 0.014141041996481363,
+      "sidecar_rss_kib": 294816
+    },
+    {
+      "desktop_rss_kib": 115488,
+      "elapsed_seconds": 6623.469630041996,
+      "iteration": 221,
+      "request_cycle_seconds": 0.013303500003530644,
+      "sidecar_rss_kib": 294816
+    },
+    {
+      "desktop_rss_kib": 115520,
+      "elapsed_seconds": 6653.524219708997,
+      "iteration": 222,
+      "request_cycle_seconds": 0.011454332998255268,
+      "sidecar_rss_kib": 294816
+    },
+    {
+      "desktop_rss_kib": 115296,
+      "elapsed_seconds": 6683.624780833998,
+      "iteration": 223,
+      "request_cycle_seconds": 0.013824957997712772,
+      "sidecar_rss_kib": 261648
+    },
+    {
+      "desktop_rss_kib": 115296,
+      "elapsed_seconds": 6713.661777916997,
+      "iteration": 224,
+      "request_cycle_seconds": 0.016271542001049966,
+      "sidecar_rss_kib": 261648
+    },
+    {
+      "desktop_rss_kib": 115296,
+      "elapsed_seconds": 6743.7482461249965,
+      "iteration": 225,
+      "request_cycle_seconds": 0.011767290998250246,
+      "sidecar_rss_kib": 261648
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 6773.857184749999,
+      "iteration": 226,
+      "request_cycle_seconds": 0.01769662500009872,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 6803.963610583996,
+      "iteration": 227,
+      "request_cycle_seconds": 0.014296166998974513,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 6834.017553624995,
+      "iteration": 228,
+      "request_cycle_seconds": 0.01373408299696166,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113776,
+      "elapsed_seconds": 6864.121344542,
+      "iteration": 229,
+      "request_cycle_seconds": 0.016533291003725026,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113776,
+      "elapsed_seconds": 6894.199386458997,
+      "iteration": 230,
+      "request_cycle_seconds": 0.013589625006716233,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 6924.238433999999,
+      "iteration": 231,
+      "request_cycle_seconds": 0.01353766699321568,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 6954.3294958339975,
+      "iteration": 232,
+      "request_cycle_seconds": 0.01090950000070734,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113776,
+      "elapsed_seconds": 6984.4331911670015,
+      "iteration": 233,
+      "request_cycle_seconds": 0.01651595900329994,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113776,
+      "elapsed_seconds": 7014.536557749998,
+      "iteration": 234,
+      "request_cycle_seconds": 0.012161625003500376,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 7044.6451161669975,
+      "iteration": 235,
+      "request_cycle_seconds": 0.018683875001443084,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 7074.745123083994,
+      "iteration": 236,
+      "request_cycle_seconds": 0.01200408300064737,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 7104.830840958995,
+      "iteration": 237,
+      "request_cycle_seconds": 0.011318791999656241,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113760,
+      "elapsed_seconds": 7134.933578791999,
+      "iteration": 238,
+      "request_cycle_seconds": 0.012535417001345195,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113792,
+      "elapsed_seconds": 7165.037378834,
+      "iteration": 239,
+      "request_cycle_seconds": 0.011832665994006675,
+      "sidecar_rss_kib": 257472
+    },
+    {
+      "desktop_rss_kib": 113776,
+      "elapsed_seconds": 7195.140636291995,
+      "iteration": 240,
+      "request_cycle_seconds": 0.013106708000123035,
+      "sidecar_rss_kib": 257472
+    }
+  ],
+  "schema_version": 1,
+  "sidecar_executable": "/private/tmp/depthwizard-release-eb4aca3/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app/Contents/Resources/depthwizard-core-runtime/depthwizard-core",
+  "sidecar_executable_sha256": "2467b885c5a03822f022940beec361647bd9fe26df176f99dad3307771ca6c84",
+  "sidecar_memory": {
+    "end_kib": 257472,
+    "peak_kib": 1024304,
+    "start_kib": 182688
+  },
+  "soak_started_at_utc": "2026-09-12T11:10:42.272725+00:00",
+  "startup_seconds": 3.844822541002941,
+  "status": "PASS_TWO_HOUR_PACKAGED_SOAK"
+}

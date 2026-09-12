@@ -1,0 +1,84 @@
+{
+  "claim_boundary": "Every required intervention is reported. Only DEM calibration and bias correction are measured on the frozen campaign; inactive or unavailable production branches are explicitly not applicable and are not assigned invented metrics.",
+  "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+  "experiments": {
+    "backbone_substitution": {
+      "reason": "No alternative backbone checkpoint satisfies the identical-input, absolute-datum and freeze-before-reference contract for these five scenes.",
+      "status": "not_applicable"
+    },
+    "bias_correction": {
+      "ablated": {
+        "mae_m": 15.94086717117145,
+        "mean_bias_m": -3.8544903054608914,
+        "pearson_r": 0.9998245753795034,
+        "rmse_m": 25.554851145406502,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      },
+      "baseline": {
+        "mae_m": 5.214358796163236,
+        "mean_bias_m": -3.6440187169916656,
+        "pearson_r": 0.9999821324832131,
+        "rmse_m": 9.172348901662266,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      },
+      "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+      "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+      "intervention": "remove the resolution-limited low-frequency terrain-bias field",
+      "status": "measured"
+    },
+    "confidence_weighting": {
+      "reason": "DA3MONO-LARGE supplied no probability-calibrated native confidence product in these runs, so production used the explicit no-confidence fallback.",
+      "status": "not_applicable"
+    },
+    "dem_calibration": {
+      "ablated": {
+        "mae_m": 1474.2473505522275,
+        "mean_bias_m": -1474.2473505522275,
+        "pearson_r": 0.198268630185925,
+        "rmse_m": 1992.1720839995182,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      },
+      "baseline": {
+        "mae_m": 5.214358796163236,
+        "mean_bias_m": -3.6440187169916656,
+        "pearson_r": 0.9999821324832131,
+        "rmse_m": 9.172348901662266,
+        "scenes": 5,
+        "valid_pixels": 372000000
+      },
+      "evaluation_mask_manifest_sha256": "9d002881f15030e650b9e94323569b26b3b3fc3c477ed492872a631d597700ac",
+      "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+      "intervention": "remove all metric DEM scale/datum mapping",
+      "status": "measured"
+    },
+    "gcp_calibration": {
+      "reason": "The frozen campaign selected the DEM-only production branch; no surveyed GCP evidence was available, and synthesizing GCPs from references would be leakage.",
+      "status": "not_applicable"
+    },
+    "global_vs_per_tile_normalization": {
+      "reason": "Production exposes one scene-global affine mosaic contract, not an alternative per-tile metric-normalization branch; fabricating post-hoc tile surfaces from the persisted mosaic would not be a valid intervention.",
+      "status": "not_applicable"
+    },
+    "learned_refinement": {
+      "reason": "The independently evaluated learned refiner failed its non-degradation promotion gate and is intentionally absent from production.",
+      "status": "not_applicable"
+    },
+    "seam_harmonization": {
+      "reason": "Only the final harmonized scene mosaics were frozen. A valid intervention needs a separately regenerated unharmonized prediction set; no post-hoc proxy is claimed.",
+      "status": "not_applicable"
+    },
+    "semantic_priors": {
+      "reason": "No semantic-prior branch is active in the frozen calibrated-DA3 production path.",
+      "status": "not_applicable"
+    }
+  },
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "input_manifest_sha256": "2455c81399c8e92f91967dd9cdaa3376d818ea35680e263be7a86df80ba9b5ca",
+  "measured_count": 2,
+  "not_applicable_count": 7,
+  "schema_version": 1,
+  "status": "PASS_REQUIRED_ABLATIONS"
+}

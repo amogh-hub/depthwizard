@@ -1,0 +1,719 @@
+{
+  "artifacts": {
+    "scene_metrics_csv": "/private/tmp/depthwizard-final-science-012301/campaign/evidence/scene_metrics.csv",
+    "sensor_breakdown_csv": "/private/tmp/depthwizard-final-science-012301/campaign/evidence/sensor_breakdown.csv",
+    "terrain_breakdown_csv": "/private/tmp/depthwizard-final-science-012301/campaign/evidence/terrain_breakdown.csv"
+  },
+  "claim_boundary": "Independent evaluation only. Production checkpoint identity and prediction bytes are frozen before reference evaluation. Reference rasters are prohibited from matching prediction or calibration-evidence bytes. Results do not imply unseen sensor/terrain performance outside the frozen registry.",
+  "cross_sensor_overall": {
+    "mae_m": 4.229525885308637,
+    "mean_bias_m": 1.845371520860725,
+    "pearson_r": 0.5945431514953563,
+    "rmse_m": 4.761353881916098,
+    "scenes": 1,
+    "valid_pixels": 36000000
+  },
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "model": {
+    "checkpoint_sha256": "7a799a7f95eb8d4c404c2ca8be3dc3276b350a417ddc4420db72ba850cc0e960",
+    "model_id": "DA3MONO-LARGE calibrated DepthWizard production"
+  },
+  "prediction_manifest": {
+    "path": "/private/tmp/depthwizard-final-science-012301/campaign/frozen-predictions.yaml",
+    "sha256": "034214d6ec7babadfe753bfc7e182a5aeabf95b150bc3d05e27145d3e3675b4f"
+  },
+  "protocol": "depthwizard_final_science_campaign_v2",
+  "registry": {
+    "path": "/private/tmp/depthwizard-final-science-012301/campaign/frozen-registry.yaml",
+    "sha256": "ea5c230e7ac110ac2238c4715a99f3cbb1bd85435bb6fdd34b8c30dceae3f991"
+  },
+  "requirements": {
+    "checkpoint_identity_frozen": "passed",
+    "cross_sensor_scene_count": 1,
+    "cross_sensor_train_sensor_separation": "passed",
+    "geographic_split_integrity": "passed",
+    "prediction_identity_freeze": "passed",
+    "reference_independence": "passed",
+    "required_test_terrains": [
+      "urban",
+      "sparse",
+      "hilly",
+      "forested"
+    ],
+    "test_terrain_coverage": [
+      "forested",
+      "hilly",
+      "sparse",
+      "urban"
+    ],
+    "vertical_reference_compatibility": "passed"
+  },
+  "scenes": [
+    {
+      "calibration_evidence": [
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-cper-521000-4518000/calibration/usgs-3dep-10m-navd88-dtm.tif",
+          "sha256": "0e514e5fd99b8548ccb3c24a458dc4a4145e64af7c50ee321f370d1b8234d2ab"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-cper-521000-4518000/calibration/calibration-evidence.json",
+          "sha256": "121f36e8e458112d9204d3691f01d9ddef1fecb08db38761b158a3403ba82d1d"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-cper-521000-4518000/calibration.json",
+          "sha256": "c5b9c84c4adc1bd360aa1721bff67c0afe7411cd50f85601966a584bf817edf1"
+        }
+      ],
+      "coverage_fraction": 1.0,
+      "dataset": "NEON AOP",
+      "geographic_group": "neon-cper-521000-4518000",
+      "height_range_performance": [
+        {
+          "band": "lower",
+          "metrics": {
+            "mae_m": 0.11457817421252613,
+            "mean_bias_m": 0.07097838181504615,
+            "median_abs_error_m": 0.09765625,
+            "nmad_m": 0.0979109619140625,
+            "p90_abs_error_m": 0.22998046875,
+            "p95_abs_error_m": 0.270751953125,
+            "pearson_r": 0.9987874927343369,
+            "rmse_m": 0.1418775462698433,
+            "spearman_r": 0.9981063890169388,
+            "valid_pixels": 33334116
+          },
+          "reference_max_inclusive_m": 1649.9302978515625,
+          "reference_min_exclusive_m": null
+        },
+        {
+          "band": "middle",
+          "metrics": {
+            "mae_m": 0.14146895620672462,
+            "mean_bias_m": 0.10045790405308447,
+            "median_abs_error_m": 0.124267578125,
+            "nmad_m": 0.10641708984374999,
+            "p90_abs_error_m": 0.263427734375,
+            "p95_abs_error_m": 0.326416015625,
+            "pearson_r": 0.9739336630938196,
+            "rmse_m": 0.17143382167270202,
+            "spearman_r": 0.9751186683201418,
+            "valid_pixels": 33333656
+          },
+          "reference_max_inclusive_m": 1652.091796875,
+          "reference_min_exclusive_m": 1649.9302978515625
+        },
+        {
+          "band": "upper",
+          "metrics": {
+            "mae_m": 0.12476398287313496,
+            "mean_bias_m": 0.05907133519585595,
+            "median_abs_error_m": 0.101806640625,
+            "nmad_m": 0.10641708984374999,
+            "p90_abs_error_m": 0.2452392578125,
+            "p95_abs_error_m": 0.31689453125,
+            "pearson_r": 0.9845999009443566,
+            "rmse_m": 0.16553841208931674,
+            "spearman_r": 0.9834219145842252,
+            "valid_pixels": 33332228
+          },
+          "reference_max_inclusive_m": null,
+          "reference_min_exclusive_m": 1652.091796875
+        }
+      ],
+      "independence_check": "reference_path_and_sha_differ_from_prediction_and_calibration_evidence",
+      "metrics": {
+        "mae_m": 0.12693701194458007,
+        "mean_bias_m": 0.07683610042114258,
+        "median_abs_error_m": 0.107421875,
+        "nmad_m": 0.1051502197265625,
+        "p90_abs_error_m": 0.2462158203125,
+        "p95_abs_error_m": 0.3028564453125,
+        "pearson_r": 0.9991466646308068,
+        "rmse_m": 0.16012662454962445,
+        "spearman_r": 0.9982685660598715,
+        "valid_pixels": 100000000
+      },
+      "nominal_gsd_m": 0.1,
+      "notes": "Geometry was frozen on 335d992 under the unchanged DA3 geometry contract and recalibrated by exact-head 012301b using public USGS 3DEP 10 m NAVD88 DTM evidence.",
+      "prediction": {
+        "identity_check": "passed",
+        "manifest_sha256": "b806651b71719fa220d5c88ee0af0c09becdd2de11d09bd9ae6c03c43a06be8e",
+        "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-cper-521000-4518000/metric-dsm.tif",
+        "sha256": "b806651b71719fa220d5c88ee0af0c09becdd2de11d09bd9ae6c03c43a06be8e",
+        "vertical_units": "m"
+      },
+      "reference": {
+        "path": "/Users/amoghrb/Documents/depthwizard/workspace/final-science-data/neon/CPER/2024-06/521000_4518000/reference-sealed/NEON_D10_CPER_DP3_521000_4518000_DSM.tif",
+        "sha256": "695fb4a6dc8e26647aaa8b4df7c95537837f25890fc1478215e63ae5dbd65ccc",
+        "vertical_units": "m"
+      },
+      "rgb": {
+        "path": "/Users/amoghrb/Documents/depthwizard/workspace/final-science-data/neon/CPER/2024-06/521000_4518000/rgb/2024_CPER_10_521000_4518000_image.tif",
+        "sha256": "8fa9a2a74cbc92332cdef81864c21c253fc33c1be1111a48e94fd74a95aa9542"
+      },
+      "scene_id": "neon-cper-521000-4518000",
+      "sensor": "NEON AOP Optech Gemini high-resolution digital camera",
+      "slope_metrics": {
+        "mae_degrees": 0.8637807965278625,
+        "p95_abs_error_degrees": 2.313998222351074,
+        "rmse_degrees": 1.6148895025253296,
+        "valid_pixels": 100000000
+      },
+      "split": "test",
+      "terrain": "sparse",
+      "valid_pixels": 100000000,
+      "vertical_reference": {
+        "compatibility_check": "passed",
+        "prediction_elevation_reference": "orthometric",
+        "prediction_vertical_datum": "North American Vertical Datum of 1988 (NAVD88)",
+        "reference_elevation_reference": "orthometric",
+        "reference_vertical_datum": "North American Vertical Datum of 1988 (NAVD88)"
+      }
+    },
+    {
+      "calibration_evidence": [
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-harv-732000-4713000/calibration/usgs-3dep-10m-navd88-dtm.tif",
+          "sha256": "c93641d44a0bffb8e7927ada751039b8c12a94819c4eb256dd129a66d4e82097"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-harv-732000-4713000/calibration/calibration-evidence.json",
+          "sha256": "dc57b56ebd8b459bac6bffaf1a5f4f7c331d0101f026f1e18fb96a463d533e03"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-harv-732000-4713000/calibration.json",
+          "sha256": "aa7bcb8e90612f4b48d61712767f7d6622d0295e1f73e7b10290f84e0a3a0f55"
+        }
+      ],
+      "coverage_fraction": 1.0,
+      "dataset": "NEON AOP",
+      "geographic_group": "neon-harv-732000-4713000",
+      "height_range_performance": [
+        {
+          "band": "lower",
+          "metrics": {
+            "mae_m": 6.171037863451191,
+            "mean_bias_m": -6.1490264168870254,
+            "median_abs_error_m": 1.92706298828125,
+            "nmad_m": 2.601879748535156,
+            "p90_abs_error_m": 19.14349365234375,
+            "p95_abs_error_m": 20.42132568359375,
+            "pearson_r": 0.1926072788271983,
+            "rmse_m": 9.60055101987367,
+            "spearman_r": 0.28724917531460964,
+            "valid_pixels": 33333334
+          },
+          "reference_max_inclusive_m": 348.6903076171875,
+          "reference_min_exclusive_m": null
+        },
+        {
+          "band": "middle",
+          "metrics": {
+            "mae_m": 16.13265625906899,
+            "mean_bias_m": -16.13208259106701,
+            "median_abs_error_m": 17.15960693359375,
+            "nmad_m": 4.692351177978515,
+            "p90_abs_error_m": 21.79974365234375,
+            "p95_abs_error_m": 22.80943756103511,
+            "pearson_r": 0.3782781942546919,
+            "rmse_m": 16.968124409824,
+            "spearman_r": 0.39458840805493023,
+            "valid_pixels": 33333348
+          },
+          "reference_max_inclusive_m": 362.8885803222656,
+          "reference_min_exclusive_m": 348.6903076171875
+        },
+        {
+          "band": "upper",
+          "metrics": {
+            "mae_m": 21.818415125012216,
+            "mean_bias_m": -21.81840844612914,
+            "median_abs_error_m": 22.32489013671875,
+            "nmad_m": 2.8766548278808592,
+            "p90_abs_error_m": 25.567352294921875,
+            "p95_abs_error_m": 26.374114990234375,
+            "pearson_r": 0.9678183869240095,
+            "rmse_m": 22.099033009407258,
+            "spearman_r": 0.914133777476408,
+            "valid_pixels": 33333318
+          },
+          "reference_max_inclusive_m": null,
+          "reference_min_exclusive_m": 362.8885803222656
+        }
+      ],
+      "independence_check": "reference_path_and_sha_differ_from_prediction_and_calibration_evidence",
+      "metrics": {
+        "mae_m": 14.707368810950317,
+        "mean_bias_m": -14.699838212904053,
+        "median_abs_error_m": 17.7520751953125,
+        "nmad_m": 7.532538244628906,
+        "p90_abs_error_m": 23.93121337890625,
+        "p95_abs_error_m": 25.11138916015625,
+        "pearson_r": 0.8718950979514623,
+        "rmse_m": 17.01425862525702,
+        "spearman_r": 0.792363956723211,
+        "valid_pixels": 100000000
+      },
+      "nominal_gsd_m": 0.1,
+      "notes": "Geometry and metric calibration were generated by the exact 012301b production runtime using public USGS 3DEP 10 m NAVD88 DTM evidence.",
+      "prediction": {
+        "identity_check": "passed",
+        "manifest_sha256": "ca97e327efb7e9739cce894618c3dd173c424faf8d0810a69d3a1a59cf752442",
+        "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-harv-732000-4713000/metric-dsm.tif",
+        "sha256": "ca97e327efb7e9739cce894618c3dd173c424faf8d0810a69d3a1a59cf752442",
+        "vertical_units": "m"
+      },
+      "reference": {
+        "path": "/Users/amoghrb/Documents/depthwizard/workspace/final-science-data/neon/HARV/2024-08/732000_4713000/reference-sealed/NEON_D01_HARV_DP3_732000_4713000_DSM.tif",
+        "sha256": "ab4b552355fd5e19452187ddcfbe6c2b38cac735c5a1413bab7a88a69ba6752b",
+        "vertical_units": "m"
+      },
+      "rgb": {
+        "path": "/Users/amoghrb/Documents/depthwizard/workspace/final-science-data/neon/HARV/2024-08/732000_4713000/rgb/2024_HARV_8_732000_4713000_image.tif",
+        "sha256": "27c4c36e328a609c643cc3c44b72ff1495b4087a60183f87d321d78649b49d9c"
+      },
+      "scene_id": "neon-harv-732000-4713000",
+      "sensor": "NEON AOP Optech Gemini high-resolution digital camera",
+      "slope_metrics": {
+        "mae_degrees": 39.52142333984375,
+        "p95_abs_error_degrees": 72.82410430908203,
+        "rmse_degrees": 45.30076599121094,
+        "valid_pixels": 100000000
+      },
+      "split": "test",
+      "terrain": "forested",
+      "valid_pixels": 100000000,
+      "vertical_reference": {
+        "compatibility_check": "passed",
+        "prediction_elevation_reference": "orthometric",
+        "prediction_vertical_datum": "North American Vertical Datum of 1988 (NAVD88)",
+        "reference_elevation_reference": "orthometric",
+        "reference_vertical_datum": "North American Vertical Datum of 1988 (NAVD88)"
+      }
+    },
+    {
+      "calibration_evidence": [
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-niwo-450000-4434000/calibration/usgs-3dep-10m-navd88-dtm.tif",
+          "sha256": "7631b4bcced5701f31627cc3648c8732fffd09f023b8c68db2d901f75a517163"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-niwo-450000-4434000/calibration/calibration-evidence.json",
+          "sha256": "b3fe0a78448fd730cfb5e02da94aec2b18268365f40beca23a5e9b0c4babf852"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-niwo-450000-4434000/calibration.json",
+          "sha256": "be7519ec14855276d5c445c7bebd2d2e9e91365a71d85dfe5cf52aa647e2648d"
+        }
+      ],
+      "coverage_fraction": 1.0,
+      "dataset": "NEON AOP",
+      "geographic_group": "neon-niwo-450000-4434000",
+      "height_range_performance": [
+        {
+          "band": "lower",
+          "metrics": {
+            "mae_m": 1.7498636653068134,
+            "mean_bias_m": -0.6238673612568815,
+            "median_abs_error_m": 1.07470703125,
+            "nmad_m": 1.3711154296874999,
+            "p90_abs_error_m": 3.998046875,
+            "p95_abs_error_m": 5.89599609375,
+            "pearson_r": 0.9969948434536307,
+            "rmse_m": 2.720911272388289,
+            "spearman_r": 0.9967153677102271,
+            "valid_pixels": 33333437
+          },
+          "reference_max_inclusive_m": 3431.397705078125,
+          "reference_min_exclusive_m": null
+        },
+        {
+          "band": "middle",
+          "metrics": {
+            "mae_m": 1.705477170188716,
+            "mean_bias_m": -0.8927041438701262,
+            "median_abs_error_m": 1.001708984375,
+            "nmad_m": 1.03159423828125,
+            "p90_abs_error_m": 3.916015625,
+            "p95_abs_error_m": 6.08837890625,
+            "pearson_r": 0.9832063852837897,
+            "rmse_m": 2.8011875177380974,
+            "spearman_r": 0.9857987533994184,
+            "valid_pixels": 33333257
+          },
+          "reference_max_inclusive_m": 3481.88232421875,
+          "reference_min_exclusive_m": 3431.397705078125
+        },
+        {
+          "band": "upper",
+          "metrics": {
+            "mae_m": 1.5298001887745336,
+            "mean_bias_m": -0.3478147861920114,
+            "median_abs_error_m": 0.84619140625,
+            "nmad_m": 1.052226123046875,
+            "p90_abs_error_m": 3.522216796875,
+            "p95_abs_error_m": 5.563232421875,
+            "pearson_r": 0.9915449667338992,
+            "rmse_m": 2.711701618815367,
+            "spearman_r": 0.9930793518683013,
+            "valid_pixels": 33333306
+          },
+          "reference_max_inclusive_m": null,
+          "reference_min_exclusive_m": 3481.88232421875
+        }
+      ],
+      "independence_check": "reference_path_and_sha_differ_from_prediction_and_calibration_evidence",
+      "metrics": {
+        "mae_m": 1.6617137687890624,
+        "mean_bias_m": -0.6214619673486328,
+        "median_abs_error_m": 0.9638671875,
+        "nmad_m": 1.1517659179687498,
+        "p90_abs_error_m": 3.8291015625,
+        "p95_abs_error_m": 5.85009765625,
+        "pearson_r": 0.9989677705427804,
+        "rmse_m": 2.7448943123013008,
+        "spearman_r": 0.9989904558335694,
+        "valid_pixels": 100000000
+      },
+      "nominal_gsd_m": 0.1,
+      "notes": "Geometry was frozen on 335d992 under the unchanged DA3 geometry contract and recalibrated by exact-head 012301b. The 15 m absolute gate is applied to the final DEM-frequency-matched, low-frequency-bias-corrected surface; the preliminary affine RMSE remains recorded separately.",
+      "prediction": {
+        "identity_check": "passed",
+        "manifest_sha256": "2c46b2138b4d741406fc9b6924454e4d97cc27cb6baefa3b3191a54e972eaeca",
+        "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/neon-niwo-450000-4434000/metric-dsm.tif",
+        "sha256": "2c46b2138b4d741406fc9b6924454e4d97cc27cb6baefa3b3191a54e972eaeca",
+        "vertical_units": "m"
+      },
+      "reference": {
+        "path": "/Users/amoghrb/Documents/depthwizard/workspace/final-science-data/neon/NIWO/2024-07/450000_4434000/reference-sealed/NEON_D13_NIWO_DP3_450000_4434000_DSM.tif",
+        "sha256": "df45cc2455b6cc36ad43243a51fe9427baea36725b4f9822f6529a08b394e2b1",
+        "vertical_units": "m"
+      },
+      "rgb": {
+        "path": "/Users/amoghrb/Documents/depthwizard/workspace/final-science-data/neon/NIWO/2024-07/450000_4434000/rgb/2024_NIWO_6_450000_4434000_image.tif",
+        "sha256": "817fa5061a1030d4cb9f979e4195dd02194b6315aa20666f74136e76229ed9ba"
+      },
+      "scene_id": "neon-niwo-450000-4434000",
+      "sensor": "NEON AOP Optech Gemini high-resolution digital camera",
+      "slope_metrics": {
+        "mae_degrees": 10.162542343139648,
+        "p95_abs_error_degrees": 41.51219196319579,
+        "rmse_degrees": 16.66910743713379,
+        "valid_pixels": 100000000
+      },
+      "split": "test",
+      "terrain": "hilly",
+      "valid_pixels": 100000000,
+      "vertical_reference": {
+        "compatibility_check": "passed",
+        "prediction_elevation_reference": "orthometric",
+        "prediction_vertical_datum": "North American Vertical Datum of 1988 (NAVD88)",
+        "reference_elevation_reference": "orthometric",
+        "reference_vertical_datum": "North American Vertical Datum of 1988 (NAVD88)"
+      }
+    },
+    {
+      "calibration_evidence": [
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-2-14-urban-test/calibration/copernicus-glo30-dhhn92-proxy.tif",
+          "sha256": "3ea22e9c52ff8fd1e55eca9a49a83d383431f2a236966373f6a80f1fa91849ad"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-2-14-urban-test/calibration/calibration-evidence.json",
+          "sha256": "9b3e1b5f579d4f600386148d5b712034b7dfa07d99aad21c6d4aa48605e7b135"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-2-14-urban-test/calibration.json",
+          "sha256": "4daf652ab02f34a7495167cecec9a79aafbae8b51ba4b81cfd5ed25f151e9dfa"
+        }
+      ],
+      "coverage_fraction": 1.0,
+      "dataset": "ISPRS Potsdam",
+      "geographic_group": "potsdam-2_14",
+      "height_range_performance": [
+        {
+          "band": "lower",
+          "metrics": {
+            "mae_m": 3.1951971479846515,
+            "mean_bias_m": 3.180152323852813,
+            "median_abs_error_m": 2.754547119140625,
+            "nmad_m": 1.65350304107666,
+            "p90_abs_error_m": 6.049140930175781,
+            "p95_abs_error_m": 6.904216766357422,
+            "pearson_r": -0.1962313591397986,
+            "rmse_m": 3.834130091669448,
+            "spearman_r": -0.09573097955803893,
+            "valid_pixels": 12000877
+          },
+          "reference_max_inclusive_m": 33.87099838256836,
+          "reference_min_exclusive_m": null
+        },
+        {
+          "band": "middle",
+          "metrics": {
+            "mae_m": 4.538221284081115,
+            "mean_bias_m": 4.52249094413463,
+            "median_abs_error_m": 3.944957733154297,
+            "nmad_m": 2.5530882820129395,
+            "p90_abs_error_m": 8.096382141113281,
+            "p95_abs_error_m": 9.506599426269531,
+            "pearson_r": 0.3129297008485499,
+            "rmse_m": 5.225147057319508,
+            "spearman_r": 0.32858920128295616,
+            "valid_pixels": 12005172
+          },
+          "reference_max_inclusive_m": 34.60900115966797,
+          "reference_min_exclusive_m": 33.87099838256836
+        },
+        {
+          "band": "upper",
+          "metrics": {
+            "mae_m": 3.7560005105946828,
+            "mean_bias_m": 0.8321004461889342,
+            "median_abs_error_m": 3.07122802734375,
+            "nmad_m": 3.560634610748291,
+            "p90_abs_error_m": 7.674350738525391,
+            "p95_abs_error_m": 9.467609405517578,
+            "pearson_r": 0.6022080585085345,
+            "rmse_m": 4.764477580632284,
+            "spearman_r": 0.6089364539866374,
+            "valid_pixels": 11993951
+          },
+          "reference_max_inclusive_m": null,
+          "reference_min_exclusive_m": 34.60900115966797
+        }
+      ],
+      "independence_check": "reference_path_and_sha_differ_from_prediction_and_calibration_evidence",
+      "metrics": {
+        "mae_m": 3.829905031478246,
+        "mean_bias_m": 2.8455019586463504,
+        "median_abs_error_m": 3.191680908203125,
+        "nmad_m": 2.3176681835174557,
+        "p90_abs_error_m": 7.353534698486328,
+        "p95_abs_error_m": 9.149478912353516,
+        "pearson_r": 0.6642215359491591,
+        "rmse_m": 4.644149033210309,
+        "spearman_r": 0.6578109615502213,
+        "valid_pixels": 36000000
+      },
+      "nominal_gsd_m": 0.05,
+      "notes": "Geometry was frozen on 335d992 under the unchanged DA3 geometry contract and was recalibrated by exact-head 012301b. Copernicus GLO-30 EGM2008 orthometric evidence was shifted +0.208953 m using GCG2016; Potsdam DHHN92 is a documented historical inference with <=0.025 m realization uncertainty, not dataset-author confirmation.",
+      "prediction": {
+        "identity_check": "passed",
+        "manifest_sha256": "78afc2ec2605d6364dcbbffde1f2fb23637cb120b152f75cd86033ccc37f58cc",
+        "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-2-14-urban-test/metric-dsm.tif",
+        "sha256": "78afc2ec2605d6364dcbbffde1f2fb23637cb120b152f75cd86033ccc37f58cc",
+        "vertical_units": "m"
+      },
+      "reference": {
+        "path": "/Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/1_DSM/dsm_potsdam_02_14.tif",
+        "sha256": "fdac03cdee3eb36ccf194f7782dc729150385ef0ea820817800ea83c65447046",
+        "vertical_units": "m"
+      },
+      "rgb": {
+        "path": "/Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/2_Ortho_RGB/top_potsdam_2_14_RGB.tif",
+        "sha256": "abec2f2dba5e27c46590d8d02a3e2e1e3d3691766869e0ca0932b41754a7f3fc"
+      },
+      "scene_id": "potsdam-2-14-urban-test",
+      "sensor": "BSF Swissphoto Potsdam airborne true orthophoto",
+      "slope_metrics": {
+        "mae_degrees": 17.249357223510742,
+        "p95_abs_error_degrees": 64.59087448120113,
+        "rmse_degrees": 27.19023895263672,
+        "valid_pixels": 36000000
+      },
+      "split": "test",
+      "terrain": "urban",
+      "valid_pixels": 36000000,
+      "vertical_reference": {
+        "compatibility_check": "passed",
+        "prediction_elevation_reference": "orthometric",
+        "prediction_vertical_datum": "DHHN92/NHN (inferred; GCG2016 proxy conversion)",
+        "reference_elevation_reference": "orthometric",
+        "reference_vertical_datum": "DHHN92/NHN (inferred; GCG2016 proxy conversion)"
+      }
+    },
+    {
+      "calibration_evidence": [
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-3-14-cross-sensor/calibration/copernicus-glo30-dhhn92-proxy.tif",
+          "sha256": "3ea22e9c52ff8fd1e55eca9a49a83d383431f2a236966373f6a80f1fa91849ad"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-3-14-cross-sensor/calibration/calibration-evidence.json",
+          "sha256": "b5bd79a0156a95ea3f2c545ffd7fefaf1c67122a3c147e6ff3f8178c7530d864"
+        },
+        {
+          "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-3-14-cross-sensor/calibration.json",
+          "sha256": "a297e7c3d448282d37de47612a34a8dd64692cf427d7928999e2398cb6bbebd8"
+        }
+      ],
+      "coverage_fraction": 1.0,
+      "dataset": "ISPRS Potsdam",
+      "geographic_group": "potsdam-3_14",
+      "height_range_performance": [
+        {
+          "band": "lower",
+          "metrics": {
+            "mae_m": 3.9501970646149704,
+            "mean_bias_m": 3.9501970646149704,
+            "median_abs_error_m": 3.707592010498047,
+            "nmad_m": 1.0557948509216308,
+            "p90_abs_error_m": 5.850401687622071,
+            "p95_abs_error_m": 7.164121055603026,
+            "pearson_r": -0.004431844670516242,
+            "rmse_m": 4.231733917107613,
+            "spearman_r": 0.12766934401618546,
+            "valid_pixels": 12005827
+          },
+          "reference_max_inclusive_m": 32.553001403808594,
+          "reference_min_exclusive_m": null
+        },
+        {
+          "band": "middle",
+          "metrics": {
+            "mae_m": 4.694689838155876,
+            "mean_bias_m": 4.693196899386723,
+            "median_abs_error_m": 4.322986602783203,
+            "nmad_m": 1.517037375640869,
+            "p90_abs_error_m": 7.512380599975586,
+            "p95_abs_error_m": 8.326141357421875,
+            "pearson_r": 0.27231193753161065,
+            "rmse_m": 5.032457199654203,
+            "spearman_r": 0.3340847467026884,
+            "valid_pixels": 11994946
+          },
+          "reference_max_inclusive_m": 34.71099853515625,
+          "reference_min_exclusive_m": 32.553001403808594
+        },
+        {
+          "band": "upper",
+          "metrics": {
+            "mae_m": 4.044010351834105,
+            "mean_bias_m": -3.1074211028927303,
+            "median_abs_error_m": 3.5933074951171875,
+            "nmad_m": 3.7911371040344237,
+            "p90_abs_error_m": 8.225411987304689,
+            "p95_abs_error_m": 10.046332168579099,
+            "pearson_r": 0.5305904793937317,
+            "rmse_m": 4.978136399164488,
+            "spearman_r": 0.5225390189972894,
+            "valid_pixels": 11999227
+          },
+          "reference_max_inclusive_m": null,
+          "reference_min_exclusive_m": 34.71099853515625
+        }
+      ],
+      "independence_check": "reference_path_and_sha_differ_from_prediction_and_calibration_evidence",
+      "metrics": {
+        "mae_m": 4.229525885308637,
+        "mean_bias_m": 1.845371520860725,
+        "median_abs_error_m": 3.9290237426757812,
+        "nmad_m": 2.382264420318603,
+        "p90_abs_error_m": 7.267093658447266,
+        "p95_abs_error_m": 8.436214447021484,
+        "pearson_r": 0.5945431514988393,
+        "rmse_m": 4.761353881891117,
+        "spearman_r": 0.6715338870588464,
+        "valid_pixels": 36000000
+      },
+      "nominal_gsd_m": 0.05,
+      "notes": "Cross-sensor geometry was frozen on 335d992 under the unchanged DA3 geometry contract and recalibrated by exact-head 012301b. The adjacent-tile local datum transformation and its <=0.025 m DHHN92-realization caveat are identical to 2_14.",
+      "prediction": {
+        "identity_check": "passed",
+        "manifest_sha256": "d27fa38a8b0754ad15ac9d6e47dd91173ce52bacb57062e13d20aece70daea80",
+        "path": "/private/tmp/depthwizard-final-science-012301/campaign/predictions/potsdam-3-14-cross-sensor/metric-dsm.tif",
+        "sha256": "d27fa38a8b0754ad15ac9d6e47dd91173ce52bacb57062e13d20aece70daea80",
+        "vertical_units": "m"
+      },
+      "reference": {
+        "path": "/Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/1_DSM/dsm_potsdam_03_14.tif",
+        "sha256": "e4138d128445e15367c2b1990338933145770a0ec27d6e66c7aa15d422a31fff",
+        "vertical_units": "m"
+      },
+      "rgb": {
+        "path": "/Users/amoghrb/Documents/depthwizard/data/external/isprs-potsdam/2_Ortho_RGB/top_potsdam_3_14_RGB.tif",
+        "sha256": "a6a3842cce940f61f1ed0588c8f4ecdaeee13ad98a1322227d728550a6c9abd7"
+      },
+      "scene_id": "potsdam-3-14-cross-sensor",
+      "sensor": "BSF Swissphoto Potsdam airborne true orthophoto",
+      "slope_metrics": {
+        "mae_degrees": 21.261070251464844,
+        "p95_abs_error_degrees": 72.23682403564453,
+        "rmse_degrees": 31.62489128112793,
+        "valid_pixels": 36000000
+      },
+      "split": "cross_sensor_test",
+      "terrain": "urban",
+      "valid_pixels": 36000000,
+      "vertical_reference": {
+        "compatibility_check": "passed",
+        "prediction_elevation_reference": "orthometric",
+        "prediction_vertical_datum": "DHHN92/NHN (inferred; GCG2016 proxy conversion)",
+        "reference_elevation_reference": "orthometric",
+        "reference_vertical_datum": "DHHN92/NHN (inferred; GCG2016 proxy conversion)"
+      }
+    }
+  ],
+  "schema_version": 2,
+  "sensor": {
+    "BSF Swissphoto Potsdam airborne true orthophoto": {
+      "mae_m": 4.029715458393441,
+      "mean_bias_m": 2.345436739753538,
+      "pearson_r": 0.6056132167587789,
+      "rmse_m": 4.703116574773883,
+      "scenes": 2,
+      "valid_pixels": 72000000
+    },
+    "NEON AOP Optech Gemini high-resolution digital camera": {
+      "mae_m": 5.498673197227987,
+      "mean_bias_m": -5.081488026610514,
+      "pearson_r": 0.999986271713361,
+      "rmse_m": 9.950629492636327,
+      "scenes": 3,
+      "valid_pixels": 300000000
+    }
+  },
+  "terrain": {
+    "forested": {
+      "mae_m": 14.707368810950317,
+      "mean_bias_m": -14.699838212904053,
+      "pearson_r": 0.871895097951432,
+      "rmse_m": 17.014258625563972,
+      "scenes": 1,
+      "valid_pixels": 100000000
+    },
+    "hilly": {
+      "mae_m": 1.6617137687890624,
+      "mean_bias_m": -0.6214619673486328,
+      "pearson_r": 0.9989677705433891,
+      "rmse_m": 2.7448943123013017,
+      "scenes": 1,
+      "valid_pixels": 100000000
+    },
+    "sparse": {
+      "mae_m": 0.12693701194458007,
+      "mean_bias_m": 0.07683610042114258,
+      "pearson_r": 0.9991466646308332,
+      "rmse_m": 0.16012662454962445,
+      "scenes": 1,
+      "valid_pixels": 100000000
+    },
+    "urban": {
+      "mae_m": 3.829905031478246,
+      "mean_bias_m": 2.8455019586463504,
+      "pearson_r": 0.6642215359489125,
+      "rmse_m": 4.644149033244751,
+      "scenes": 1,
+      "valid_pixels": 36000000
+    }
+  },
+  "test_overall": {
+    "mae_m": 5.319876608040515,
+    "mean_bias_m": -4.232167671047279,
+    "pearson_r": 0.999982846884498,
+    "rmse_m": 9.524554813784627,
+    "scenes": 4,
+    "valid_pixels": 336000000
+  }
+}

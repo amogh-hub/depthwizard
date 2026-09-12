@@ -1,0 +1,49 @@
+{
+  "claim_boundary": "This harness proves literal PNG/JPG/TIFF ingestion, RGB readability and truthful geospatial metadata semantics. Production DA3 reconstruction and metric calibration remain covered by exact-head packaged acceptance and operator qualification.",
+  "formats": {
+    "jpg": {
+      "bands": 3,
+      "crs": null,
+      "driver": "JPEG",
+      "elevation_contract": "relative_only_no_metric_claim",
+      "ground_sample_distance_x": null,
+      "ground_sample_distance_y": null,
+      "height": 48,
+      "path": "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/sih26175-input-formats/fixtures/single-view-rgb.jpg",
+      "status": "PASS",
+      "width": 64
+    },
+    "png": {
+      "bands": 3,
+      "crs": null,
+      "driver": "PNG",
+      "elevation_contract": "relative_only_no_metric_claim",
+      "ground_sample_distance_x": null,
+      "ground_sample_distance_y": null,
+      "height": 48,
+      "path": "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/sih26175-input-formats/fixtures/single-view-rgb.png",
+      "status": "PASS",
+      "width": 64
+    },
+    "tiff": {
+      "bands": 3,
+      "crs": "EPSG:32643",
+      "driver": "GTiff",
+      "elevation_contract": "georeferenced_metric_calibration_eligible",
+      "ground_sample_distance_x": 2.0008003208954332,
+      "ground_sample_distance_y": 2.0008003198490902,
+      "height": 48,
+      "path": "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/sih26175-input-formats/fixtures/single-view-rgb.tiff",
+      "status": "PASS",
+      "width": 64
+    }
+  },
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "problem_statement_contract": {
+    "georeferenced_tiff": "CRS/GSD preserved and eligible for evidence calibration to metric DSM",
+    "non_georeferenced_jpg": "relative DSM pathway; no CRS/metres invented",
+    "non_georeferenced_png": "relative DSM pathway; no CRS/metres invented"
+  },
+  "schema_version": 1,
+  "status": "PASS_SIH26175_INPUT_FORMAT_CONTRACT"
+}

@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "status": "PASS_SIH26175_OPERATOR_ACCEPTANCE",
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "observed_at_utc": "2026-09-12T11:34:24Z",
+  "finale_hardware": "MacBook Air (Mac17,3), Apple M5, 10-core CPU, 8-core integrated GPU, 16 GB memory, macOS 26.6.2 arm64",
+  "application_bundle": "/private/tmp/depthwizard-release-eb4aca3/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app",
+  "application_sha256": "d24cc0b08d552be2470630d2fd2ffccfe789ceb940b37481a590727c4356d506",
+  "dmg_sha256": "a4703a2aa8886b5dea55af429057f8d9828c8dcb00c0b90e13a311e6ee28c3b3",
+  "method": "Human-visible accessibility-tree and rendered-frame inspection of the exact packaged application, cross-checked against exact-head machine reports. No check was promoted from feature presence alone.",
+  "checks": {
+    "geo_tiff_metric_dsm": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json",
+        "cua://exact-head-soak/urban_residential_DOP.tif/DSM-ready-metric-EPSG4326-evidence-calibrated-metres"
+      ],
+      "notes": "Packaged offline DA3 reconstruction, calibration and persisted metric DSM completed; the UI explicitly reported a metric, evidence-calibrated DSM in metres."
+    },
+    "nongeo_png_rdsm": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/sih26175-input-formats/input-format-contract.json",
+        "cua://exact-head-app/DepthWizard-Joshimath-NonGeo.png/relative-DSM-dimensionless-no-CRS-no-GSD"
+      ],
+      "notes": "Exact packaged app reopened a PNG project as dimensionless rDSM; metric structure and validation tools remained unavailable."
+    },
+    "nongeo_jpg_rdsm": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/sih26175-input-formats/input-format-contract.json",
+        "cua://exact-head-app/s2_z12_2953_1683.jpg/relative-DSM-dimensionless-no-CRS-no-GSD"
+      ],
+      "notes": "Exact packaged app reopened a JPG project as dimensionless rDSM without inventing metric elevation."
+    },
+    "optical_source_view": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-app/potsdam-optical/original-optical-pixels-no-elevation-encoded"
+      ],
+      "notes": "Optical tab rendered the registered RGB source and explicitly separated it from elevation semantics."
+    },
+    "dsm_view": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/rt5-project/DSM-tab/elevation-legend-and-metric-probe"
+      ],
+      "notes": "DSM tab rendered the persisted calibrated surface, units, legend, cursor elevation and slope."
+    },
+    "texture_projection_3d": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/3d-texture/frame-validated"
+      ],
+      "notes": "Source RGB texture was projected on non-empty 3D terrain and frame-validated during sustained navigation."
+    },
+    "dsm_overlay_3d": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/3d-dsm-overlay/frame-validated"
+      ],
+      "notes": "Metric DSM analytical overlay reached a frame-validated renderer state."
+    },
+    "slope_overlay_3d": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/3d-slope-overlay/frame-validated-p02-p98-legend"
+      ],
+      "notes": "Slope overlay rendered with a degree legend and frame validation while terrain geometry remained unchanged."
+    },
+    "hillshade_3d": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/3d-hillshade/frame-validated"
+      ],
+      "notes": "Hillshade overlay loaded and frame-validated in the packaged renderer."
+    },
+    "contours_3d": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/3d-contours/frame-validated"
+      ],
+      "notes": "Contour overlay loaded and frame-validated in the packaged renderer."
+    },
+    "orbit_navigation": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/orbit-drag"
+      ],
+      "notes": "Orbit drag changed the live camera while the scene maintained measured frame rate."
+    },
+    "fly_navigation": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/fly-forward"
+      ],
+      "notes": "Fly mode and forward motion were exercised on the live terrain."
+    },
+    "first_person_navigation": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/first-person-forward"
+      ],
+      "notes": "First-person mode and forward movement were exercised on the live terrain."
+    },
+    "top_down_navigation": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/top-down-pan-and-analysis-selection"
+      ],
+      "notes": "Top-down camera, pan semantics and registered terrain selection were observed."
+    },
+    "deterministic_flythrough": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-operator-012301/rendering-performance.json",
+        "cua://exact-head-soak/deterministic-flythrough"
+      ],
+      "notes": "The deterministic display-only flythrough ran without changing project data."
+    },
+    "auto_and_manual_lod": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/lod-auto-and-manual/LOD2-8192-faces"
+      ],
+      "notes": "Automatic LOD and manual LOD 2 were exercised; the UI reported LOD 2 manual and 8,192 nominal faces."
+    },
+    "vertical_exaggeration": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/vertical-exaggeration/2x-display-Z-source-values-unchanged"
+      ],
+      "notes": "Display-only 2x vertical exaggeration was selected and clearly distinguished from source elevations."
+    },
+    "probe_3d": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/3d-probe/pixel-724-549/surface-minus7.176m/slope36.543deg/reference-minus1.806m/residual-minus5.369m"
+      ],
+      "notes": "A registered 3D surface click updated synchronized prediction, slope, reference and residual values."
+    },
+    "measure_3d": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/3d-measure/729.93px/A-minus12.166m/B-minus7.171m/deltaZ4.994m"
+      ],
+      "notes": "Two registered 3D surface endpoints produced pixel distance and signed metric elevation difference."
+    },
+    "profile_3d": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/3d-profile/160-samples/752.00px/deltaZ3.464m/gain19.650m/loss16.186m"
+      ],
+      "notes": "A 160-sample 3D transect rendered prediction/reference profile and accumulated gain/loss."
+    },
+    "structure_height_urban": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-app/potsdam-projected-urban/5cm-GSD/four-vertex-footprint/height2.220m/moderate-quality/ground-4-of-4-sectors",
+        "/Users/amoghrb/Documents/depthwizard/workspace/operator-urban-potsdam-2-14-v6/project-manifest.json"
+      ],
+      "notes": "The exact packaged app measured an explicit four-vertex urban footprint on EPSG:32633 imagery with trusted 0.050 m GSD, physical 1.50-8.00 m ground support, 66.7% ground inliers and four-sector coverage. The UI surfaced a dispersion warning rather than concealing it."
+    },
+    "reference_validation_independent": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json"
+      ],
+      "notes": "Reference SHA differs from calibration evidence SHA; validation used 1,037,665 aligned pixels."
+    },
+    "reference_view": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/reference-view/evaluation-only-aligned-reference/RMSE3.549m"
+      ],
+      "notes": "Reference view was visibly marked evaluation-only and displayed the aligned reference surface."
+    },
+    "residual_view": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/residual-view/1037665-valid-pixels/RMSE3.549m/MAE2.145m/P958.320m"
+      ],
+      "notes": "Residual view and point residuals rendered from the independent aligned reference."
+    },
+    "projection_accuracy_visual": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-soak/registered-optical-DSM-reference-residual-synchronized-cursor",
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json"
+      ],
+      "notes": "Optical, DSM, reference and residual layers remained registered under synchronized point inspection; validation reports exact-grid alignment."
+    },
+    "export_bundle": {
+      "status": "PASS",
+      "evidence": [
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json",
+        "/private/tmp/depthwizard-release-eb4aca3/artifacts/acceptance/release-train-5-full/project/exports/export-manifest.json"
+      ],
+      "notes": "Packaged workflow created and integrity-checked an 18.38 MiB hash-audited ZIP containing mesh and validation artifacts while excluding source imagery by default."
+    },
+    "relaunch_reopen": {
+      "status": "PASS",
+      "evidence": [
+        "cua://exact-head-app/relaunch-reopen/rt5-persisted-project",
+        "cua://exact-head-app/reopen/png-jpg-potsdam-projects"
+      ],
+      "notes": "The exact app bundle relaunched and reopened the persisted RT5 project plus separate PNG, JPG and projected urban projects through the native project picker."
+    }
+  },
+  "limitations": [
+    "The RT5 fixture is metric but lacks trustworthy physical GSD, so structural height was correctly evidenced on a separate projected 5 cm GSD urban project instead.",
+    "The selected urban footprint produced a moderate-quality 2.220 m estimate and an explicit within-footprint dispersion warning; the warning is preserved as evidence of truthful UX, not suppressed.",
+    "Confidence UI remained disabled because the production DA3 path did not emit model-native confidence; no confidence artifact or probability semantics were fabricated."
+  ]
+}
