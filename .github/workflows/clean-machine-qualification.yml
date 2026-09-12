@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/clean-machine-qualification.yml
       - qualification/clean_machine_acceptance.py
+      - qualification/current_analytical_acceptance.py
   workflow_dispatch:
 
 permissions:
@@ -195,7 +196,7 @@ jobs:
           fi
           export DEPTHWIZARD_OFFLINE_GATE=verified_interface_down
           .venv/bin/python -m scripts.verify_problem_statement_inputs
-          .venv/bin/python -m scripts.release_train_4_scientific_analytical_smoke
+          .venv/bin/python ../qualifier/qualification/current_analytical_acceptance.py --root .
           .venv/bin/python -m scripts.release_train_5_app_bundle_smoke
           mkdir -p artifacts/acceptance/clean-machine-consecutive
           for run in 1 2 3; do
