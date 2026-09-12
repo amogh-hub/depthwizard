@@ -1,49 +1,136 @@
+<p align="center">
+  <img src="docs/assets/depthwizard-wordmark.jpeg" alt="DepthWizard — Elevation Intelligence" width="920">
+</p>
+
+<p align="center">
+  <strong>One optical remote-sensing image in. A truthful relative or evidence-calibrated metric surface—and an analytical 3D world—out.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/amogh-hub/depthwizard/releases/tag/v0.2.0-sih-final"><img alt="Qualified release" src="https://img.shields.io/badge/qualified_release-v0.2.0-2563eb"></a>
+  <a href="https://github.com/amogh-hub/depthwizard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/amogh-hub/depthwizard/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/amogh-hub/depthwizard/tree/qualification/evidence-012301b9c1910ef4ccde5b3da5d4e4d94da60ce6/evidence/submission"><img alt="SIH26175 completion" src="https://img.shields.io/badge/SIH26175-11%2F11_gates_PASS-15803d"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/standalone-macOS_ARM64-111827">
+  <img alt="Operation" src="https://img.shields.io/badge/core-offline--first-0f766e">
+</p>
+
+<p align="center">
+  <a href="https://github.com/amogh-hub/depthwizard/releases/tag/v0.2.0-sih-final"><strong>Download the qualified application</strong></a>
+  ·
+  <a href="docs/judge-evidence-pack.md">Judge evidence</a>
+  ·
+  <a href="docs/sih26175-problem-statement-traceability.md">Requirement traceability</a>
+  ·
+  <a href="docs/standalone-architecture.md">Architecture</a>
+</p>
+
 # DepthWizard — SIH26175
 
-Final-system engineering repository for **ISRO / Smart India Hackathon 2026** problem statement **SIH26175 — DepthWizard: Single-View Height Estimation and 3D Flythrough**.
+DepthWizard is the final-system engineering repository for the **ISRO / Smart India Hackathon 2026** problem statement **SIH26175: Single-View Height Estimation and 3D Flythrough**.
 
-DepthWizard is a unified scientific geospatial workstation that converts one optical RGB remote-sensing image into a truthful relative DSM when geodetic scale is unavailable, or an evidence-calibrated metric DSM when georeferencing plus defensible DEM/GCP evidence are available. It then turns the persisted surface into an analytical textured 3D terrain that can be navigated, measured, validated and exported without a user-visible terminal.
+It is a unified scientific geospatial workstation that converts a single optical RGB remote-sensing image into a dimensionless relative DSM when scale evidence is unavailable, or an evidence-calibrated metric DSM when defensible georeferencing plus DEM/GCP evidence is available. The persisted surface becomes a textured, measurable and navigable Three.js terrain inside a standalone Tauri desktop application—without requiring users to start a terminal service.
 
-## Implemented final-system foundations
+## Qualified release
 
-- PNG/JPG/JPEG/TIFF/GeoTIFF ingest with explicit RGB-band handling and CRS/transform inspection;
-- non-georeferenced **dimensionless rDSM** output with no fabricated metres or CRS;
-- georeferenced **metric DSM** calibration from low-resolution DEM, spatially defensible sparse GCPs, or DEM + GCP fusion, with absolute/datum-resolved claims only when vertical metadata is explicit;
-- DA3MONO-LARGE relative-geometry prior with exact upstream source commit, Hugging Face revision and checkpoint SHA identity verified against the bytes before model load;
-- robust polarity diagnosis, conditioned Huber/IRLS scale-offset fitting, a six-GCP production default with explicitly low-confidence four/five-point expert overrides, correlation/coverage/relief/RMSE gates, coarse-DEM frequency matching, independent-support anchor sampling and physical-scale-aware terrain-bias correction;
-- DEM + GCP fusion that preserves DEM-established relief and permits only robust global vertical-datum offset correction from GCPs;
-- DEM calibration fails closed when trustworthy physical ground support cannot be derived for both the optical target and DEM, rather than treating resampled pixels as independent evidence;
-- conservative model-native confidence weighting for DEM calibration when usable, explicitly **not probability calibrated**, with truthful DEM-only weighting fallback when confidence is missing/degenerate;
-- local-ground/geodesic spatial scale handling, including Web-Mercator correction and the full rotated/sheared pixel-to-ground Jacobian for slope;
-- end-to-end source NoData validity preservation through tiled inference, rDSM/DSM/confidence output and provenance;
-- overlap-aware tiled inference/harmonization plus an objective seam-to-interior discontinuity evaluator for final large-scene evidence;
-- RMSE, MAE, Pearson/Spearman correlation, NMAD, bias, percentile errors, slope metrics, aligned reference DSM and residual products;
-- analyst probe, signed two-point surface Δz, subpixel elevation transects, cumulative profile gain/loss and synchronized reference/residual inspection;
-- optional analyst-declared metres-per-pixel horizontal distance for non-georeferenced projects,
-  explicitly labelled and never used to relabel relative vertical values as metres;
-- explicit-footprint structural-height estimation using a robust surrounding local-ground plane rather than mislabelling arbitrary endpoint Δz as building height;
-- textured terrain GLB + persistent LOD pyramid with corrected upward-facing geometry, analytical overlays, Orbit/Fly/First Person/Top Down navigation and deterministic flythrough;
-- evidence-native 3D analyst interaction: registered surface probing, Measure, Profiles and Structures remain tied to authoritative raster coordinates;
-- provenance-burned 3D PNG screenshots whose pixels and filename record the packaged source commit
-  and current relative/metric display state;
-- immutable project/product SHA identities, source/evidence provenance, fail-closed artifact reuse and hash-audited export bundles;
-- packaged Tauri + React + Three.js workstation with PyInstaller ONEDIR scientific sidecar, a bundled hash-verified DA3 snapshot, loopback-only authenticated IPC, owned lifecycle and offline-first operation;
-- bounded one-worker scientific queue, duplicate-project admission protection, cooperative cancellation, bounded job history and leak-safe replacement of late Three.js mesh loads;
-- bounded sampled source-quality diagnostics for saturation, insufficient texture, deep-shadow/bright-low-chroma candidates and metadata-declared off-nadir building-lean risk;
-- actionable `resource_exhausted` job failures for CPU/CUDA/MPS memory pressure and split React/Tauri/Three.js production chunks;
-- Tauri startup binds readiness to the exact spawned sidecar with an independent 256-bit per-process boot nonce before the API session token is exposed to React;
-- standalone recovery/error paths, malformed-input rejection and no-terminal packaged processing acceptance;
-- exact problem-statement traceability in `docs/requirements-traceability.yaml`.
+The mandatory problem-statement scope is **complete, independently evidenced, fail-closed and scientifically honest**.
+
+| Release fact | Qualified value |
+|---|---|
+| Final status | `PASS_SIH26175_PROBLEM_STATEMENT_COMPLETE` |
+| Blocking gates | none |
+| Completion gates | 11/11 passed |
+| Qualified source | `012301b9c1910ef4ccde5b3da5d4e4d94da60ce6` |
+| Final tag | [`v0.2.0-sih-final`](https://github.com/amogh-hub/depthwizard/releases/tag/v0.2.0-sih-final) |
+| DMG SHA-256 | `8983ea3a624e677670cf5ebf919e860b253cf2b07c0e8ccc9c169a92c1dd1a15` |
+| Clean-machine qualification | [fresh macOS 15 ARM64 run](https://github.com/amogh-hub/depthwizard/actions/runs/34702827804) |
+| Release-asset re-verification | [fail-closed finalization run](https://github.com/amogh-hub/depthwizard/actions/runs/34711038120) |
+| Exact-commit evidence | [nine-report evidence branch](https://github.com/amogh-hub/depthwizard/tree/qualification/evidence-012301b9c1910ef4ccde5b3da5d4e4d94da60ce6/evidence/submission) |
+
+The release contains the exact qualified Apple Silicon DMG, `SHA256SUMS`, and the evidence/manifests archive. It is ad-hoc signed and intentionally disclosed as **not Apple Developer-ID notarized**.
+
+## Two truthful output paths
+
+| Input | Output claim | Required evidence |
+|---|---|---|
+| PNG/JPG or imagery without spatial metadata | Dimensionless relative DSM (`rDSM`) | None |
+| TIFF/GeoTIFF without accepted calibration | Relative/uncalibrated surface | None; metric claims remain locked |
+| Georeferenced GeoTIFF + accepted DEM or distributed GCPs | Metric DSM GeoTIFF | Passed scale, coverage, correlation, conditioning, residual and datum gates |
+| Metric DSM + independent reference | Validation products | Separate reference identity and registered support |
+
+Georeferencing alone does not create vertical truth. If the available DEM/GCP evidence is weak, spatially invalid or datum-ambiguous, DepthWizard refuses the metric claim instead of relabelling relative values as metres.
+
+## What the system delivers
+
+- DA3MONO-LARGE as a pinned, hash-verified **relative geometry prior**, bundled for offline inference;
+- overlap-aware tiled processing with scene harmonization, source validity/NoData preservation and seam diagnostics;
+- robust DEM, six-point GCP, and DEM + GCP calibration using positive-scale Huber/IRLS fitting and leave-one-out validation;
+- CRS, transform, ground-sample-distance, vertical datum/reference and DSM/rDSM semantics persisted with provenance;
+- float32 GeoTIFF/rDSM output, slope, hillshade, contours, aligned reference, residuals and machine-readable metrics;
+- RMSE, MAE, Pearson/Spearman correlation, NMAD, bias, percentile and slope diagnostics;
+- textured GLB/LOD terrain with Orbit, Fly, First Person, Top Down and deterministic flythrough navigation;
+- registered probe, two-point measurement, elevation profile, structural-footprint height and reference/residual inspection;
+- hash-audited project export, reopen/relaunch persistence, bounded processing queue and explicit recovery states;
+- loopback-only authenticated sidecar ownership inside the packaged Tauri application.
+
+## Evaluation evidence
+
+| Evaluation target | Result |
+|---|---|
+| Required terrain stability | Urban, sparse, hilly and forested scenes covered |
+| Cross-sensor evaluation | Passed under the frozen geographic/reference separation protocol |
+| DSM metrics | RMSE, MAE and correlation reported against independent references |
+| Baselines and ablations | Same-input coarse DEM, raw monocular, affine and full-system comparisons preserved |
+| Operator workflow | 27/27 checks passed with evidence references |
+| Rendering | Sustained mean and p05 performance at or above 30 FPS |
+| Stability | Exact-head packaged soak exceeded 7,200 seconds without a blocking failure |
+| Fresh-machine deployment | Three consecutive offline packaged workflows passed on a fresh Apple Silicon runner |
+
+The compact reviewer index is [`docs/judge-evidence-pack.md`](docs/judge-evidence-pack.md). The machine-readable artifacts and checksum manifest live on the exact-commit evidence branch and in the final release archive.
+
+## Five-minute judge workflow
+
+1. Download the DMG and `SHA256SUMS` from the [qualified release](https://github.com/amogh-hub/depthwizard/releases/tag/v0.2.0-sih-final).
+2. Verify that the DMG SHA-256 is `8983ea3a624e677670cf5ebf919e860b253cf2b07c0e8ccc9c169a92c1dd1a15`.
+3. Install and launch DepthWizard from Finder. Because the build is ad-hoc signed, macOS may require **Control-click → Open** on first launch.
+4. Import PNG/JPG to reconstruct a dimensionless rDSM, or import GeoTIFF and add accepted DEM/GCP evidence for a metric DSM.
+5. Build the terrain; switch between texture, DSM, slope, hillshade and contours; navigate in First Person or aerial modes.
+6. Probe elevations, measure Δz, draw a profile, estimate a structural footprint, or load an independent reference.
+7. Export the project bundle, quit, relaunch and reopen it to confirm persisted scientific state.
+
+The core reconstruction workflow remains offline after installation. Online map tiles, cloud inference and undocumented model caches are not required.
+
+## Architecture
+
+```text
+Optical RGB
+    │
+    ├── ingest + CRS/validity/quality inspection
+    │
+    ├── pinned monocular geometry prior
+    │       └── tiled relative surface + seam harmonization
+    │
+    ├── no defensible scale evidence ───────────────► dimensionless rDSM
+    │
+    └── accepted DEM / GCP evidence
+            └── robust calibration + datum gates ──► metric DSM GeoTIFF
+                                                        │
+                                                        ├── validation products
+                                                        └── textured analytical 3D terrain
+```
+
+The desktop application owns an authenticated local scientific sidecar, per-process boot identity, project state, raster/mesh artifacts and analyst tools. See [`docs/standalone-architecture.md`](docs/standalone-architecture.md) and the architecture decisions in [`docs/adr/`](docs/adr/).
 
 ## Scientific claim boundaries
 
-DA3MONO-LARGE is used as a **relative monocular geometry prior**, not as an absolute satellite-height oracle. Metric elevation is claimed only after explicit geodetic evidence calibration. Model-native confidence is a monotonic reliability signal, not a calibrated probability of correctness. Learned refinement remains unpromoted unless independent evidence beats the production path under the frozen protocol.
+- DA3MONO-LARGE is not presented as an absolute satellite-height oracle.
+- Metric elevation is claimed only after accepted geodetic evidence calibration.
+- Native confidence is exported only when an estimator defines it; no uncertainty raster is synthesized for the production path.
+- Absolute accuracy remains bounded by image geometry, occlusion/building lean, calibration quality, independent-reference quality and vertical-datum compatibility.
+- Research refiners remain outside production unless they beat the frozen production path under independent same-input gates.
 
-Previously earned RT5 engineering/standalone evidence remains historical evidence for the exact commits that produced it; it is never silently transferred to a newer source head. Any source-changing hardening after that evidence requires exact-head verification before the newer head inherits an RT5 pass. The final four-terrain geographically disjoint/cross-sensor science campaign, same-input published baselines/ablations, finale-hardware FPS and two-hour soak, clean-machine reproducibility and final submission evidence remain separate frozen RT6/RT7 qualification gates; they must not be inferred from integration fixtures.
+## Source verification
 
-## Verification
-
-Python source verification:
+Python and scientific core:
 
 ```bash
 uv lock --check
@@ -51,18 +138,16 @@ uv sync --frozen --python 3.12 --extra dev --extra ml
 .venv/bin/python scripts/verify.py
 ```
 
-The suite covers calibration, confidence weighting, geospatial scale/reprojection/export, rDSM semantics, metrics, slope, analyst profiles, structural height, tiling/seams, mesh geometry, project integrity, dataset split integrity, service APIs and standalone architecture contracts.
-
-Release dependency reproducibility is independently audited:
+Desktop frontend:
 
 ```bash
-python -m scripts.check_release_reproducibility --strict
-python -m scripts.generate_supply_chain_reports
+cd apps/desktop
+npm ci --no-audit --no-fund
+npm test
+npm run build
 ```
 
-That gate requires exact top-level npm versions and committed resolver locks for npm (`apps/desktop/package-lock.json`), Cargo (`apps/desktop/src-tauri/Cargo.lock`) and Python (`uv.lock`). Passing the lock audit is necessary but does not replace clean-machine RT7 qualification.
-
-## Core CLI
+Core CLI:
 
 ```bash
 depthwizard inspect imagery.tif
@@ -71,36 +156,14 @@ depthwizard validate-dsm dsm.tif reference_lidar.tif evidence/
 depthwizard serve --host 127.0.0.1 --port 8765
 ```
 
-`calibrate-dem` refuses to claim metric calibration unless physical ground sample distance can be established for both the target grid and the DEM. `validate-dsm` uses local-ground/geodesic spacing for slope diagnostics rather than assuming projected map units are physical metres.
+Resolver locks for Python, npm and Cargo are committed and audited. Supply-chain reports are generated with `python -m scripts.generate_supply_chain_reports`.
 
-## Desktop application
+## Documentation map
 
-`apps/desktop` is the permanent Tauri + React + Three.js scientific workstation. The packaged application owns the local scientific sidecar, ephemeral loopback endpoint, per-process boot identity and per-session API token; users do not need to start a terminal service. Scientific layers and controls are enabled only when their corresponding persisted artifacts actually exist.
+1. [`MASTER_SPEC.md`](MASTER_SPEC.md) — authoritative specification and release closure
+2. [`docs/requirements-traceability.yaml`](docs/requirements-traceability.yaml) — requirement-to-code-to-evidence mapping
+3. [`docs/judge-evidence-pack.md`](docs/judge-evidence-pack.md) — compact reviewer index
+4. [`docs/adr/`](docs/adr/) — scientific and architecture decisions
+5. [`docs/release-playbook.md`](docs/release-playbook.md) — guarded release procedure
 
-Deterministic desktop verification:
-
-```bash
-cd apps/desktop
-npm ci
-npm run test
-npm run build
-```
-
-The committed lock is authoritative; CI/release builds use `npm ci` and never refresh it implicitly. Tauri release packaging must use the repository's standalone qualification scripts/targets rather than treating a frontend-only build as standalone scientific acceptance.
-
-## Architecture authority
-
-Read in this order:
-
-1. `MASTER_SPEC.md`
-2. `docs/requirements-traceability.yaml`
-3. `docs/adr/`
-4. release-train evidence/claim-boundary documents
-
-Every feature and scientific claim must trace to an official SIH/ISRO requirement or an explicit competitive-quality objective, and no evidence result may be upgraded beyond the protocol that produced it.
-
-The exact boundary between implemented hardening and still-required exact-head/external evidence is
-maintained in `docs/elite-finalization-status.md`.
-
-The compact reviewer index is `docs/judge-evidence-pack.md`; the only authorized merge/tag/publish
-sequence is `docs/release-playbook.md`.
+DepthWizard does not depend on marketing claims for acceptance: every mandatory capability is tied to code, a verification gate and exact-commit evidence.

@@ -3,6 +3,16 @@
 This is the compact index for SIH26175 reviewers. It distinguishes implemented capability from
 evidence and prevents a slide, demo, or release claim from outrunning the exact tagged build.
 
+## Final qualification identity
+
+- status: `PASS_SIH26175_PROBLEM_STATEMENT_COMPLETE`
+- blocking gates: none
+- qualified source and tag target: `012301b9c1910ef4ccde5b3da5d4e4d94da60ce6`
+- tag: [`v0.2.0-sih-final`](https://github.com/amogh-hub/depthwizard/releases/tag/v0.2.0-sih-final)
+- exact-commit evidence: [`qualification/evidence-012301b9c1910ef4ccde5b3da5d4e4d94da60ce6`](https://github.com/amogh-hub/depthwizard/tree/qualification/evidence-012301b9c1910ef4ccde5b3da5d4e4d94da60ce6/evidence/submission)
+- clean-machine qualification: [GitHub Actions run 34702827804](https://github.com/amogh-hub/depthwizard/actions/runs/34702827804)
+- published-asset verification: [GitHub Actions run 34711038120](https://github.com/amogh-hub/depthwizard/actions/runs/34711038120)
+
 ## Product in one sentence
 
 DepthWizard converts one RGB remote-sensing image into a truthful dimensionless rDSM when geodetic
@@ -53,12 +63,11 @@ synthesized.
 - Model identity: `model-manifests/da3mono-large.yaml`
 - Dependency inventory command: `python -m scripts.generate_supply_chain_reports`
 
-The final headline report must be regenerated on the exact candidate commit and committed under
-`evidence/submission/` on `qualification/evidence-<candidate-SHA>`. The release workflow accepts only
-the branch whose name matches the tagged SHA and records its qualification commit in the release
-archive. The report must cover urban, sparse, hilly and forested standard tests plus a cross-sensor
-holdout. Same-input baselines and ablations are separate evidence and are not implied by the
-terrain-coverage report.
+The final headline report was generated for the exact qualified source and committed under
+`evidence/submission/` on the matching evidence branch. It covers urban, sparse, hilly and forested
+tests plus a cross-sensor holdout. Same-input baselines and ablations are preserved as separate
+evidence rather than being inferred from the terrain-coverage report. The release archive records
+the qualification identity and includes the nine-report evidence payload plus checksums.
 
 ## Installation and offline quick start
 
@@ -119,7 +128,12 @@ mirrored by `apps/desktop/src/api.ts`.
 
 ## Release proof
 
-The tag-triggered workflow refuses to publish unless the tag equals authoritative `main`, every
-language/source gate passes, all exact-commit evidence files pass the completion checker, the pinned
-DA3 checkpoint is verified, the standalone sidecar/application build succeeds and checksums plus the
-SBOM/license inventory are generated. See `docs/release-playbook.md`.
+The first tag-triggered run stopped during Rust preflight because the compile-only Tauri resource
+had not yet been staged. It published nothing. The fail-closed finalization workflow then verified
+the exact tag, source, evidence branch, qualified DMG hash and all eleven completion gates; published
+the already-qualified DMG; downloaded the release assets; and re-verified their checksums. The
+release workflow now stages the resource before Rust preflight for future tags.
+
+See `docs/elite-finalization-status.md` for the final record and `docs/release-playbook.md` for the
+guarded procedure. The application is ad-hoc signed and not Apple Developer-ID notarized; that
+distribution limitation is disclosed in the GitHub Release rather than hidden.

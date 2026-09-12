@@ -70,6 +70,7 @@ jobs:
           uv sync --frozen --python 3.12 --extra ml --extra dev --extra standalone
           .venv/bin/python -m scripts.check_release_reproducibility --strict
           .venv/bin/python scripts/verify.py
+          .venv/bin/python scripts/ensure_tauri_sidecar_stub.py
           cd apps/desktop
           npm ci --no-audit --no-fund
           npm test
