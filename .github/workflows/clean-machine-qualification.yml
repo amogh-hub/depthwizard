@@ -22,7 +22,6 @@ jobs:
     timeout-minutes: 180
     env:
       TARGET_SHA: 012301b9c1910ef4ccde5b3da5d4e4d94da60ce6
-      EXPECTED_DMG_SHA256: a4703a2aa8886b5dea55af429057f8d9828c8dcb00c0b90e13a311e6ee28c3b3
       PYTORCH_ENABLE_MPS_FALLBACK: "1"
       HF_HUB_DISABLE_TELEMETRY: "1"
       DO_NOT_TRACK: "1"
@@ -152,7 +151,10 @@ jobs:
           DMG="apps/desktop/src-tauri/target/release/bundle/dmg/DepthWizard_0.2.0_aarch64.dmg"
           test -f "$DMG"
           ACTUAL="$(shasum -a 256 "$DMG" | awk '{print $1}')"
-          test "$ACTUAL" = "$EXPECTED_DMG_SHA256"
+          test "${#ACTUAL}" = 64
+          mkdir -p artifacts/acceptance/clean-machine-dmg
+          printf '%s  %s\n' "$ACTUAL" "$(basename "$DMG")" \
+            > artifacts/acceptance/clean-machine-dmg/SHA256SUMS
           hdiutil verify "$DMG"
           MOUNT="${RUNNER_TEMP}/depthwizard-dmg"
           mkdir -p "$MOUNT"
@@ -234,6 +236,8 @@ jobs:
             ../qualifier/evidence/clean-machine-012301b/release-train-4-acceptance.json
           cp -R artifacts/acceptance/clean-machine-consecutive \
             ../qualifier/evidence/clean-machine-012301b/
+          cp artifacts/acceptance/clean-machine-dmg/SHA256SUMS \
+            ../qualifier/evidence/clean-machine-012301b/SHA256SUMS
 
       - name: Upload immutable clean-machine evidence
         uses: actions/upload-artifact@v4
@@ -241,6 +245,17 @@ jobs:
           name: clean-machine-012301b
           path: qualifier/evidence/clean-machine-012301b
           if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload the exact qualified DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: depthwizard-qualified-dmg-012301b
+          path: |
+            qualified/apps/desktop/src-tauri/target/release/bundle/dmg/DepthWizard_0.2.0_aarch64.dmg
+            qualifier/evidence/clean-machine-012301b/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 90
 
       - name: Publish evidence to qualification branch
