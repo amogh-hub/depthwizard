@@ -256,6 +256,13 @@ def _dem_evidence_payload(dem_path: Path, result: EvidenceCalibrationOutput) -> 
         "bias_sigma_px": result.bias_sigma_px,
         "anchor_spatial_coverage_fraction": result.anchor_spatial_coverage_fraction,
         "metric_relief_span_m": result.metric_relief_span_m,
+        "affine_anchor_rmse_m": result.affine_anchor_rmse_m,
+        "post_bias_frequency_matched_anchor_rmse_m": (
+            result.post_bias_frequency_matched_anchor_rmse_m
+        ),
+        "post_bias_frequency_matched_anchor_mae_m": (
+            result.post_bias_frequency_matched_anchor_mae_m
+        ),
         "anchors": int(result.anchor_mask.sum()),
     }
 

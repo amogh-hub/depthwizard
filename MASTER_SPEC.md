@@ -75,7 +75,11 @@ For georeferenced imagery, relative height is transformed into an absolute DSM u
 5. Fit a robust positive global scale and vertical offset using confidence-weighted Huber/IRLS estimation.
 6. Fit only a smooth low-frequency terrain bias field whose default support is derived from physical DEM/GSD support rather than a fixed image-pixel radius; high-frequency object structure remains controlled by the image-derived height network.
 7. Reject/downweight anchors with high residual, low semantic-ground probability, NoData, severe slope mismatch or high model uncertainty.
-8. Fail closed on weak correlation, insufficient relief/coverage, ill-conditioning, non-convergence, excessive RMSE or excessive normalized RMSE; emit residual and cross-validation diagnostics.
+8. Fail closed on weak correlation, insufficient relief/coverage, ill-conditioning, non-convergence,
+   excessive normalized affine RMSE, or excessive final DEM-frequency-matched RMSE. Record the
+   preliminary affine residual separately from the post-bias residual so high-relief terrain is
+   judged on the calibrated surface actually exported, without allowing an unrelated monocular
+   prior to be laundered by the terrain correction.
 
 Conceptual form:
 

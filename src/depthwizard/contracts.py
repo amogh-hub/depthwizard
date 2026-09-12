@@ -400,6 +400,8 @@ class ProcessingRequest(BaseModel):
     low_frequency_sigma_px: float | None = Field(default=None, ge=0.0, le=4096.0)
     low_frequency_sigma_m: float | None = Field(default=None, gt=0.0, le=100_000.0)
     min_dem_anchor_correlation: float = Field(default=0.25, ge=0.0, le=1.0)
+    # Applied to the final, DEM-frequency-matched surface after the resolution-limited terrain-bias
+    # correction. The preliminary affine RMSE remains separately recorded as a diagnostic.
     max_dem_anchor_rmse_m: float | None = Field(default=15.0, gt=0.0)
     max_dem_normalized_rmse: float = Field(default=0.35, gt=0.0, le=1.0)
     # Six points are the production default. Expert/API callers may explicitly lower this to four

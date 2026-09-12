@@ -183,6 +183,27 @@ def test_dem_calibration_rejects_high_residual_metric_claim() -> None:
         raise AssertionError("high residual DEM evidence must not produce a metric DSM claim")
 
 
+def test_dem_rmse_gate_assesses_final_frequency_matched_bias_corrected_surface() -> None:
+    y, x = np.mgrid[:256, :256]
+    relative = (0.003 * x + 0.005 * y).astype(np.float32)
+    smooth_terrain_bias = 8.0 * np.sin(x / 48.0) * np.cos(y / 56.0)
+    dem = (4.0 * relative + 250.0 + smooth_terrain_bias).astype(np.float32)
+
+    result = calibrate_relative_height_with_dem(
+        relative,
+        dem,
+        low_frequency_sigma_px=6.0,
+        max_anchor_rmse_m=2.0,
+    )
+
+    assert result.affine_anchor_rmse_m > 2.0
+    assert result.post_bias_frequency_matched_anchor_rmse_m < 2.0
+    assert result.post_bias_frequency_matched_anchor_mae_m < 2.0
+    assert "post_bias_frequency_matched_anchor_rmse_passed" in (
+        result.calibration.quality_notes
+    )
+
+
 def test_dem_calibration_rejects_spatially_clustered_anchor_mask() -> None:
     y, x = np.mgrid[:64, :64]
     relative = (0.1 * x + 0.2 * y).astype(np.float32)

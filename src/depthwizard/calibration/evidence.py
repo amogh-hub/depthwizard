@@ -25,6 +25,9 @@ class EvidenceCalibrationOutput:
     bias_sigma_px: float
     anchor_spatial_coverage_fraction: float
     metric_relief_span_m: float
+    affine_anchor_rmse_m: float
+    post_bias_frequency_matched_anchor_rmse_m: float
+    post_bias_frequency_matched_anchor_mae_m: float
 
 
 def build_anchor_weights(
@@ -326,30 +329,12 @@ def calibrate_relative_height_with_dem(
         )
     if not fit.converged:
         raise ValueError("DEM calibration fit did not converge")
-    if max_anchor_rmse_m is not None and fit.rmse_anchor > max_anchor_rmse_m:
-        raise ValueError(
-            f"DEM anchor RMSE {fit.rmse_anchor:.3f} m exceeds the configured "
-            f"{max_anchor_rmse_m:.3f} m quality limit"
-        )
     if fit.normalized_rmse is None or fit.normalized_rmse > max_normalized_rmse:
         normalized = "undefined" if fit.normalized_rmse is None else f"{fit.normalized_rmse:.3f}"
         raise ValueError(
             "DEM normalized anchor RMSE is too high for defensible metric calibration "
             f"({normalized}; limit={max_normalized_rmse:.3f})"
         )
-    fit = fit.model_copy(
-        update={
-            "quality_passed": True,
-            "quality_notes": [
-                "fit_converged",
-                "anchor_correlation_passed",
-                "anchor_rmse_passed",
-                "normalized_rmse_passed",
-                "spatial_coverage_passed",
-                "metric_relief_passed",
-            ],
-        }
-    )
     globally_scaled = fit.scale * oriented_rel + fit.offset
     calibration_band_scaled = fit.scale * oriented_calibration_rel + fit.offset
 
@@ -384,6 +369,38 @@ def calibrate_relative_height_with_dem(
             where=denominator > 1e-8,
         )
 
+    # The affine fit is only the scale/offset initialization. The advertised calibration result is
+    # the frequency-matched surface after its resolution-limited terrain-bias correction, so the
+    # absolute RMSE gate must assess that final calibration band. Gating the preliminary affine fit
+    # rejects legitimate high-relief scenes even when the independent DEM correction reduces the
+    # final residual far below the configured limit. Correlation and normalized affine RMSE remain
+    # mandatory above, which prevents the bias field from laundering an unrelated monocular prior.
+    calibration_band_dsm = calibration_band_scaled + smooth_bias
+    post_bias_residual = dem[anchor_mask] - calibration_band_dsm[anchor_mask]
+    post_bias_rmse = float(
+        np.sqrt(np.average(post_bias_residual**2, weights=anchor_weights))
+    )
+    post_bias_mae = float(np.average(np.abs(post_bias_residual), weights=anchor_weights))
+    if max_anchor_rmse_m is not None and post_bias_rmse > max_anchor_rmse_m:
+        raise ValueError(
+            "post-bias frequency-matched DEM anchor RMSE "
+            f"{post_bias_rmse:.3f} m exceeds the configured "
+            f"{max_anchor_rmse_m:.3f} m quality limit"
+        )
+
+    fit = fit.model_copy(
+        update={
+            "quality_passed": True,
+            "quality_notes": [
+                "fit_converged",
+                "anchor_correlation_passed",
+                "normalized_rmse_passed",
+                "post_bias_frequency_matched_anchor_rmse_passed",
+                "spatial_coverage_passed",
+                "metric_relief_passed",
+            ],
+        }
+    )
     dsm = globally_scaled + smooth_bias
     dsm[~np.isfinite(rel)] = np.nan
     return EvidenceCalibrationOutput(
@@ -399,4 +416,7 @@ def calibrate_relative_height_with_dem(
         bias_sigma_px=bias_sigma_px,
         anchor_spatial_coverage_fraction=spatial_coverage,
         metric_relief_span_m=metric_relief_span,
+        affine_anchor_rmse_m=float(fit.rmse_anchor),
+        post_bias_frequency_matched_anchor_rmse_m=post_bias_rmse,
+        post_bias_frequency_matched_anchor_mae_m=post_bias_mae,
     )

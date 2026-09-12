@@ -13,7 +13,7 @@ performance, soak and clean-machine evidence unless the applicable protocol says
 - six-GCP production default; explicit four/five-point expert overrides persist a low-confidence
   evidence classification and warning;
 - DEM-frequency matching and low-frequency terrain correction that preserves image-derived surface
-  structure;
+  structure, with separate preliminary-affine and final post-bias residual evidence;
 - explicit vertical CRS/datum/elevation-reference metadata and fail-closed datum semantics;
 - source masks/NoData through inference, output and metrics; full rotated/sheared ground Jacobian for
   slope;

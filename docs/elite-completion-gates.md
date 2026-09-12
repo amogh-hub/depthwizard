@@ -44,6 +44,9 @@ Evidence: `domain_generalization_report.json`, `terrain_breakdown.csv`, `ablatio
 - Calibration residual diagnostics and evidence provenance are emitted. Confidence/uncertainty is consumed or emitted only when its semantics are explicitly defined; undefined confidence is never fabricated.
 - High-frequency image-derived structure is preserved while only low-frequency terrain bias is corrected.
 - Default low-frequency correction support is derived from physical DEM/GSD support rather than fixed image pixels.
+- The absolute DEM RMSE limit applies to the final frequency-matched, bias-corrected calibration
+  band; preliminary affine RMSE remains a visible diagnostic, while correlation and normalized
+  affine-error gates must still pass before correction.
 - Metric output remains explicitly vertical-datum-unspecified until a vertical CRS/datum and elevation-reference type are declared; final accuracy scoring refuses prediction/reference datum mismatch.
 
 Evidence: `calibration_dem_report.json`, `calibration_gcp_report.json`, `calibration_fusion_report.json`.
