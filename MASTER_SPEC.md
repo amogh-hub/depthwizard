@@ -402,10 +402,14 @@ The permanent repository has moved from specification into implementation. Curre
   submission evidence, source/language verification, model identity and standalone packaging all
   pass.
 
-The release-candidate source, frontend and Rust checks have passed in CI, and an earlier exact
-candidate completed packaged offline reconstruction, clean-machine macOS ARM64 qualification,
-operator workflow, sustained rendering and two-hour soak. Source changes invalidate automatic
-inheritance of those exact-commit reports. Final publication still requires regenerated durable
-science/baseline/ablation/operator/performance/soak/clean-machine evidence for the final SHA, merge to
-protected `main`, a final tag and successful guarded GitHub Release. This ledger must not be used as a
-substitute for those artifacts.
+Final source `012301b9c1910ef4ccde5b3da5d4e4d94da60ce6` passed the required source, frontend,
+Rust, portable-geospatial, lock and supply-chain checks. Its exact-commit evidence closes packaged
+offline reconstruction, the four-terrain/cross-sensor science campaign, baselines, ablations, the
+27-item operator workflow, sustained rendering, the two-hour soak and fresh macOS ARM64
+qualification. Protected `main` and tag `v0.2.0-sih-final` identify that qualified source; the GitHub
+Release contains the exact qualified DMG, checksums and evidence archive. The strict completion
+result is `PASS_SIH26175_PROBLEM_STATEMENT_COMPLETE` with no blocking gates.
+
+The immutable artifacts remain the authority for measured results. Later documentation or workflow
+maintenance commits do not retroactively change the tagged application's evidence identity and must
+not be presented as a newly qualified binary.

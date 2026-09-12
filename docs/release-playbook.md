@@ -1,8 +1,10 @@
 # Authoritative release playbook
 
-DepthWizard has one release path. Engineering branches may contain stronger work than `main`, but no
-submission is final until the qualified candidate is merged, tagged and published by the guarded
-release workflow.
+DepthWizard has one guarded release path. Engineering branches may contain stronger work than
+`main`, but no submission is final until an exact candidate is independently qualified, identified
+by a tag and published with checksum-verifiable artifacts. The completed SIH release is
+[`v0.2.0-sih-final`](https://github.com/amogh-hub/depthwizard/releases/tag/v0.2.0-sih-final), sourced
+from `012301b9c1910ef4ccde5b3da5d4e4d94da60ce6`.
 
 ## 1. Protect `main`
 
@@ -52,15 +54,22 @@ python -m scripts.check_sih26175_completion \
 ## 3. Merge, tag and publish
 
 Merge the qualified PR without changing its tree. Confirm `main` equals the qualified SHA, then tag
-that exact commit, for example `v1.0.0-sih-final`, and push the tag. The matching qualification
+that exact commit and push the tag. The matching qualification
 branch must already exist. `.github/workflows/release.yml` fetches and records that evidence commit,
 repeats mandatory verification, rebuilds the standalone application, produces the macOS installer,
 checksums, model manifest, completion report, CycloneDX SBOM and dependency-license inventory, then
 publishes a checksum-verifiable GitHub Release. Repository administrators must separately enable
 GitHub's immutable-release setting if their plan and hosting policy support it.
 
-If the workflow fails, do not manually publish around it. Fix the defect on a new candidate commit,
-invalidate affected evidence and rerun the required qualification.
+If a future workflow fails, do not publish an unqualified rebuild around it. Fix the defect on a new
+candidate commit, invalidate affected evidence and rerun the required qualification.
+
+For `v0.2.0-sih-final`, the first tag run failed before publication because its Rust preflight ran
+before the Tauri compile-only runtime resource was staged. A separate fail-closed workflow verified
+the exact source, tag, evidence and prequalified DMG hash, required all eleven completion gates,
+published that exact DMG, then re-downloaded and checksum-verified every asset. The workflow ordering
+is corrected for future tags; the incident and recovery are recorded in
+`docs/elite-finalization-status.md`.
 
 ## 4. Judge rehearsal
 
