@@ -1,0 +1,92 @@
+{
+  "application_sha256": "8983ea3a624e677670cf5ebf919e860b253cf2b07c0e8ccc9c169a92c1dd1a15",
+  "bundled_model_payload_verified": true,
+  "completed_at_utc": "2026-09-12T16:53:40.720650+00:00",
+  "dem_calibration_exercised": true,
+  "desktop_executable_sha256": "90e14042ae23f292c8bc25f5f46a8c32c28afd82d4b6f8aafcc7028505b3ab20",
+  "end_to_end_reconstruction": true,
+  "evidence": [
+    {
+      "name": "exact DMG",
+      "sha256": "8983ea3a624e677670cf5ebf919e860b253cf2b07c0e8ccc9c169a92c1dd1a15"
+    },
+    {
+      "name": "RT5 full packaged acceptance",
+      "sha256": "4513aefcc80c51cba92adde24f0baab734c259386a02196af236c63821a31296"
+    },
+    {
+      "name": "real Tauri lifecycle",
+      "sha256": "1e52d2f97c9f24c73a3a0a373a92abe1f6c92eae5836c59f7bd554ddd648db67"
+    },
+    {
+      "name": "packaged sidecar security",
+      "sha256": "62bccd4f48e0e4fba875804a6824cbd11eea1863b9efc88297c59575cbe840c8"
+    },
+    {
+      "name": "literal PNG/JPG/GeoTIFF contract",
+      "sha256": "26dda3ba5006adde516e4dd0ffcb95c30ecee822804844d3712ef384fd7689d6"
+    },
+    {
+      "name": "six-point GCP and analytical acceptance",
+      "sha256": "4c0dda3607843b05fcb68da9a8d353551ddd1342eb91c64f938c2982c8d809f4"
+    },
+    {
+      "name": "three consecutive packaged reconstructions",
+      "sha256": [
+        "b00b3b4f5d56711b28f8830d100a2829afcd75d28c43f6c7a07864fd65f8a916",
+        "95ef4e9f98548614d69bd849887aaceca6aa6944f44e2b7d7f8e3c6674ced375",
+        "4513aefcc80c51cba92adde24f0baab734c259386a02196af236c63821a31296"
+      ]
+    },
+    {
+      "name": "relaunch/reopen",
+      "sha256": "3a077ed42b3d9fae2bbf2dcb3f6415788c6b2b61fca018d15a3a48b85912b762"
+    },
+    {
+      "name": "GitHub Actions run",
+      "url": "https://github.com/amogh-hub/depthwizard/actions/runs/34702827804"
+    }
+  ],
+  "export_and_reopen": true,
+  "gcp_calibration_exercised": true,
+  "geotiff_processed": true,
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "hardware": "arm64",
+  "jpg_processed": true,
+  "macos_version": "macOS-15.7.9-arm64-arm-64bit",
+  "measurement_exercised": true,
+  "metric_calibration": true,
+  "network_disconnected_during_workflow": true,
+  "no_user_visible_terminal": true,
+  "notes": [
+    "The candidate is ad-hoc signed rather than Developer-ID notarized.",
+    "This fresh-runner-built and checksum-recorded DMG is the qualified package; an independently rebuilt DMG container is not substituted for it.",
+    "The runner's external network interface was disabled during input, calibration, packaged reconstruction, validation, mesh, measurement, export and reopen checks.",
+    "The application was extracted from the checksum-verified DMG before qualification."
+  ],
+  "offline_first_reconstruction": true,
+  "operator": "GitHub Actions automated clean-machine qualification",
+  "owned_sidecar_boot": true,
+  "package_name": "DepthWizard_0.2.0_aarch64.dmg",
+  "packaged_app_launch": true,
+  "png_processed": true,
+  "qualification_boundary": "Fresh GitHub-hosted macos-15 ARM64 VM. It built exact release 012301b, verified and extracted the exact DMG, disabled its external network interface, processed PNG and JPG as relative rDSM, processed GeoTIFF through DEM calibration, exercised six-point GCP calibration, completed three packaged reconstructions, validation, metric profile, analytical previews, mesh and export, then relaunched and reopened the project.",
+  "repeated_jobs_completed": 3,
+  "runner": {
+    "image": "macos15",
+    "image_version": "20260907.0337.1",
+    "machine": "arm64",
+    "platform": "macOS-15.7.9-arm64-arm-64bit",
+    "provider": "GitHub-hosted fresh virtual machine",
+    "run_attempt": "2",
+    "run_url": "https://github.com/amogh-hub/depthwizard/actions/runs/34702827804",
+    "runner_arch": "ARM64",
+    "runner_name": "GitHub Actions 1000003643"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-09-12T16:53:17.202351+00:00",
+  "status": "PASS_CLEAN_MACHINE_STANDALONE",
+  "target": "fresh supported Apple Silicon Mac or fresh macOS ARM64 VM",
+  "terrain_3d": true,
+  "unexpected_log_failures": []
+}

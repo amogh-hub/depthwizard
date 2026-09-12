@@ -1,0 +1,139 @@
+{
+  "application_bundle": "/Users/runner/work/depthwizard/depthwizard/qualified/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app",
+  "application_sha256": "90e14042ae23f292c8bc25f5f46a8c32c28afd82d4b6f8aafcc7028505b3ab20",
+  "bundled_model_payload_verified": true,
+  "clean_application_launch": true,
+  "consumed_benchmark_rerun": false,
+  "export": {
+    "bundle_bytes": 19268306,
+    "bundle_path": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-5-full/project/exports/depthwizard-9dc24e02e11746e29e7e3a72166dd1d5.zip",
+    "bundle_sha256": "a248a35f8a3d5687d44894afea459d81c393f9f2f498597a255fddfa7feccd3d",
+    "mesh_included": true,
+    "source_included": false,
+    "validation_included": true,
+    "zip_integrity": "PASS"
+  },
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "lifecycle": {
+    "app_exit_code": 0,
+    "elapsed_seconds": 29.771,
+    "sidecar_pid": 20130,
+    "sidecar_terminated_with_app": true
+  },
+  "mesh": {
+    "horizontal_units": "m",
+    "lod_count": 3,
+    "surface_product": "dsm",
+    "vertical_units": "m"
+  },
+  "model_promotion_claim": false,
+  "offline_da3_project": {
+    "artifact_sha256": {
+      "dsm": "d4f6bbe33313459d7326b5d16e9bb0c3e8c502e1f37f4cc7faae72f9c519a208",
+      "rdsm": "17ea2a31c12bb19cb1ddd9c502e532f7b9d94c31f5aec7da5c7e9975b3806c1f",
+      "slope": "4f008c8719e5aba127865d5acec26dc25e16490e9419f4e86e6c46971f5f795f"
+    },
+    "asset_cache_state_before_acceptance_prep": {
+      "calibration_source": true,
+      "reference": true,
+      "source": true
+    },
+    "calibration_dem": "/Users/runner/work/depthwizard/depthwizard/qualified/data/acceptance/release-train-2-ortholoc/urban_residential_xDSM_coarse_calibration.tif",
+    "calibration_dem_sha256": "8c8cb3431dc0c9604b78eaa530ef6abc7b6db46575b905ef19e0e0bcc1ccd230",
+    "job_id": "3a554d654d1a422091ae314851a69e84",
+    "project_dir": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-5-full/project",
+    "reference": "/Users/runner/work/depthwizard/depthwizard/qualified/data/acceptance/release-train-2-ortholoc/urban_residential_DSM.tif",
+    "reference_sha256": "70ad7ed4633a98d8d3ae0ece538756af5c8973a422475d81583b8f4bf7d395b3",
+    "source": "/Users/runner/work/depthwizard/depthwizard/qualified/data/acceptance/release-train-2-ortholoc/urban_residential_DOP.tif",
+    "source_sha256": "9e411601bfc8953f7ba1f139a34e813b418264318e75ea76b85acd12d9dd82a8",
+    "terminal_status": "complete"
+  },
+  "offline_first_reconstruction": true,
+  "packaged_sidecar": "/Users/runner/work/depthwizard/depthwizard/qualified/apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app/Contents/Resources/depthwizard-core-runtime/depthwizard-core",
+  "packaged_sidecar_sha256": "b354778c9696e5102e7ab78e3efc3eb3791af12bdbae44511f38a2faf4efd6a9",
+  "platform": "macOS-15.7.9-arm64-arm-64bit",
+  "recovery": {
+    "health_after_runtime_failure": {
+      "status": "ok",
+      "version": "0.2.0"
+    },
+    "malformed_raster_http_status": 422,
+    "runtime_failure_error_present": true,
+    "runtime_failure_job_id": "2cef0401d1fa4b9c87767f1b7f94a48d",
+    "runtime_failure_terminal_status": "failed",
+    "subsequent_valid_job_completed": true
+  },
+  "runtime_manifest_status": "QUALIFIED_DEPTHWIZARD_CORE_RUNTIME",
+  "runtime_tree_sha256": null,
+  "schema_version": 3,
+  "scientific_boundary": "RT5 standalone engineering acceptance only. The OrthoLoC source/calibration/reference are reused as an integration fixture and are not independent scientific evidence. This run proves packaged offline DA3 execution, failure recovery, validation, mesh, export, session security and clean Tauri-owned lifecycle. RT6 owns final scientific evidence; RT7 owns finale-Mac FPS, two-hour soak and clean-machine qualification.",
+  "session_guard": {
+    "ephemeral_acceptance_control_used": true,
+    "ephemeral_control_deleted_before_scientific_requests": true,
+    "ephemeral_control_removed_on_app_exit": true,
+    "missing_token_http_status": 401,
+    "token_recorded_in_evidence": false,
+    "wrong_token_http_status": 401
+  },
+  "status": "PASS_RT5_FULL_STANDALONE_ENGINEERING_ACCEPTANCE",
+  "strict_python_non_loopback_egress_guard": true,
+  "user_visible_terminal_required": false,
+  "validation": {
+    "alignment": "exact_grid_no_resampling",
+    "artifacts": {
+      "metrics": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-5-full/project/metrics.json",
+      "reference": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-5-full/project/products/reference-aligned.tif",
+      "residual": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-5-full/project/products/residual.tif",
+      "validation_report": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-5-full/project/validation-report.md"
+    },
+    "coverage_fraction": 0.9902441864016002,
+    "elevation": {
+      "mae_m": 2.1452398714461904,
+      "mean_bias_m": -0.6833258069057893,
+      "median_abs_error_m": 0.7123041152954102,
+      "nmad_m": 1.0520649364471435,
+      "p90_abs_error_m": 6.67014217376709,
+      "p95_abs_error_m": 8.320322465896604,
+      "pearson_r": 0.8764521739611308,
+      "rmse_m": 3.5492071409677477,
+      "spearman_r": 0.7956147223452948,
+      "valid_pixels": 1037665
+    },
+    "independence_check": "different_sha_from_calibration_dem",
+    "prediction_sha256": "d4f6bbe33313459d7326b5d16e9bb0c3e8c502e1f37f4cc7faae72f9c519a208",
+    "project_id": "9dc24e02e11746e29e7e3a72166dd1d5",
+    "reference_label": "TUM OrthoLoC urban_residential DSM / RT5 downstream integration reference",
+    "reference_path": "/Users/runner/work/depthwizard/depthwizard/qualified/data/acceptance/release-train-2-ortholoc/urban_residential_DSM.tif",
+    "reference_sha256": "70ad7ed4633a98d8d3ae0ece538756af5c8973a422475d81583b8f4bf7d395b3",
+    "reliability": {
+      "available": false,
+      "bins": [],
+      "confidence_abs_error_pearson_r": null,
+      "semantics": "unavailable_no_native_confidence_artifact",
+      "valid_pixels": 0
+    },
+    "schema_version": 1,
+    "slope": {
+      "mae_degrees": 15.995288848876953,
+      "p95_abs_error_degrees": 54.91116409301756,
+      "rmse_degrees": 24.23324966430664,
+      "valid_pixels": 1034055
+    },
+    "valid_pixels": 1037665,
+    "warnings": [
+      "No confidence artifact is available for this estimator path; error-confidence reliability was not fabricated."
+    ]
+  },
+  "validation_elevation": {
+    "mae_m": 2.1452398714461904,
+    "mean_bias_m": -0.6833258069057893,
+    "median_abs_error_m": 0.7123041152954102,
+    "nmad_m": 1.0520649364471435,
+    "p90_abs_error_m": 6.67014217376709,
+    "p95_abs_error_m": 8.320322465896604,
+    "pearson_r": 0.8764521739611308,
+    "rmse_m": 3.5492071409677477,
+    "spearman_r": 0.7956147223452948,
+    "valid_pixels": 1037665
+  }
+}

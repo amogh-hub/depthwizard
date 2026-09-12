@@ -1,0 +1,89 @@
+{
+  "calibration_evidence": {
+    "absolute_elevation_claim": false,
+    "evidence": {
+      "gcp": {
+        "anchor_correlation_before": 0.999999999999683,
+        "bias_sigma_px": null,
+        "calibration": {
+          "anchors_used": 6,
+          "condition_number": 1.0,
+          "converged": true,
+          "iterations": 1,
+          "mae_anchor": 2.1030688254578913e-06,
+          "median_abs_residual": 2.4866032575232566e-06,
+          "method": "robust_affine_huber_irls",
+          "normalized_rmse": 2.95589354447872e-07,
+          "offset": 120.0000017524321,
+          "quality_notes": [
+            "fit_converged"
+          ],
+          "quality_passed": true,
+          "rmse_anchor": 2.391316769023209e-06,
+          "scale": 39.99998274666001
+        },
+        "cross_validation_rmse_m": 3.4198775187411755e-06,
+        "evidence_confidence": {
+          "classification": "standard",
+          "explicit_minimum_requested": 6,
+          "points_supplied": 6,
+          "reason": "recommended_gcp_count_satisfied",
+          "recommended_minimum": 6
+        },
+        "gcp_count_supplied": 6,
+        "gcp_residuals_m": [
+          -1.335999741058913e-06,
+          -2.0185077573842136e-06,
+          3.2128086786542553e-06,
+          3.081939325966232e-08,
+          -2.9546988571382826e-06,
+          3.065578766836552e-06
+        ],
+        "orientation_flipped": false,
+        "source_evidence": {
+          "identity_verified": true,
+          "kind": "csv_file",
+          "sha256": "68dd799e6e3f32aaed3b785eeb7679e585d0c50b282a342ad3177f489334de52",
+          "source": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/release-train-4-analytical/inputs/control_points.csv"
+        },
+        "spatial_coverage_fraction": 0.565381708238851,
+        "spatial_rank_ratio": 0.9847916222305189
+      }
+    },
+    "metric_claim": true,
+    "mode": "gcp",
+    "schema": "depthwizard.calibration.v2",
+    "vertical_reference": {
+      "absolute_elevation_claim": false,
+      "calibration_dem_surface_type": null,
+      "datum_resolved": false,
+      "elevation_reference": "unknown",
+      "metadata_source": "unspecified",
+      "surface_product": "dsm",
+      "vertical_crs": null,
+      "vertical_datum": null
+    }
+  },
+  "gcp_count": 6,
+  "gcp_file_sha256": "68dd799e6e3f32aaed3b785eeb7679e585d0c50b282a342ad3177f489334de52",
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "metric_error_against_synthetic_truth": {
+    "mae_m": 1.5422701835632324e-06,
+    "max_abs_error_m": 1.52587890625e-05,
+    "rmse_m": 4.504786375036929e-06
+  },
+  "mode": "gcp",
+  "post_inspection_mutation_rejection": {
+    "error": "GCP evidence file bytes changed after inspection; re-import the GCP file before calibration",
+    "rejected": true
+  },
+  "project_id": "4a17af5df75a428594e7929917971c07",
+  "schema_version": 2,
+  "scientific_boundary": "Deterministic calibration engineering qualification on the fresh runner; not independent accuracy evidence.",
+  "status": "PASS_ENGINEERING_CALIBRATION_GCP",
+  "weak_evidence_abort": {
+    "aborted": true,
+    "error": "GCPs do not span enough relative-height variation to determine scale",
+    "project_status": "failed"
+  }
+}

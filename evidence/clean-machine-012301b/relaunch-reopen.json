@@ -1,0 +1,65 @@
+{
+  "application_sha256": "90e14042ae23f292c8bc25f5f46a8c32c28afd82d4b6f8aafcc7028505b3ab20",
+  "boot": {
+    "build_git_sha": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+    "offline_core": true,
+    "status": "PASS_TAURI_SIDECAR_BOOT",
+    "strict_egress_guard": true
+  },
+  "elapsed_seconds": 21.148,
+  "git_head": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "lifecycle": {
+    "app_exit_code": 0,
+    "sidecar_terminated_with_app": true
+  },
+  "project": {
+    "export_bytes": 19268319,
+    "export_sha256": "de36065c2149dada56fb7c4a92d8b7c412dce582ede51580290b605c0b05d27f",
+    "mesh_lod_0_bytes": 5047868,
+    "mesh_lod_0_sha256": "e8d323e0f802f3c2481037efd1876bcb7c1df42f9b4fa633e3778daf588eeeba",
+    "mesh_lod_count": 3,
+    "metric_validation": {
+      "mae_m": 2.1452398714461904,
+      "pearson_r": 0.8764521739611308,
+      "rmse_m": 3.5492071409677477
+    },
+    "preview_png_bytes": {
+      "contours": 27470,
+      "dsm": 47519,
+      "hillshade": 49826,
+      "optical": 133674,
+      "reference": 51727,
+      "residual": 72729,
+      "slope": 92411
+    },
+    "profile": {
+      "horizontal_distance_m": null,
+      "sample_count": 64,
+      "surface_product": "dsm",
+      "vertical_delta": -2.278734993934626,
+      "vertical_units": "m"
+    },
+    "project_id": "72275e1cb61943c0a814715512cca320",
+    "relative_projects": [
+      {
+        "job_id": "3f3bce47f8544ae8840cd38b2c72a08f",
+        "metric_dsm_absent": true,
+        "project_id": "00697c035b964e36b9200a6529a120a9",
+        "rdsm_present": true,
+        "source": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/sih26175-input-formats/fixtures/single-view-rgb.png",
+        "terminal_status": "complete"
+      },
+      {
+        "job_id": "44e68a3b0e8b47e7aa328ad8c9d99c6f",
+        "metric_dsm_absent": true,
+        "project_id": "a532f50fa0ff42128c7a8eb49d6d0771",
+        "rdsm_present": true,
+        "source": "/Users/runner/work/depthwizard/depthwizard/qualified/artifacts/acceptance/sih26175-input-formats/fixtures/single-view-rgb.jpg",
+        "terminal_status": "complete"
+      }
+    ],
+    "status": "complete"
+  },
+  "schema_version": 1,
+  "status": "PASS_CLEAN_MACHINE_RELAUNCH_REOPEN"
+}
