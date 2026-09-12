@@ -217,7 +217,11 @@ jobs:
             fi
             sleep 2
           done
-          curl --fail --silent --show-error --max-time 10 https://api.github.com >/dev/null
+          # Any HTTP response proves that the interface is reachable again. GitHub may
+          # legitimately answer this unauthenticated probe with 403 because hosted
+          # runners share a rate-limit pool, so do not treat the HTTP status as an
+          # offline-restoration failure.
+          curl --silent --show-error --max-time 10 https://api.github.com >/dev/null
 
       - name: Collect the exact-head clean-machine evidence
         working-directory: qualified
