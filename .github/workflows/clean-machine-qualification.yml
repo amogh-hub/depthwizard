@@ -1,8 +1,8 @@
-name: clean-machine-qualification-eb4aca3
+name: clean-machine-qualification-012301b
 
 on:
   push:
-    branches: [qualification/clean-machine-eb4aca3]
+    branches: [qualification/clean-machine-012301b]
     paths:
       - .github/workflows/clean-machine-qualification.yml
       - qualification/clean_machine_acceptance.py
@@ -12,16 +12,17 @@ permissions:
   contents: write
 
 concurrency:
-  group: clean-machine-eb4aca3
+  group: clean-machine-012301b
   cancel-in-progress: false
 
 jobs:
   exact-release-on-fresh-macos:
-    name: exact eb4aca3 on fresh macOS M1
+    name: exact 012301b on fresh macOS ARM64
     runs-on: macos-15
     timeout-minutes: 180
     env:
-      TARGET_SHA: eb4aca36b05745931b7ea4dd4797569e176d98f9
+      TARGET_SHA: 012301b9c1910ef4ccde5b3da5d4e4d94da60ce6
+      EXPECTED_DMG_SHA256: a4703a2aa8886b5dea55af429057f8d9828c8dcb00c0b90e13a311e6ee28c3b3
       PYTORCH_ENABLE_MPS_FALLBACK: "1"
       HF_HUB_DISABLE_TELEMETRY: "1"
       DO_NOT_TRACK: "1"
@@ -38,7 +39,7 @@ jobs:
       - name: Checkout exact frozen release
         uses: actions/checkout@v4
         with:
-          ref: eb4aca36b05745931b7ea4dd4797569e176d98f9
+          ref: 012301b9c1910ef4ccde5b3da5d4e4d94da60ce6
           fetch-depth: 0
           path: qualified
 
@@ -111,6 +112,19 @@ jobs:
           .venv/bin/python scripts/verify.py
           test -z "$(git status --porcelain)"
 
+      - name: Stage external fixtures before the offline gate
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          from scripts.release_train_5_full_acceptance import _prepare_assets
+          source, dem, reference, _ = _prepare_assets()
+          for path in (source, dem, reference):
+              if not path.is_file() or path.stat().st_size == 0:
+                  raise SystemExit(f"missing staged fixture: {path}")
+              print(path)
+          PY
+
       - name: Build and qualify self-contained scientific sidecar
         working-directory: qualified
         run: |
@@ -122,14 +136,35 @@ jobs:
           rm -rf artifacts/uv-cache
           df -h .
 
-      - name: Build standalone macOS application bundle
+      - name: Build standalone macOS application and exact DMG
         working-directory: qualified/apps/desktop
         run: |
           set -euo pipefail
           npm ci --no-audit --no-fund
           npm test
-          npm run tauri -- build --bundles app
+          npm run tauri -- build
           df -h .
+
+      - name: Verify and install the exact DMG payload
+        working-directory: qualified
+        run: |
+          set -euo pipefail
+          DMG="apps/desktop/src-tauri/target/release/bundle/dmg/DepthWizard_0.2.0_aarch64.dmg"
+          test -f "$DMG"
+          ACTUAL="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+          test "$ACTUAL" = "$EXPECTED_DMG_SHA256"
+          hdiutil verify "$DMG"
+          MOUNT="${RUNNER_TEMP}/depthwizard-dmg"
+          mkdir -p "$MOUNT"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
+          sudo rm -rf /Applications/DepthWizard.app
+          sudo ditto "$MOUNT/DepthWizard.app" /Applications/DepthWizard.app
+          hdiutil detach "$MOUNT"
+          rm -rf apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app
+          ditto /Applications/DepthWizard.app \
+            apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app
+          codesign --verify --deep --strict \
+            apps/desktop/src-tauri/target/release/bundle/macos/DepthWizard.app
 
       - name: Reclaim duplicated bundle intermediates
         working-directory: qualified
@@ -141,33 +176,70 @@ jobs:
           rm -rf apps/desktop/src-tauri/target/release/deps
           df -h .
 
-      - name: Run packaged lifecycle and offline reconstruction
+      - name: Run the complete workflow with non-loopback networking disabled
         working-directory: qualified
         run: |
           set -euo pipefail
+          INTERFACE="$(route get default | awk '/interface:/{print $2; exit}')"
+          test -n "$INTERFACE"
+          restore_network() {
+            sudo ifconfig "$INTERFACE" up || true
+          }
+          trap restore_network EXIT
+          sudo ifconfig "$INTERFACE" down
+          if curl --silent --show-error --max-time 5 https://example.com >/dev/null 2>&1; then
+            echo "external networking remained reachable during offline qualification" >&2
+            exit 1
+          fi
+          export DEPTHWIZARD_OFFLINE_GATE=verified_interface_down
+          .venv/bin/python -m scripts.verify_problem_statement_inputs
+          .venv/bin/python -m scripts.release_train_4_scientific_analytical_smoke
           .venv/bin/python -m scripts.release_train_5_app_bundle_smoke
-          .venv/bin/python -m scripts.release_train_5_full_acceptance
-
-      - name: Relaunch, reopen, and compile fail-closed evidence
-        working-directory: qualified
-        run: |
-          set -euo pipefail
+          mkdir -p artifacts/acceptance/clean-machine-consecutive
+          for run in 1 2 3; do
+            .venv/bin/python -m scripts.release_train_5_full_acceptance
+            cp artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json \
+              "artifacts/acceptance/clean-machine-consecutive/run-${run}.json"
+          done
           .venv/bin/python ../qualifier/qualification/clean_machine_acceptance.py \
             --root . \
-            --output ../qualifier/evidence/clean-machine-eb4aca3/clean-machine-standalone.json \
-            --reopen-report ../qualifier/evidence/clean-machine-eb4aca3/relaunch-reopen.json
+            --dmg apps/desktop/src-tauri/target/release/bundle/dmg/DepthWizard_0.2.0_aarch64.dmg \
+            --output ../qualifier/evidence/clean-machine-012301b/clean-machine-standalone.json \
+            --reopen-report ../qualifier/evidence/clean-machine-012301b/relaunch-reopen.json
+          restore_network
+          trap - EXIT
+          for attempt in {1..30}; do
+            if curl --silent --max-time 5 https://api.github.com >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent --show-error --max-time 10 https://api.github.com >/dev/null
+
+      - name: Collect the exact-head clean-machine evidence
+        working-directory: qualified
+        run: |
+          set -euo pipefail
           cp artifacts/acceptance/release-train-5-full/release-train-5-full-acceptance.json \
-            ../qualifier/evidence/clean-machine-eb4aca3/release-train-5-full-acceptance.json
+            ../qualifier/evidence/clean-machine-012301b/release-train-5-full-acceptance.json
           cp artifacts/acceptance/release-train-5-standalone/release-train-5-app-bundle-acceptance.json \
-            ../qualifier/evidence/clean-machine-eb4aca3/release-train-5-app-bundle-acceptance.json
+            ../qualifier/evidence/clean-machine-012301b/release-train-5-app-bundle-acceptance.json
           cp artifacts/acceptance/release-train-5-sidecar/release-train-5-sidecar-acceptance.json \
-            ../qualifier/evidence/clean-machine-eb4aca3/release-train-5-sidecar-acceptance.json
+            ../qualifier/evidence/clean-machine-012301b/release-train-5-sidecar-acceptance.json
+          cp artifacts/acceptance/sih26175-input-formats/input-format-contract.json \
+            ../qualifier/evidence/clean-machine-012301b/input-format-contract.json
+          cp artifacts/acceptance/release-train-4-analytical/calibration_gcp_report.json \
+            ../qualifier/evidence/clean-machine-012301b/calibration-gcp-report.json
+          cp artifacts/acceptance/release-train-4-analytical/release-train-4-analytical-acceptance.json \
+            ../qualifier/evidence/clean-machine-012301b/release-train-4-acceptance.json
+          cp -R artifacts/acceptance/clean-machine-consecutive \
+            ../qualifier/evidence/clean-machine-012301b/
 
       - name: Upload immutable clean-machine evidence
         uses: actions/upload-artifact@v4
         with:
-          name: clean-machine-eb4aca3
-          path: qualifier/evidence/clean-machine-eb4aca3
+          name: clean-machine-012301b
+          path: qualifier/evidence/clean-machine-012301b
           if-no-files-found: error
           retention-days: 90
 
@@ -177,6 +249,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add evidence/clean-machine-eb4aca3
-          git commit -m "Record clean-machine evidence for eb4aca3"
-          git push origin HEAD:qualification/clean-machine-eb4aca3
+          git add evidence/clean-machine-012301b
+          git commit -m "Record clean-machine evidence for 012301b"
+          git push origin HEAD:qualification/clean-machine-012301b
