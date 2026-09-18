@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-09-18T13:06:19Z",
+  "repository": "amogh-hub/depthwizard",
+  "qualified_source_commit": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+  "release_tag": "v0.2.0-sih-final",
+  "core_ci": {
+    "workflow": "depthwizard-ci",
+    "run_id": 34708065916,
+    "run_number": 861,
+    "url": "https://github.com/amogh-hub/depthwizard/actions/runs/34708065916",
+    "event": "push",
+    "head_branch": "main",
+    "head_sha": "012301b9c1910ef4ccde5b3da5d4e4d94da60ce6",
+    "created_at": "2026-09-12T17:23:03Z",
+    "updated_at": "2026-09-12T17:26:22Z",
+    "status": "completed",
+    "conclusion": "success",
+    "passed_jobs": 8,
+    "total_jobs": 8,
+    "jobs": [
+      "dependency lock integrity",
+      "python-core (3.12)",
+      "python-core (3.13)",
+      "portable geospatial (macos-15)",
+      "portable geospatial (windows-2025)",
+      "desktop-frontend",
+      "desktop-rust",
+      "SBOM and dependency license inventory"
+    ]
+  },
+  "primary_test_count": {
+    "python_core": 379,
+    "desktop_frontend": 33,
+    "desktop_rust": 6,
+    "total": 418,
+    "counting_rule": "Count the complete Python suite once across its 3.12/3.13 runtime matrix, then add the distinct frontend and Rust suites."
+  },
+  "additional_portability_evidence": {
+    "tests_per_os": 41,
+    "operating_systems": [
+      "macos-15",
+      "windows-2025"
+    ],
+    "included_in_primary_total": false,
+    "reason": "The selected portability tests are a subset of the complete Python suite and would otherwise be double-counted."
+  },
+  "raw_log_archive": {
+    "path": "evidence/ci/depthwizard-ci-34708065916-logs.zip",
+    "sha256": "c9a58c2ef73cc42348435e32f48bc9a6b6c4c7fe5128b2f0dd29f3c39890ffa8"
+  },
+  "claim_boundary": {
+    "supported": [
+      "418 primary tests passed",
+      "Core CI jobs: 8/8 passed"
+    ],
+    "unsupported": [
+      "All GitHub checks passed"
+    ],
+    "separate_release_run": {
+      "run_id": 34709363538,
+      "url": "https://github.com/amogh-hub/depthwizard/actions/runs/34709363538",
+      "conclusion": "failure"
+    }
+  }
+}
